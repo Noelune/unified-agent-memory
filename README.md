@@ -53,6 +53,24 @@ Compared with **sgme** (a memory *bridge* to an external engine) this repo is a 
 
 Full guide: [docs/DEPLOY.md](docs/DEPLOY.md) · Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · Security: [docs/SECURITY.md](docs/SECURITY.md)
 
+## Deploy with an AI agent
+
+Prefer to let an agent do the install? Copy the prompt from
+[docs/AGENT-DEPLOY-PROMPT.md](docs/AGENT-DEPLOY-PROMPT.md), paste it together
+with this repo URL into any AI coding agent (Claude Code, Codex, DeepSeek
+Harness, …), and answer **4 questions**:
+
+| # | Question | Default |
+|---|----------|---------|
+| 1 | Who is the **main agent** (owns the daily promotion cron)? | this agent |
+| 2 | Index on **local machine or remote server**? | local machine |
+| 3 | Promotion **human-confirmed or fully automatic**? | human-confirmed |
+| 4 | Which **agents to connect** (dsh / Codex / Claude)? | the ones you use |
+
+The agent installs the core, initializes a vault, wires the integrations,
+registers a daily promotion cron (with missed-run recovery) if you ask for
+fully automatic promotion, runs `selfcheck`, and reports what it did.
+
 ## Repository layout
 
 | Path | What |
