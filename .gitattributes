@@ -1,0 +1,19 @@
+# Normalize line endings across platforms.
+* text=auto
+
+# Source & docs: LF everywhere.
+*.js text eol=lf
+*.mjs text eol=lf
+*.json text eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.sh text eol=lf
+Dockerfile text eol=lf
+
+# Binary.
+*.png binary
+*.jpg binary
+*.svg text eol=lf

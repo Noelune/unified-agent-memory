@@ -1,0 +1,108 @@
+# Deployment Guide
+
+Two modes:
+
+- **Standalone mode (default)** — the core + vault + your agents. No Hermes,
+  no servers, no cloud. Everything runs on your machine.
+- **Full mode (advanced)** — additionally wiring an agent runtime's scheduler
+  (e.g. Hermes' daily cron) and, optionally, a remote semantic index on your
+  own server.
+
+---
+
+## Standalone mode (default)
+
+### 1. Get the code and install the core
+
+```sh
+git clone https://github.com/Noelune/unified-agent-memory.git
+cd unified-agent-memory
+pip install -e ./core          # dependency-free; standard library only
+```
+
+### 2. Initialize a vault (one command)
+
+```sh
+python setup/setup.py init --vault ~/Documents/AgentMemory
+```
+
+This creates the full vault template (7 canonical notes, 提交区 inbox,
+情境信息, 记忆遗忘区), writes the vault path into ~/.unified-memory.yaml, and
+drops AGENTS.md / CLAUDE.md next to the vault.
+
+### 3. Connect agents
+
+**dsh** (plugin):
+
+```sh
+dsh plugin --profile web add dsh-unified-agent-memory
+export UNIFIED_MEMORY_VAULT=~/Documents/AgentMemory
+# restart the web profile; the model now has memory_search/show/submit/status
+```
+
+**Codex** — copy `AGENTS.md` to `~/.codex/AGENTS.md`.
+**Claude Code** — copy `CLAUDE.md` to `~/.claude/CLAUDE.md`.
+**Any Python agent** — `memory search|show|submit` CLI, or import
+`unified_memory`.
+
+### 4. Verify
+
+```sh
+python setup/setup.py selfcheck
+```
+
+### 5. (Optional) schedule daily promotion
+
+```sh
+python setup/setup.py cron --vault ~/Documents/AgentMemory
+# Linux/macOS: crontab entry · Windows: Task Scheduler (schtasks)
+# Equivalent manual flow: promoter --review → --apply (default, human-confirmed)
+```
+
+### What a working round trip looks like
+
+```sh
+memory submit "the staging server runs on 127.0.0.1:8080" --agent alpha
+memory search "staging server"
+# <memory-data> ... doc: 常用路径与环境.md ... </memory-data>
+python -m unified_memory.promoter --review     # builds 待晋升.md
+python -m unified_memory.promoter --apply      # promotes into canonical
+python -m unified_memory.promoter --auto       # or one step (explicit opt-in)
+```
+
+---
+
+## Full mode (advanced, optional)
+
+### Daily promotion via an agent runtime's scheduler
+
+The promoter itself is scheduler-agnostic. Hermes users can point their
+existing daily dream-cron at the open-source promoter:
+
+```sh
+python -m unified_memory.promoter --auto --vault ~/Documents/AgentMemory
+```
+
+That is the ONLY Hermes involvement — the promoter, vault and index run
+without Hermes. See integrations/hermes/README.md for context-injection hook
+examples (adapt to your runtime's API).
+
+### Remote semantic index (optional)
+
+By default the semantic index lives on your machine
+(~/.unified-memory/index.db, SQLite FTS5) — privacy stays local. If you run
+your own server you can put the index there for multi-device recall:
+
+1. Run the index builder on your server (same core package).
+2. Point agents at it with a remote configuration in your deployment; when
+   remote is not configured, `memory search --remote` answers "not
+   configured" and local search keeps working (graceful degradation).
+
+Details are deployment-specific; the core never sends vault content anywhere
+unless you configure a remote endpoint yourself.
+
+## Upgrading
+
+- Core CLI is versioned; check CHANGELOG.md for changes.
+- The dsh plugin is tested against dsh 0.1.0-rc.6; dsh API changes are
+  tracked with upgrade notes in CHANGELOG.md.
