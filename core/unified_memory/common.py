@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 import time
 import uuid
 from contextlib import contextmanager
@@ -169,6 +170,7 @@ def file_lock(vault: Path, timeout_s: float = 30.0, poll_s: float = 0.5):
     """
     lock_path = vault / LOCK_FILE
     deadline = time.monotonic() + timeout_s
+    waiting_reported = False
     while True:
         try:
             fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
@@ -183,6 +185,13 @@ def file_lock(vault: Path, timeout_s: float = 30.0, poll_s: float = 0.5):
                     continue
             except FileNotFoundError:
                 continue
+            if not waiting_reported:
+                print(
+                    f"waiting for lock {lock_path} (held by another writer, "
+                    f"up to {timeout_s:g}s)...",
+                    file=sys.stderr,
+                )
+                waiting_reported = True
             if time.monotonic() >= deadline:
                 raise TimeoutError(
                     f"could not acquire {lock_path} within {timeout_s}s — another "

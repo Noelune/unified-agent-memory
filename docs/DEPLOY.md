@@ -30,6 +30,12 @@ This creates the full vault template (7 canonical notes, 提交区 inbox,
 情境信息, 记忆遗忘区), writes the vault path into ~/.unified-memory.yaml, and
 drops AGENTS.md / CLAUDE.md next to the vault.
 
+> **Windows note**: use a native Windows path (e.g. `C:\Users\you\Documents\AgentMemory`)
+> or a plain absolute POSIX-style path (`C:/Users/...`). Paths starting with a
+> single slash like `/tmp/...` are interpreted as drive-relative (`C:\tmp\...`)
+> by Python on Windows — if you are inside Git-Bash/MSYS, prefer
+> `$HOME/Documents/AgentMemory` or the explicit `C:/` form.
+
 ### 3. Connect agents
 
 **dsh** (plugin):
@@ -86,6 +92,16 @@ python -m unified_memory.promoter --auto --vault ~/Documents/AgentMemory
 That is the ONLY Hermes involvement — the promoter, vault and index run
 without Hermes. See integrations/hermes/README.md for context-injection hook
 examples (adapt to your runtime's API).
+
+### Main-agent scheduling (recommended)
+
+For a fleet of agents, designate **one agent that has a built-in scheduler
+as the main agent** and let it own the daily promotion cron. Give that cron
+the full lifecycle — promote with `--auto`, surface conflicts for
+adjudication, run canonical hygiene, and the weekly forgetting scan — and
+implement **missed-run recovery**: if the scheduled time passes while the
+agent is not running, fire the promotion immediately on the agent's next
+startup. Submissions are then promoted late, never lost.
 
 ### Remote semantic index (optional)
 

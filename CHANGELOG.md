@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.1] — 2026-08-15
+
+### Fixed
+
+- **`file_lock` now prints a one-time "waiting for lock …" notice to stderr**
+  while another writer holds the lock, instead of waiting silently for up to
+  30 s (the timeout error itself was already clear; the wait in between was not).
+
+### Docs
+
+- **DEPLOY.md: Windows vault-path note** — paths like `/tmp/...` are
+  drive-relative on Windows (`C:\tmp\...`); use `C:/...` or `$HOME/...` forms.
+
 ## [0.1.0] — 2026-08-14
 
 ### Added
