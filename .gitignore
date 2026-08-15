@@ -1,0 +1,39 @@
+# Secrets — never commit
+*.secret
+.env
+.env.*
+
+# Runtime data
+logs/
+sessions/
+*.bak*
+*.tmp
+*.log
+
+# Local user config & index (never commit YOUR vault config)
+.unified-memory.yaml
+index.db
+promote.log
+
+# Probe/tooling files
+.dsh-*
+.idea/
+.vscode/
+*.swp
+
+# Node
+node_modules/
+*.tgz
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+
+# OS
+Thumbs.db
+.DS_Store

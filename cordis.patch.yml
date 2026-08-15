@@ -1,0 +1,4 @@
+# dsh-unified-agent-memory bundle patch: joins the profile layer stack on install.
+- insert:
+    - id: dsh-unified-agent-memory
+      name: 'dsh-unified-agent-memory'
