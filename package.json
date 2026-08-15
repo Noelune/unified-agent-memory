@@ -13,7 +13,8 @@
   "files": [
     "lib",
     "docs",
-    "integrations/hermes",
+    "integrations/hermes/*.py",
+    "integrations/hermes/README.md",
     "vault-template",
     "cordis.patch.yml",
     "README.md",
