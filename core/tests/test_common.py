@@ -32,3 +32,20 @@ def make_scratch_vault() -> Path:
 def destroy_scratch(vault: Path) -> None:
     shutil.rmtree(vault.parent, ignore_errors=True)
     os.environ.pop("UNIFIED_MEMORY_VAULT", None)
+
+
+class RedactTest(unittest.TestCase):
+    def test_redacts_short_credential_values(self):
+        # Short values (>= 4 chars) after a key must still be redacted so a
+        # session archive can't leak even a short test key.
+        self.assertIn("<REDACTED>", common.redact("api_key: abc123"))
+        self.assertIn("<REDACTED>", common.redact("auth_token: abcd"))
+        self.assertIn("<REDACTED>", common.redact("password: pass"))
+
+    def test_redact_does_not_erase_plain_text(self):
+        self.assertEqual(common.redact("the server runs on 127.0.0.1:8080"), "the server runs on 127.0.0.1:8080")
+        self.assertNotIn("<REDACTED>", common.redact("api is a common word"))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -50,11 +50,11 @@ LOCK_FILE = ".lock"
 # --------------------------------------------------------------------------
 
 SECRET_PATTERNS = [
-    (re.compile(r"(?i)(api[_-]?key\s*[:=]\s*)([^\s`'\"]{8,})"), r"\1<REDACTED>"),
-    (re.compile(r"(?i)(access[_-]?token\s*[:=]\s*)([^\s`'\"]{8,})"), r"\1<REDACTED>"),
-    (re.compile(r"(?i)(auth[_-]?token\s*[:=]\s*)([^\s`'\"]{8,})"), r"\1<REDACTED>"),
-    (re.compile(r"(?i)(secret\s*[:=]\s*)([^\s`'\"]{8,})"), r"\1<REDACTED>"),
-    (re.compile(r"(?i)(password\s*[:=]\s*)([^\s`'\"]{6,})"), r"\1<REDACTED>"),
+    (re.compile(r"(?i)(api[_-]?key\s*[:=]\s*)([^\s`'\"]{4,})"), r"\1<REDACTED>"),
+    (re.compile(r"(?i)(access[_-]?token\s*[:=]\s*)([^\s`'\"]{4,})"), r"\1<REDACTED>"),
+    (re.compile(r"(?i)(auth[_-]?token\s*[:=]\s*)([^\s`'\"]{4,})"), r"\1<REDACTED>"),
+    (re.compile(r"(?i)(secret\s*[:=]\s*)([^\s`'\"]{4,})"), r"\1<REDACTED>"),
+    (re.compile(r"(?i)(password\s*[:=]\s*)([^\s`'\"]{4,})"), r"\1<REDACTED>"),
     (re.compile(r"sk-[A-Za-z0-9_\-]{20,}"), "<REDACTED_API_KEY>"),
     (re.compile(r"AKIA[0-9A-Z]{16}"), "<REDACTED_AWS_ACCESS_KEY>"),
     (re.compile(r"(?<![A-Za-z0-9])[A-Fa-f0-9]{32,}(?![A-Za-z0-9])"), "<REDACTED_HEX_SECRET>"),
