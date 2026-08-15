@@ -68,11 +68,20 @@ class PromoterTest(unittest.TestCase):
         self.assertTrue(done.is_file())
 
     def test_auto_promotes_in_one_step(self):
-        self.write_inbox("dsh-20260814-120000-01.md", ["verify builds before claiming success"])
+        # Use a fact that classifies to rules but is NOT a template placeholder,
+        # so the assertion is real (the old test matched a template line).
+        self.write_inbox("dsh-20260814-120000-01.md", ["every deploy must pass the audit gate before release"])
         n = promoter.auto_promote(self.vault, verbose=False)
         self.assertEqual(n, 1)
         rules_doc = canonical_path(self.vault, "rules")
-        self.assertIn("verify builds before claiming success", read_maybe(rules_doc))
+        self.assertIn("every deploy must pass the audit gate before release", read_maybe(rules_doc))
+        # It must be classified, not dumped into 未归类事实.md.
+        self.assertNotIn(
+            "every deploy must pass the audit gate before release",
+            read_maybe(situation_dir(self.vault) / "未归类事实.md"),
+        )
+        # The source filename must be preserved in the write stamp.
+        self.assertIn("来源：Agent提交区/dsh-20260814-120000-01.md", read_maybe(rules_doc))
 
     def test_file_lock_is_exclusive(self):
         from unified_memory.common import file_lock
