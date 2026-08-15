@@ -33,8 +33,10 @@ python -m unified_memory.forgetter --apply       # demote into 记忆遗忘区/
 
 - Pure Python standard library — zero third-party dependencies.
 - Config: `UNIFIED_MEMORY_VAULT` env or ~/.unified-memory.yaml.
-- Local-first index: SQLite FTS5 at ~/.unified-memory/index.db (privacy stays
-  on your machine; remote index is an optional advanced mode).
+- Local-first index: SQLite FTS5 at `~/.unified-memory/index-<vault-hash>.db`,
+  isolated per vault and populated with redacted text. Schema upgrades rebuild
+  the index automatically; old fixed-path `index.db` files are not read.
+  Privacy stays on your machine; remote index is an optional advanced mode.
 - Canonical notes are read-only from this package; the only write path is the
   submission inbox. Promotion takes a vault file lock and writes atomically.
 - Search output is wrapped in <memory-data> markers: vault content is DATA,

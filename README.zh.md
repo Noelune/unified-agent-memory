@@ -33,7 +33,7 @@
 - **纯 Python 标准库核心 (Zero-Dependency Engine)**  
   `core/` 模块完全基于 Python 标准库（`sqlite3`, `json`, `hashlib`, `argparse`, `os`）实现，无外部依赖开销，具备毫秒级冷启动性能。
 - **SQLite FTS5 本地全文索引 (Local-First High-Performance Search)**  
-  检索索引持久化存储于本地 `~/.unified-memory/index.db`，基于 SQLite FTS5 引擎实现毫秒级全文匹配与相关度计算，数据隐私完全归属于本地宿主机。
+  检索索引持久化存储于本地 `~/.unified-memory/index-<vault-hash>.db`，按 Vault 隔离；基于 SQLite FTS5 引擎实现毫秒级全文匹配与相关度计算，数据隐私完全归属于本地宿主机。
 - **提示词隔离防护与凭据脱敏 (Prompt Injection Defense & Redaction)**  
   检索输出强制采用 `<memory-data>` 安全隔离标记包装，明确提示 LLM 区分数据上下文与系统指令；知识摄取前自动对敏感凭据（API Keys/Tokens）执行掩码清洗。
 - **完整知识生命周期控制 (Full Lifecycle Pipeline)**  

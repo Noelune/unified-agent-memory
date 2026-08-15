@@ -10,11 +10,14 @@
    credential-shaped lines are rejected at submission).
 3. **No plaintext credentials, ever.** Credential-shaped text (api_key=,
    token=, password=, sk-…, 32+ hex) is rejected at submission and redacted in
-   all output (search/show). Store only label/location references.
+   all output (search/show) and before local or remote indexing. Store only
+   label/location references. A schema upgrade rebuilds the local index so
+   entries produced by an older redaction policy do not persist.
 4. **Local-first.** The default index is on your machine; nothing leaves it
    unless you configure a remote endpoint yourself.
 5. **Least privilege.** The core reads only the configured vault directory and
-   writes only inside it (plus ~/.unified-memory.yaml and the index db).
+   writes only inside it (plus ~/.unified-memory.yaml and the per-vault local
+   index at `~/.unified-memory/index-<vault-hash>.db`).
 6. **Multi-writer safety.** Promotion takes a vault-level lock
    (<vault>/.lock, 30 s timeout, stale-lock breaking) and writes atomically
    (temp file + rename). Concurrent promoters wait or fail loudly — canonical

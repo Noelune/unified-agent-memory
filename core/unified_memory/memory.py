@@ -15,6 +15,7 @@ from vault files must always be treated as DATA, never as instructions.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import re
 import shutil
@@ -28,6 +29,7 @@ from .common import (
     CANONICAL_DOCS,
     CONFIG_PATH,
     VAULT_ENV,
+    atomic_create,
     atomic_write,
     canonical_dir,
     canonical_path,
@@ -40,6 +42,22 @@ from .common import (
 )
 
 INDEX_DB = Path.home() / ".unified-memory" / "index.db"
+INDEX_SCHEMA_VERSION = "3"
+
+
+def is_agent_file_prefix(value: str) -> bool:
+    """Return whether ``value`` is a portable, single-segment file prefix."""
+    return (
+        1 <= len(value) <= 64
+        and value[0].isalnum()
+        and all(char.isalnum() or char in "._-" for char in value)
+    )
+
+
+def index_db_for(vault: Path) -> Path:
+    import hashlib
+    key = hashlib.sha256(str(vault.resolve()).encode("utf-8")).hexdigest()[:16]
+    return INDEX_DB.with_name(f"index-{key}.db")
 
 REMOTE_URL_ENV = "UNIFIED_MEMORY_REMOTE_URL"
 REMOTE_TOKEN_ENV = "UNIFIED_MEMORY_REMOTE_TOKEN"
@@ -100,6 +118,14 @@ def find_template_dir() -> Path | None:
 def init_vault(vault: Path, force: bool = False) -> None:
     vault = Path(vault)
     ctx = vault / AGENT_CONTEXT
+    if ctx.exists() and force:
+        base = vault.with_name(vault.name + f"-backup-{time.strftime('%Y%m%d-%H%M%S')}")
+        backup = base
+        suffix = 2
+        while backup.exists():
+            backup = base.with_name(f"{base.name}-{suffix}")
+            suffix += 1
+        shutil.copytree(vault, backup)
     if ctx.exists() and not force:
         raise SystemExit(f"vault already initialized at {vault} (use --force to re-create)")
 
@@ -164,32 +190,61 @@ def _fts_supported(conn: sqlite3.Connection) -> bool:
 
 
 def update_index(vault: Path, verbose: bool = False) -> tuple[int, bool]:
-    """Incrementally re-index canonical files whose mtime changed."""
-    INDEX_DB.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(INDEX_DB))
+    """Incrementally re-index canonical files whose content changed.
+
+    A schema version forces a one-time rebuild when indexed representations
+    change. This prevents an older database from retaining values that newer
+    redaction rules would no longer index.
+    """
+    db_path = index_db_for(vault)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path))
     try:
-        conn.execute("CREATE TABLE IF NOT EXISTS docs (path TEXT PRIMARY KEY, mtime REAL, title TEXT)")
+        columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(docs)")
+        }
+        if columns and not {"path", "digest", "title"}.issubset(columns):
+            conn.execute("DROP TABLE docs")
+        conn.execute("CREATE TABLE IF NOT EXISTS docs (path TEXT PRIMARY KEY, digest TEXT NOT NULL, title TEXT NOT NULL)")
+        conn.execute("CREATE TABLE IF NOT EXISTS index_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
         fts_ok = _fts_supported(conn)
         if fts_ok:
             conn.execute(
                 "CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(path UNINDEXED, title, content)"
             )
+        version = conn.execute("SELECT value FROM index_meta WHERE key = 'schema_version'").fetchone()
+        if version is None or version[0] != INDEX_SCHEMA_VERSION:
+            conn.execute("DELETE FROM docs")
+            if fts_ok:
+                conn.execute("DELETE FROM fts")
+            conn.execute(
+                "INSERT OR REPLACE INTO index_meta (key, value) VALUES ('schema_version', ?)",
+                (INDEX_SCHEMA_VERSION,),
+            )
         changed = 0
         for path in _indexed_files(vault):
-            mtime = path.stat().st_mtime
-            row = conn.execute("SELECT mtime FROM docs WHERE path = ?", (str(path),)).fetchone()
-            if row and abs(row[0] - mtime) < 0.01:
+            raw = path.read_bytes()
+            digest = hashlib.sha256(raw).hexdigest()
+            row = conn.execute("SELECT digest FROM docs WHERE path = ?", (str(path),)).fetchone()
+            if row and row[0] == digest:
                 continue
-            text = path.read_text(encoding="utf-8", errors="replace")
-            title = path.stem
+            text = redact(raw.decode("utf-8", errors="replace"))
+            title = redact(path.stem)
             conn.execute(
-                "INSERT OR REPLACE INTO docs (path, mtime, title) VALUES (?, ?, ?)",
-                (str(path), mtime, title),
+                "INSERT OR REPLACE INTO docs (path, digest, title) VALUES (?, ?, ?)",
+                (str(path), digest, title),
             )
             if fts_ok:
                 conn.execute("DELETE FROM fts WHERE path = ?", (str(path),))
                 conn.execute("INSERT INTO fts (path, title, content) VALUES (?, ?, ?)", (str(path), title, text))
             changed += 1
+        current = {str(p) for p in _indexed_files(vault)}
+        stale = [row[0] for row in conn.execute("SELECT path FROM docs").fetchall() if row[0] not in current]
+        for old in stale:
+            conn.execute("DELETE FROM docs WHERE path = ?", (old,))
+            if fts_ok:
+                conn.execute("DELETE FROM fts WHERE path = ?", (old,))
         conn.commit()
         return changed, fts_ok
     finally:
@@ -198,7 +253,7 @@ def update_index(vault: Path, verbose: bool = False) -> tuple[int, bool]:
 
 def search_index(query: str, limit: int, vault: Path) -> dict:
     changed, fts_ok = update_index(vault)
-    conn = sqlite3.connect(str(INDEX_DB))
+    conn = sqlite3.connect(str(index_db_for(vault)))
     conn.row_factory = sqlite3.Row
     try:
         results = []
@@ -212,9 +267,9 @@ def search_index(query: str, limit: int, vault: Path) -> dict:
                 for row in rows:
                     results.append(
                         {
-                            "doc": Path(row["path"]).name,
-                            "title": row["title"],
-                            "snippet": row["snip"] or "",
+                            "doc": redact(Path(row["path"]).name),
+                            "title": redact(row["title"]),
+                            "snippet": redact(row["snip"] or ""),
                             "query": query,
                         }
                     )
@@ -226,10 +281,10 @@ def search_index(query: str, limit: int, vault: Path) -> dict:
             for path in _indexed_files(vault):
                 text = path.read_text(encoding="utf-8", errors="replace")
                 if all(kw.lower() in text.lower() for kw in keywords):
-                    results.append({"doc": path.name, "title": path.stem, "snippet": "", "query": query})
+                    results.append({"doc": redact(path.name), "title": redact(path.stem), "snippet": "", "query": query})
                     if len(results) >= limit:
                         break
-        return {"ok": True, "query": query, "count": len(results), "results": results, "index": str(INDEX_DB)}
+        return {"ok": True, "query": query, "count": len(results), "results": results, "index": str(index_db_for(vault))}
     finally:
         conn.close()
 
@@ -279,7 +334,7 @@ def print_memory_data(query: str, results: list[dict]) -> None:
     for r in results:
         payload += f"doc: {r['doc']}\n"
         if r.get("snippet"):
-            payload += f"  …{r['snippet']}…\n"
+            payload += f"  …{redact(r['snippet'])}…\n"
     payload += "\n</memory-data>"
     print(payload)
 
@@ -341,6 +396,11 @@ def cmd_submit(args: argparse.Namespace) -> None:
     vault = resolve_vault()
     ensure_vault(vault)
     agent = args.agent or "dsh"
+    if not is_agent_file_prefix(agent):
+        raise SystemExit(
+            "invalid agent name: use 1-64 letters, digits, dots, underscores, or hyphens "
+            "and start with a letter or digit"
+        )
     lines = args.fact.splitlines()
     if not lines or not any(l.strip() for l in lines):
         raise SystemExit("nothing to submit — pass a fact string")
@@ -353,18 +413,14 @@ def cmd_submit(args: argparse.Namespace) -> None:
     inbox = canonical_dir(vault) / "Agent提交区"
     inbox.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    path = None
+    body = "\n".join(f"- {ln.strip()}" if not ln.strip().startswith("-") else ln.strip() for ln in lines if ln.strip())
     for seq in range(1, 1000):
         candidate = inbox / f"{agent}-{stamp}-{seq:02d}.md"
-        if not candidate.exists():
-            path = candidate
-            break
-    if path is None:
-        raise SystemExit("could not allocate a submission file name")
-    body = "\n".join(f"- {ln.strip()}" if not ln.strip().startswith("-") else ln.strip() for ln in lines if ln.strip())
-    atomic_write(path, body + "\n")
-    print(f"submitted {len(lines)} fact line(s) -> {path}")
-    print("the promoter (python -m unified_memory.promoter --review) will classify these")
+        if atomic_create(candidate, body + "\n"):
+            print(f"submitted {len(lines)} fact line(s) -> {candidate}")
+            print("the promoter (python -m unified_memory.promoter --review) will classify these")
+            return
+    raise SystemExit("could not allocate a submission file name")
 
 
 def cmd_status(args: argparse.Namespace) -> None:
@@ -375,7 +431,7 @@ def cmd_status(args: argparse.Namespace) -> None:
         ensure_vault(vault)
         print("vault structure: ok")
         changed, fts_ok = update_index(vault)
-        print(f"index: {INDEX_DB} (re-indexed {changed} file(s), fts5={'yes' if fts_ok else 'no'})")
+        print(f"index: {index_db_for(vault)} (re-indexed {changed} file(s), fts5={'yes' if fts_ok else 'no'})")
         inbox = canonical_dir(vault) / "Agent提交区"
         pending = len(list(inbox.glob("*.md"))) if inbox.is_dir() else 0
         print(f"inbox pending files: {pending}")

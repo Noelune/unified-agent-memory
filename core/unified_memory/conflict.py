@@ -8,6 +8,7 @@ Rule (same as the vault's coordination convention):
 """
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from .common import (
     ADJUDICATED_FILE,
     CONFLICT_FILE,
     atomic_write,
+    file_lock,
     read_maybe,
     situation_dir,
 )
@@ -63,20 +65,22 @@ def classify_against(new_fact: str, existing_lines: list[str]) -> tuple[str, str
 def append_conflict(vault: Path, new_fact: str, existing_line: str, source: str, target_file: str = "") -> None:
     """Queue one conflict; never touches canonical notes."""
     path = situation_dir(vault) / CONFLICT_FILE
-    if not path.exists():
-        atomic_write(
-            path,
-            "# 事实冲突待裁决\n\n"
-            "> 新提交事实与 canonical 既有行高度相似但值不同。裁决命令：\n"
-            "> \"python -m unified_memory.promoter adjudicate\"（交互式）。\n\n",
-        )
-    entry = (
-        f"- [ ] 冲突｜新：{new_fact}｜旧：{existing_line}｜来源：{source}"
-        + (f"｜目标：{target_file}" if target_file else "")
-        + "\n"
-    )
-    with open(path, "a", encoding="utf-8") as fh:
-        fh.write(entry)
+    fields = {"新": new_fact, "旧": existing_line, "来源": source}
+    if target_file:
+        fields["目标"] = target_file
+    with file_lock(vault):
+        if not path.exists():
+            atomic_write(
+                path,
+                "# 事实冲突待裁决\n\n"
+                "> 新提交事实与 canonical 既有行高度相似但值不同。裁决命令：\n"
+                "> \"python -m unified_memory.promoter adjudicate\"（交互式）。\n\n",
+            )
+        if fields in read_conflicts(vault):
+            return
+        entry = "- [ ] 冲突 " + json.dumps(fields, ensure_ascii=False, separators=(",", ":")) + "\n"
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(entry)
 
 
 def read_conflicts(vault: Path) -> list[dict]:
@@ -86,27 +90,55 @@ def read_conflicts(vault: Path) -> list[dict]:
         line = raw.strip()
         if not line.startswith("- [ ] 冲突"):
             continue
-        body = line[8:]  # strip "- [ ] "
+        body = line[len("- [ ] 冲突"):].strip()
+        if body.startswith("{"):
+            try:
+                fields = json.loads(body)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if isinstance(fields, dict):
+                entries.append({str(key): str(value) for key, value in fields.items()})
+            continue
+        body = body.lstrip("｜")
         fields: dict[str, str] = {}
         for part in body.split("｜"):
             key, _, value = part.partition("：")
-            fields[key.strip()] = value.strip()
+            if key and value:
+                fields[key.strip()] = value.strip()
         entries.append(fields)
     return entries
 
 
-def remove_conflict(vault: Path, entry: dict) -> None:
+def remove_conflict(vault: Path, entry: dict, *, locked: bool = False) -> None:
+    if not locked:
+        with file_lock(vault):
+            remove_conflict(vault, entry, locked=True)
+        return
     path = situation_dir(vault) / CONFLICT_FILE
-    marker = entry.get("新", "")[:40]
-    lines = [
-        ln
-        for ln in read_maybe(path).splitlines()
-        if marker not in ln
-    ]
+    lines = []
+    removed = False
+    for line in read_maybe(path).splitlines():
+        if not removed and line.strip().startswith("- [ ] 冲突"):
+            body = line.strip()[len("- [ ] 冲突"):].strip()
+            try:
+                parsed = json.loads(body) if body.startswith("{") else None
+            except (json.JSONDecodeError, TypeError):
+                parsed = None
+            if isinstance(parsed, dict) and parsed == entry:
+                removed = True
+                continue
+            if parsed is None and entry.get("新", "") and f"｜新：{entry['新']}｜" in line:
+                removed = True
+                continue
+        lines.append(line)
     atomic_write(path, "\n".join(lines) + ("\n" if lines else ""))
 
 
-def record_adjudication(vault: Path, entry: dict, decision: str) -> None:
+def record_adjudication(vault: Path, entry: dict, decision: str, *, locked: bool = False) -> None:
+    if not locked:
+        with file_lock(vault):
+            record_adjudication(vault, entry, decision, locked=True)
+        return
     path = situation_dir(vault) / ADJUDICATED_FILE
     if not path.exists():
         atomic_write(
