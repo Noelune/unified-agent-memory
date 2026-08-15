@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "core"))
 
-from unified_memory.common import atomic_write, ensure_vault, redact, resolve_vault, session_dir  # noqa: E402
+from unified_memory.common import atomic_write, ensure_vault, file_lock, redact, resolve_vault, session_dir  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -45,8 +45,11 @@ def main(argv: list[str] | None = None) -> int:
     target_dir.mkdir(parents=True, exist_ok=True)
     header = f"## {now.strftime('%H:%M')} [{args.agent}] {args.title}".rstrip()
     body = [header, ""] + [ln if ln.startswith(("- ", "• ", "* ")) else f"- {ln}" for ln in lines] + [""]
-    existing = target.read_text(encoding="utf-8") if target.exists() else ""
-    atomic_write(target, existing + "\n".join(body))
+    # Read-append-write under the vault lock so concurrent post-turn hooks
+    # archiving to the same daily file never drop each other's blocks.
+    with file_lock(vault):
+        existing = target.read_text(encoding="utf-8") if target.exists() else ""
+        atomic_write(target, existing + "\n".join(body))
     print(f"archived {len(lines)} line(s) -> {target}")
     return 0
 

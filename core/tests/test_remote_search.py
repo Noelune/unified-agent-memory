@@ -79,6 +79,21 @@ class RemoteSearchTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             mem_mod.cmd_search(Namespace(query="x", limit=8, remote=True))
 
+    def test_remote_search_without_local_vault(self):
+        # A pure remote client (no local vault at all) must still be able to
+        # query the remote index — ensure_vault must not block the remote path.
+        server = RemoteServer(self.vault, "tok123")
+        self.addCleanup(server.close)
+        os.environ["UNIFIED_MEMORY_REMOTE_URL"] = server.url
+        os.environ["UNIFIED_MEMORY_REMOTE_TOKEN"] = "tok123"
+        os.environ["UNIFIED_MEMORY_VAULT"] = str(Path(self.vault).parent / "does-not-exist")
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            mem_mod.cmd_search(Namespace(query="indigo", limit=8, remote=True))
+        out = buf.getvalue()
+        self.assertIn("<memory-data>", out)
+        self.assertIn("indigo", out)
+
 
 if __name__ == "__main__":
     unittest.main()

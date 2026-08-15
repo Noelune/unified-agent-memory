@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.1] — 2026-08-15
+
+### Fixed
+
+- `memory search --remote` no longer requires a local vault: a pure remote
+  client can query the remote index without any local vault (the local
+  fallback still needs one). Reported by Codex review.
+- `archive_session.py` appends under the vault file lock so concurrent
+  post-turn hooks never drop each other's blocks on the same daily file.
+
 ## [0.2.0] — 2026-08-15
 
 ### Changed — deployment is now agent-driven (the only supported way)

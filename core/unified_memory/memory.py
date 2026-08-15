@@ -295,7 +295,6 @@ def cmd_init(args: argparse.Namespace) -> None:
 
 def cmd_search(args: argparse.Namespace) -> None:
     vault = resolve_vault()
-    ensure_vault(vault)
     if args.remote:
         rc = remote_config()
         if rc is None:
@@ -309,9 +308,13 @@ def cmd_search(args: argparse.Namespace) -> None:
             results = remote_search(url, token, args.query, args.limit)
         except Exception as exc:  # noqa: BLE001
             print(f"note: remote search failed ({exc}) — fell back to local index", file=sys.stderr)
+            # Fallback needs a local vault; search_index would otherwise
+            # silently return no matches for a missing vault.
+            ensure_vault(vault)
             results = search_index(args.query, args.limit, vault)["results"]
         print_memory_data(args.query, results)
         return
+    ensure_vault(vault)
     result = search_index(args.query, args.limit, vault)
     print_memory_data(args.query, result["results"])
 
