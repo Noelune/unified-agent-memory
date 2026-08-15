@@ -155,6 +155,30 @@ python -m unified_memory.promoter --apply
 
 ---
 
+## 🚫 没有 Hermes / 任何 Agent 运行时怎么办？(Standalone — no Hermes required)
+
+**核心完全不依赖 Hermes 或任何 Agent 运行时**——vault、inbox、promoter、forgetter、SQLite FTS5 索引都是纯 Python 标准库，直接当命令行工具用即可：
+
+```bash
+# 一个完整的"人肉"工作流，无需任何 agent：
+python setup/setup.py init --vault ~/Documents/AgentMemory   # 1. 初始化 vault
+memory submit "the build server is at 127.0.0.1:8080" --agent you   # 2. 写一条事实
+memory search "build server"                                # 3. 检索（FTS5 本地索引）
+python -m unified_memory.promoter --review                   # 4. 生成待晋升清单
+python -m unified_memory.promoter --apply                    # 5. 晋升进 canonical
+python -m unified_memory.forgetter --apply                   # 6. 定期衰减遗忘（可选）
+```
+
+对接你自己的运行时（不一定是 Hermes）只需要三件事：
+
+1. **写**：调 `memory submit`（或 dsh 插件的 `memory_submit`）。
+2. **定期晋升**：用你运行时的调度器（system cron / Windows Task Scheduler / 任何定时器）跑 `python -m unified_memory.promoter --auto --vault <你的vault>`。
+3. **读/注入**：参考 `integrations/hermes/README.md` 的 hook 草图，把 `memory search` / `memory show` 的输出包进 `<memory-data>` 注入到你的系统提示——那个模式适用于任何 Python 运行时。
+
+Hermes 集成（`integrations/hermes/`）只是"其中一个 Agent 接进来"的可选示例，不是前提条件。详细说明见 [docs/DEPLOY.md](docs/DEPLOY.md) 的 *Full mode* 章节。
+
+---
+
 ## 📂 仓库目录结构 (Repository Layout)
 
 | 路径 | 功能说明 |
