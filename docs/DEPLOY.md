@@ -63,7 +63,13 @@ deployer reads the task book and writes each file itself.
 python setup/setup.py selfcheck
 ```
 
-### 5. (Optional) schedule daily promotion
+### 5. (Recommended) daily promotion is owned by a cron-capable agent
+
+Do **not** rely on a bare system cron. Designate one agent in your deployment
+that has a scheduler (dsh / Codex / Claude Code / Hermes) as the promotion
+owner and give it a scheduled daily task: `promoter --review` → adjudicate →
+`--apply` (see *Full mode* below). Only when **no** agent has a scheduler,
+fall back to the script:
 
 ```sh
 python setup/setup.py cron --vault ~/Documents/AgentMemory
@@ -86,33 +92,39 @@ python -m unified_memory.promoter --auto       # or one step (explicit opt-in)
 
 ## Full mode (advanced, optional)
 
-### Daily promotion via an agent runtime's scheduler
+### Daily promotion — owned by a cron-capable AGENT, not a bare script
 
-The promoter itself is scheduler-agnostic. Hermes users can point their
-existing daily dream-cron at the open-source promoter:
+The daily promotion should be **run by an agent in your deployment that has a
+scheduler** (dsh, Codex, Claude Code, Hermes, or any agent runtime with cron),
+**not** by a dumb `cron` that fires a Python script. The promoter needs
+judgment: review the pending list before promoting, adjudicate conflicts,
+decide on ambiguous facts, and handle failures — that is agent work.
 
-```sh
-python -m unified_memory.promoter --auto --vault ~/Documents/AgentMemory
-```
+Pick **one agent with a built-in scheduler as the promotion owner** and give
+it an explicit daily task (e.g. a scheduled prompt or a behavior rule):
 
-That is the ONLY Hermes involvement — the promoter, vault and index run
-without Hermes. See integrations/hermes/README.md for context-injection hook
-examples (adapt to your runtime's API).
+1. Run `python -m unified_memory.promoter --review --vault <vault>` and **read
+   the pending list** — do not blindly `--auto`.
+2. For facts it cannot confidently classify, run
+   `python -m unified_memory.promoter adjudicate --vault <vault>` and resolve
+   each conflict.
+3. Apply the reviewed promotion (`--apply`), run canonical hygiene, and the
+   weekly forgetting scan.
+4. Implement **missed-run recovery**: if the scheduled time passes while the
+   agent is not running, fire the promotion on its next startup — submissions
+   are then promoted late, never lost.
 
-### Main-agent scheduling (recommended)
+Hermes users can point their existing daily dream-cron at the promoter; if
+Hermes is not present, **the same role goes to whichever of dsh / Codex /
+Claude Code has a scheduler**. The promoter itself is scheduler-agnostic — it
+only needs the vault path. A bare system cron calling the script is a fallback
+only when **no** agent in the deployment has a scheduler.
 
-For a fleet of agents, designate **one agent that has a built-in scheduler
-as the main agent** and let it own the daily promotion cron. Give that cron
-the full lifecycle — promote with `--auto`, surface conflicts for
-adjudication, run canonical hygiene, and the weekly forgetting scan — and
-implement **missed-run recovery**: if the scheduled time passes while the
-agent is not running, fire the promotion immediately on the agent's next
-startup. Submissions are then promoted late, never lost.
-
-### Hermes integration scripts (ready to run)
+### Scripts (fallback, when no cron-capable agent exists)
 
 `integrations/hermes/` ships three runnable, dependency-free scripts that let
-any agent runtime behave like the full reference deployment:
+an agent runtime (or, as a last resort, a bare system cron) drive the full
+lifecycle:
 
 - `inject_context.py` — print a compact, redacted pack of the canonical notes
   for pre-turn injection (adapt the hook to your runtime's API).

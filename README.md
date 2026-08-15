@@ -172,7 +172,7 @@ python -m unified_memory.forgetter --apply                   # 6. 定期衰减�
 对接你自己的运行时（不一定是 Hermes）只需要三件事：
 
 1. **写**：调 `memory submit`（或 dsh 插件的 `memory_submit`）。
-2. **定期晋升**：用你运行时的调度器（system cron / Windows Task Scheduler / 任何定时器）跑 `python -m unified_memory.promoter --auto --vault <你的vault>`。
+2. **定期晋升（需要 Agent 参与，不是裸脚本）**：在你部署环境里**指定一个带调度/定时功能的 Agent**（dsh、Codex、Claude Code、Hermes 中任一）负责每日晋升——由它运行 `python -m unified_memory.promoter --review` **先审核待晋升清单**、`adjudicate` 裁决冲突、再 `--apply` 晋升，并做错过补跑。只有当部署里**完全没有**带调度能力的 Agent 时，才退回用系统 cron 跑 `daily_cron.py` 脚本兜底。
 3. **读/注入**：参考 `integrations/hermes/README.md` 的 hook 草图，把 `memory search` / `memory show` 的输出包进 `<memory-data>` 注入到你的系统提示——那个模式适用于任何 Python 运行时。
 
 Hermes 集成（`integrations/hermes/`）只是"其中一个 Agent 接进来"的可选示例，不是前提条件。详细说明见 [docs/DEPLOY.md](docs/DEPLOY.md) 的 *Full mode* 章节。

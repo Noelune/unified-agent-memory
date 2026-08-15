@@ -86,7 +86,7 @@ Obsidian canonical 笔记由**晋升机制（promoter）统一维护**（含主 
 - 写：只走规则 7 的提交区，无其他写通道。
 
 **规则 9｜晋升机制**
-`python -m unified_memory.promoter --review` 生成待晋升清单，`--apply` 执行，`--auto` 全自动（默认人工确认，全自动需显式开启）；冲突需 `adjudicate` 人工裁决。每日晋升由主 Agent 的 cron 负责，其他 Agent 无需自建。
+`python -m unified_memory.promoter --review` 生成待晋升清单，`--apply` 执行，`--auto` 全自动（默认人工确认，全自动需显式开启）；冲突需 `adjudicate` 人工裁决。**每日晋升由主 Agent 负责**（部署环境里任一有调度能力的 Agent：Hermes 或 dsh/Codex/Claude Code 中带 cron 者），其他 Agent 无需自建。主 Agent 的每日晋升任务必须**先 `--review` 审核待晋升清单、裁决冲突，再 `--apply`**，不得盲目 `--auto`（除非你明确接受全自动）；错过定时则下次启动补跑，提交永不丢失。
 
 ---
 
