@@ -118,7 +118,7 @@ def demote(vault: Path, dry_run: bool = True) -> list[str]:
             atomic_write(target, old + additions)
             moved += len(lines)
     print(f"demoted {moved} line(s) to {out_dir} (reversible — nothing was deleted)")
-    return []
+    return [line for _, line in candidates]
 
 
 def register_cron(vault: Path) -> None:
