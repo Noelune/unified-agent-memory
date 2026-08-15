@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import platform
 import re
 import shutil
@@ -39,7 +38,6 @@ from .common import (
     ensure_vault,
     fact_lines,
     file_lock,
-    is_versioned,
     processed_dir,
     read_maybe,
     redact,

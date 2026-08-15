@@ -21,7 +21,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "core"))
 
-from unified_memory import memory as mem_mod  # noqa: E402
 from unified_memory.common import CANONICAL_DOCS, canonical_dir, ensure_vault, redact, resolve_vault  # noqa: E402
 
 
