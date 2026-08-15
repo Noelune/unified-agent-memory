@@ -52,6 +52,21 @@ class ArchiveSessionTest(unittest.TestCase):
         self.assertIn("<REDACTED>", text)
         self.assertNotIn("safe1234", text)
 
+    def test_redacts_and_normalizes_header_metadata(self):
+        with patch("sys.stdin", io.StringIO("safe line\n")):
+            with redirect_stdout(io.StringIO()):
+                archive_session.main([
+                    "--vault", str(self.vault),
+                    "--agent", "api_key: hdr1234\n# injected",
+                    "--title", "token: ttl1234\n## injected",
+                ])
+        target = next((self.vault / "50-Agent-Context" / "会话归档").glob("*.md"))
+        text = target.read_text(encoding="utf-8")
+        self.assertNotIn("hdr1234", text)
+        self.assertNotIn("ttl1234", text)
+        self.assertNotIn("## injected", text)
+        self.assertEqual(sum(1 for line in text.splitlines() if line.startswith("## ")), 1)
+
 
 class InjectContextTest(unittest.TestCase):
     def setUp(self):

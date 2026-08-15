@@ -53,6 +53,7 @@ SECRET_PATTERNS = [
     (re.compile(r"(?i)(api[_-]?key\s*[:=]\s*)([^\s`'\"]{4,})"), r"\1<REDACTED>"),
     (re.compile(r"(?i)(access[_-]?token\s*[:=]\s*)([^\s`'\"]{4,})"), r"\1<REDACTED>"),
     (re.compile(r"(?i)(auth[_-]?token\s*[:=]\s*)([^\s`'\"]{4,})"), r"\1<REDACTED>"),
+    (re.compile(r"(?i)(?<![A-Za-z_])(token\s*[:=]\s*)([^\s`'\"]{4,})"), r"\1<REDACTED>"),
     (re.compile(r"(?i)(secret\s*[:=]\s*)([^\s`'\"]{4,})"), r"\1<REDACTED>"),
     (re.compile(r"(?i)(password\s*[:=]\s*)([^\s`'\"]{4,})"), r"\1<REDACTED>"),
     (re.compile(r"sk-[A-Za-z0-9_\-]{20,}"), "<REDACTED_API_KEY>"),
@@ -63,6 +64,7 @@ SECRET_PATTERNS = [
 # Credential-shaped lines are REJECTED at submission time (never written).
 CREDENTIAL_LINE_RE = re.compile(
     r"(?i)(api[_-]?key|access[_-]?token|auth[_-]?token|secret|password)\s*[:=]"
+    r"|(?<![A-Za-z_])token\s*[:=]"
     r"|sk-[A-Za-z0-9_\-]{20,}"
     r"|AKIA[0-9A-Z]{16}"
     r"|(?<![A-Za-z0-9])[A-Fa-f0-9]{32,}(?![A-Za-z0-9])"
@@ -162,8 +164,64 @@ def atomic_write(path: Path, text: str) -> None:
     os.replace(tmp, path)
 
 
+def atomic_create(path: Path, text: str) -> bool:
+    """Create ``path`` with complete content, without replacing an existing file.
+
+    A same-directory hard link makes both publication and exclusive creation a
+    single filesystem operation.  This lets concurrent submitters retry a new
+    file name without exposing a partly-written inbox entry to the promoter.
+    On filesystems without hard-link support (FAT32, some network mounts) we
+    fall back to O_CREAT|O_EXCL so exclusive creation is still preserved.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex[:8]}.tmp")
+    try:
+        with tmp.open("w", encoding="utf-8", newline="") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.link(tmp, path)
+        except FileExistsError:
+            return False
+        except OSError:
+            # Hard links unsupported here: publish via an exclusive create.
+            try:
+                fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except FileExistsError:
+                return False
+            with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+                handle.write(text)
+                handle.flush()
+        return True
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 def read_maybe(path: Path) -> str:
     return path.read_text(encoding="utf-8") if path.exists() else ""
+
+
+def _remove_lock(lock_path: Path, retries: int = 20, delay: float = 0.05) -> None:
+    """Delete the advisory lock file, retrying around Windows' open-file rule.
+
+    On POSIX deleting an open file is fine; on Windows it raises PermissionError
+    until every handle is closed. A concurrent acquirer holds the file open for
+    only a few microseconds (exclusive-create → write → close), so a short retry
+    loop makes the finally-cleanup reliable without blocking callers.
+    """
+    for _ in range(retries):
+        try:
+            lock_path.unlink(missing_ok=True)
+            return
+        except PermissionError:
+            time.sleep(delay)
+    # Give up quietly; a lock that could not be removed is broken by the stale
+    # recovery on the next acquisition instead of crashing the current writer.
+    try:
+        lock_path.unlink(missing_ok=True)
+    except PermissionError:
+        pass
 
 
 @contextmanager
@@ -171,22 +229,59 @@ def file_lock(vault: Path, timeout_s: float = 30.0, poll_s: float = 0.5):
     """Exclusive lock file at <vault>/.lock; times out with a clear error.
 
     The lock is advisory: every writer in this package takes it before
-    touching canonical files. Stale locks (older than 10 minutes) are broken.
+    touching canonical files. A lock from a dead process is recovered; a live
+    process keeps ownership even when a long operation outlasts the old
+    stale-file threshold.
     """
     lock_path = vault / LOCK_FILE
     deadline = time.monotonic() + timeout_s
     waiting_reported = False
+    owner_token = uuid.uuid4().hex
     while True:
         try:
             fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            os.write(fd, f"pid={os.getpid()} ts={int(time.time())}\n".encode("utf-8"))
-            os.close(fd)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(f"pid={os.getpid()} token={owner_token}\n")
+                handle.flush()
             break
+        except PermissionError:
+            # Windows: another thread may be mid create/delete of the lock file;
+            # treat it as transient contention and retry.
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"could not acquire {lock_path} within {timeout_s}s — another "
+                    "promoter/writer holds the lock"
+                )
+            time.sleep(poll_s)
+            continue
         except FileExistsError:
             try:
-                age = time.time() - os.path.getmtime(lock_path)
-                if age > 600:
+                fields = dict(
+                    item.split("=", 1)
+                    for item in lock_path.read_text(encoding="utf-8").split()
+                    if "=" in item
+                )
+                pid = int(fields.get("pid", "0"))
+                try:
+                    os.kill(pid, 0)
+                    owner_is_alive = True
+                except ProcessLookupError:
+                    owner_is_alive = False
+                except PermissionError:
+                    owner_is_alive = True
+                except OSError:
+                    owner_is_alive = True
+                if not owner_is_alive:
                     lock_path.unlink(missing_ok=True)
+                    continue
+            except (FileNotFoundError, ValueError, UnicodeDecodeError):
+                # A partially-created or corrupt lock is never removed while
+                # fresh; after ten minutes no owner can safely rely on it.
+                try:
+                    if time.time() - lock_path.stat().st_mtime > 600:
+                        lock_path.unlink(missing_ok=True)
+                        continue
+                except FileNotFoundError:
                     continue
             except FileNotFoundError:
                 continue
@@ -206,7 +301,16 @@ def file_lock(vault: Path, timeout_s: float = 30.0, poll_s: float = 0.5):
     try:
         yield
     finally:
-        lock_path.unlink(missing_ok=True)
+        try:
+            fields = dict(
+                item.split("=", 1)
+                for item in lock_path.read_text(encoding="utf-8").split()
+                if "=" in item
+            )
+            if fields.get("token") == owner_token:
+                _remove_lock(lock_path)
+        except (FileNotFoundError, UnicodeDecodeError, PermissionError):
+            pass
 
 
 # --------------------------------------------------------------------------

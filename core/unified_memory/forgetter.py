@@ -128,17 +128,19 @@ def register_cron(vault: Path) -> None:
     system = _platform.system()
     if system == "Windows":
         bat = forget_dir(vault).parent / "forget_weekly.bat"
+        log = vault / "forget_weekly.log"
         content = (
             "@echo off\r\n"
             f"chcp 65001 >nul\r\n"
-            f"\"{python}\" -m unified_memory.forgetter --vault \"{vault}\"\r\n"
+            f"\"{python}\" -m unified_memory.forgetter --vault \"{vault}\" --apply >> \"{log}\" 2>&1\r\n"
+            "exit /b %errorlevel%\r\n"
         )
         bat.write_bytes(b"\xef\xbb\xbf" + content.encode("utf-8"))
         subprocess.run(
-            ["schtasks", "/Create", "/TN", "UnifiedMemoryForget", "/TR", str(bat), "/SC", "WEEKLY", "/D", "MON", "/ST", "04:00", "/F"],
+            ["schtasks", "/Create", "/TN", "UnifiedMemoryForget", "/TR", f'"{bat}"', "/SC", "WEEKLY", "/D", "MON", "/ST", "04:00", "/F"],
             check=False,
         )
-        print("scheduled weekly forget scan (Mon 04:00) via Windows Task Scheduler")
+        print("scheduled weekly reversible forget run (Mon 04:00) via Windows Task Scheduler")
     else:
         print(
             "add a weekly cron line yourself, e.g.:\n"

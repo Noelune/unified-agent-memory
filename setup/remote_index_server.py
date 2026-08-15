@@ -20,6 +20,7 @@ import argparse
 import hmac
 import json
 import os
+import socket
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -27,11 +28,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "core"))
 
 from unified_memory import memory as mem_mod  # noqa: E402
+from unified_memory.common import redact  # noqa: E402
 
 
 class Handler(BaseHTTPRequestHandler):
     vault: Path = None
     token: str = ""
+    request_timeout_seconds = 15
+
+    def setup(self):
+        super().setup()
+        self.connection.settimeout(self.request_timeout_seconds)
 
     def log_message(self, fmt, *args):
         sys.stderr.write("[remote-index] " + (fmt % args) + "\n")
@@ -66,16 +73,33 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             length = int(self.headers.get("Content-Length", 0))
+            if length < 0:
+                self._send_json(400, {"ok": False, "error": "invalid content length"})
+                return
+            if length > 64 * 1024:
+                self._send_json(413, {"ok": False, "error": "request too large"})
+                return
             payload = json.loads(self.rfile.read(length) or b"{}")
+            if not isinstance(payload, dict):
+                self._send_json(400, {"ok": False, "error": "JSON body must be an object"})
+                return
             query = str(payload.get("query", "")).strip()
             if not query:
                 self._send_json(400, {"ok": False, "error": "empty query"})
                 return
-            limit = int(payload.get("limit", 8))
+            limit = min(max(int(payload.get("limit", 8)), 1), 100)
             result = mem_mod.search_index(query, limit, self.vault)
-            self._send_json(200, {"ok": True, "results": result["results"]})
-        except Exception as exc:  # noqa: BLE001
-            self._send_json(500, {"ok": False, "error": str(exc)})
+            safe_results = [
+                {key: redact(value) if isinstance(value, str) else value for key, value in item.items()}
+                for item in result["results"]
+            ]
+            self._send_json(200, {"ok": True, "results": safe_results})
+        except (TimeoutError, socket.timeout):
+            self._send_json(408, {"ok": False, "error": "request timeout"})
+        except (ValueError, json.JSONDecodeError, UnicodeDecodeError):
+            self._send_json(400, {"ok": False, "error": "invalid JSON request"})
+        except Exception:
+            self._send_json(500, {"ok": False, "error": "internal server error"})
 
 
 def main(argv: list[str] | None = None) -> None:

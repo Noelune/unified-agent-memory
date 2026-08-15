@@ -163,7 +163,7 @@ Obsidian canonical 笔记由**晋升机制（promoter）统一维护**（含主 
 - 解析 `<VAULT>`（1.1）与 `<HOME>`（1.2），记录到工作笔记。
 - **部署决策**（能从环境推断就用默认值，不能推断才向用户确认，一次问完）：
   1. **主 Agent**（负责每日晋升 cron）：本机存在 Hermes 或同类带调度能力的运行时则默认它；否则默认你自己（dsh）。
-  2. **索引位置**：默认本地（`~/.unified-memory/index.db`，SQLite FTS5）。
+  2. **索引位置**：默认本地（`~/.unified-memory/index-<vault-hash>.db`，SQLite FTS5，按 Vault 隔离）。旧固定路径 `index.db` 不再读取；确认没有旧版本进程使用后可手动删除。
   3. **晋升模式**：默认人工确认（`--review` → `--apply`）；全自动需用户显式同意。
   4. **接入哪些 Agent**：默认全部已检测到的（dsh / Codex / Claude Code / Hermes 或同类），检测不到的不写。
 

@@ -50,7 +50,8 @@ Q4. **Agents to connect** — which integrations should be installed?
    Default path: `~/Documents/AgentMemory` (confirm if unclear).
 3. Configure per Q2:
    - Local (default): nothing to do — the index lives at
-     `~/.unified-memory/index.db` and is built on first search.
+     `~/.unified-memory/index-<vault-hash>.db`, is isolated per vault, and is
+     built on first search. Old fixed-path `index.db` files are not read.
    - Remote: ask for the server address/credentials, write the remote index
      config, and confirm local search still works when remote is unreachable
      (graceful degradation). Never store the server password in the vault or

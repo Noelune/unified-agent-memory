@@ -18,6 +18,7 @@ Safety defaults (per the project's coordination rules):
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import platform
 import re
@@ -156,9 +157,11 @@ def review(vault: Path, verbose: bool = True) -> dict:
     pending: list[dict] = []
     duplicates = 0
     conflicts = 0
+    source_files: set[str] = set()
     for src in sorted(inbox.glob("*.md")):
         if src.name == "README.md":
             continue
+        source_files.add(src.name)
         for fact in fact_lines(src.read_text(encoding="utf-8", errors="replace")):
             clean = redact(fact.strip())
             doc_id = classify(clean)
@@ -188,7 +191,7 @@ def review(vault: Path, verbose: bool = True) -> dict:
         print(f"review: {len(pending)} pending, {duplicates} duplicate(s), {conflicts} conflict(s)")
         for p in pending:
             print(f"  -> {p['doc']:6s} | {p['fact'][:80]}")
-    return {"pending": pending, "duplicates": duplicates, "conflicts": conflicts}
+    return {"pending": pending, "duplicates": duplicates, "conflicts": conflicts, "source_files": source_files}
 
 
 def write_pending_list(vault: Path, result: dict) -> None:
@@ -198,6 +201,7 @@ def write_pending_list(vault: Path, result: dict) -> None:
         "",
         f"> 生成于 {time.strftime('%Y-%m-%d %H:%M')}。运行 \"python -m unified_memory.promoter --apply\" 晋升；",
         "> 或 \"--auto\" 一步完成（需显式开启）。",
+        "<!-- sources: " + json.dumps(sorted(result["source_files"]), ensure_ascii=False) + " -->",
         "",
     ]
     if not result["pending"]:
@@ -214,6 +218,22 @@ def write_pending_list(vault: Path, result: dict) -> None:
 # --------------------------------------------------------------------------
 
 
+def pending_sources(vault: Path, entries: list[dict]) -> set[str]:
+    """Return the review snapshot's source files, with legacy-list fallback."""
+    for raw in read_maybe(situation_dir(vault) / PENDING_FILE).splitlines():
+        line = raw.strip()
+        if not (line.startswith("<!-- sources: ") and line.endswith(" -->")):
+            continue
+        try:
+            values = json.loads(line[len("<!-- sources: "):-len(" -->")])
+        except json.JSONDecodeError:
+            break
+        if isinstance(values, list) and all(isinstance(value, str) for value in values):
+            return set(values)
+        break
+    return {entry.get("来源", "") for entry in entries}
+
+
 def parse_pending_list(vault: Path) -> list[dict]:
     path = situation_dir(vault) / PENDING_FILE
     entries = []
@@ -223,60 +243,84 @@ def parse_pending_list(vault: Path) -> list[dict]:
         if not m:
             continue
         fields: dict[str, str] = {}
-        for part in m.group(1).split("｜"):
-            key, _, value = part.partition(":")
-            fields[key.strip()] = value.strip()
+        payload = m.group(1)
+        markers = [(key, payload.find(key + ":")) for key in ("分类", "目标", "来源", "内容")]
+        markers = [(key, pos) for key, pos in markers if pos >= 0]
+        for key, pos in markers:
+            end = min((other for _, other in markers if other > pos), default=len(payload))
+            fields[key] = payload[pos + len(key) + 1:end].rstrip("｜ ")
         entries.append(fields)
     return entries
 
 
-def promote(vault: Path, entries: list[dict]) -> list[str]:
+def promote(vault: Path, entries: list[dict], *, locked: bool = False) -> list[str]:
     """Append facts to canonical notes under the file lock; returns promoted lines.
 
     Accepts entries from either source: `apply_pending` (parsed pending list,
     keys `分类`/`内容`/`来源`) or `auto_promote` (raw review output, keys
     `doc`/`fact`/`source`). Missing keys fall back to "other"/""/"inbox".
     """
+    if not locked:
+        with file_lock(vault):
+            return promote(vault, entries, locked=True)
     promoted: list[str] = []
     today = time.strftime("%Y-%m-%d")
-    with file_lock(vault):
-        for entry in entries:
-            doc = entry.get("分类") or entry.get("doc") or "other"
-            target = target_path(vault, doc)
-            existing = read_maybe(target)
-            if not existing.endswith("\n") and existing:
-                existing += "\n"
-            fact = entry.get("内容") or entry.get("fact") or ""
-            src = entry.get("来源") or entry.get("source") or "inbox"
-            line = f"- {fact}{write_stamp(src, today)}\n"
-            # Re-check dedup under the lock (another promoter may have raced).
-            bare = strip_suffix(line)
-            prior = [bare_fact_line(ln) for ln in existing.splitlines() if ln.strip().startswith("-")]
-            if any(p.strip() == bare.strip() for p in prior):
-                continue
-            atomic_write(target, existing + line)
-            promoted.append(line.strip())
+    for entry in entries:
+        doc = entry.get("分类") or entry.get("doc") or "other"
+        target = target_path(vault, doc)
+        existing = read_maybe(target)
+        if not existing.endswith("\n") and existing:
+            existing += "\n"
+        fact = entry.get("内容") or entry.get("fact") or ""
+        src = entry.get("来源") or entry.get("source") or "inbox"
+        line = f"- {fact}{write_stamp(src, today)}\n"
+        # Re-check dedup under the lock (another promoter may have raced).
+        bare = strip_suffix(line)
+        prior = [bare_fact_line(ln) for ln in existing.splitlines() if ln.strip().startswith("-")]
+        if any(p.strip() == bare.strip() for p in prior):
+            continue
+        atomic_write(target, existing + line)
+        promoted.append(line.strip())
     return promoted
 
 
-def archive_sources(vault: Path, sources: set[str]) -> None:
+def archive_sources(vault: Path, sources: set[str], *, locked: bool = False) -> None:
+    if not locked:
+        with file_lock(vault):
+            archive_sources(vault, sources, locked=True)
+        return
     done = processed_dir(vault)
     done.mkdir(parents=True, exist_ok=True)
     inbox = canonical_dir(vault) / "Agent提交区"
     for name in sorted(sources):
-        src = inbox / name
-        if src.is_file():
-            shutil.move(str(src), str(done / name))
+        candidate = Path(name)
+        if candidate.name != name or candidate.suffix.lower() != ".md" or name == "README.md":
+            continue
+        src = inbox / candidate.name
+        if not src.is_file():
+            continue
+        target = done / candidate.name
+        for suffix in range(2, 1000):
+            if not target.exists():
+                break
+            target = done / f"{candidate.stem}-{suffix}{candidate.suffix}"
+        else:
+            raise RuntimeError(f"could not allocate an archive path for {candidate.name}")
+        shutil.move(str(src), str(target))
 
 
 def apply_pending(vault: Path, verbose: bool = True) -> int:
-    entries = parse_pending_list(vault)
+    with file_lock(vault):
+        # Parse and promote under the same lock so a concurrent apply can never
+        # archive a pending-list snapshot that has already been superseded.
+        entries = parse_pending_list(vault)
+        sources = pending_sources(vault, entries)
+        promoted = promote(vault, entries, locked=True)
+        archive_sources(vault, sources, locked=True)
     if not entries:
         if verbose:
-            print("pending list is empty — nothing to apply")
+            print("pending list is empty — reviewed inbox files archived")
         return 0
-    promoted = promote(vault, entries)
-    archive_sources(vault, {e.get("来源", "") for e in entries})
     if verbose:
         print(f"applied {len(promoted)} fact(s) to canonical notes")
         for line in promoted:
@@ -289,8 +333,9 @@ def auto_promote(vault: Path, verbose: bool = True) -> int:
     result = review(vault, verbose=False)
     if result["conflicts"]:
         print(f"warning: {result['conflicts']} conflict(s) queued to {CONFLICT_FILE} (adjudicate manually)")
-    promoted = promote(vault, result["pending"])
-    archive_sources(vault, {p["source"] for p in result["pending"]})
+    with file_lock(vault):
+        promoted = promote(vault, result["pending"], locked=True)
+        archive_sources(vault, {name for name in result["source_files"] if name}, locked=True)
     if verbose:
         print(f"auto-promoted {len(promoted)} fact(s) ({result['duplicates']} duplicate(s) skipped)")
         for line in promoted:
@@ -323,12 +368,31 @@ def adjudicate(vault: Path) -> None:
             target = canonical_path(vault, doc_id) if doc_id in CANONICAL_DOCS else target_path(vault, doc_id)
             with file_lock(vault):
                 existing = read_maybe(target)
-                line = f"- {entry.get('新', '')}{write_stamp(entry.get('来源', 'inbox'))}\n"
-                atomic_write(target, existing + ("" if existing.endswith("\n") else "\n") + line)
-        # 保留旧 and 跳过: do not touch canonical; the submission stays archived by the next --apply/--auto
-        # 保留旧 and 跳过: do not touch canonical; the submission stays archived by the next --apply/--auto
-        record_adjudication(vault, entry, choice)
-        remove_conflict(vault, entry)
+                old = entry.get("旧", "").strip()
+                if choice == "用新" and old:
+                    lines = existing.splitlines(keepends=True)
+                    removed = False
+                    retained = []
+                    for current in lines:
+                        if not removed and current.lstrip().startswith("-") and bare_fact_line(current) == old:
+                            removed = True
+                            continue
+                        retained.append(current)
+                    existing = "".join(retained)
+                new = entry.get("新", "").strip()
+                prior = [bare_fact_line(line) for line in existing.splitlines() if line.lstrip().startswith("-")]
+                if new and new not in prior:
+                    line = f"- {new}{write_stamp(entry.get('来源', 'inbox'))}\n"
+                    existing += ("" if not existing or existing.endswith("\n") else "\n") + line
+                atomic_write(target, existing)
+                record_adjudication(vault, entry, choice, locked=True)
+                remove_conflict(vault, entry, locked=True)
+            continue
+        # 保留旧 and 跳过: do not touch canonical; record and dequeue together
+        # so another process cannot observe a half-resolved conflict.
+        with file_lock(vault):
+            record_adjudication(vault, entry, choice, locked=True)
+            remove_conflict(vault, entry, locked=True)
     print("\nadjudication recorded in " + str(situation_dir(vault) / ADJUDICATED_FILE))
 
 
@@ -352,7 +416,7 @@ def register_cron(vault: Path) -> None:
         bat.write_bytes(b"\xef\xbb\xbf" + content.encode("utf-8"))
         task = "UnifiedMemoryPromote"
         subprocess.run(
-            ["schtasks", "/Create", "/TN", task, "/TR", str(bat), "/SC", "DAILY", "/ST", "03:00", "/F"],
+            ["schtasks", "/Create", "/TN", task, "/TR", f'"{bat}"', "/SC", "DAILY", "/ST", "03:00", "/F"],
             check=False,
         )
         print(f"scheduled daily promotion at 03:00 via Windows Task Scheduler ({task})")

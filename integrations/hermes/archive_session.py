@@ -22,6 +22,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "core"))
 from unified_memory.common import atomic_write, ensure_vault, file_lock, redact, resolve_vault, session_dir  # noqa: E402
 
 
+def header_text(value: str) -> str:
+    """Keep metadata in one redacted Markdown header line."""
+    return redact(value).replace("\r", " ").replace("\n", " ").replace("#", "\\#").strip()
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="archive_session")
     ap.add_argument("--vault", default=None)
@@ -43,7 +48,7 @@ def main(argv: list[str] | None = None) -> int:
     target_dir = session_dir(vault)
     target = target_dir / f"{now.strftime('%Y-%m-%d')}.md"
     target_dir.mkdir(parents=True, exist_ok=True)
-    header = f"## {now.strftime('%H:%M')} [{args.agent}] {args.title}".rstrip()
+    header = f"## {now.strftime('%H:%M')} [{header_text(args.agent)}] {header_text(args.title)}".rstrip()
     body = [header, ""] + [ln if ln.startswith(("- ", "• ", "* ")) else f"- {ln}" for ln in lines] + [""]
     # Read-append-write under the vault lock so concurrent post-turn hooks
     # archiving to the same daily file never drop each other's blocks.
