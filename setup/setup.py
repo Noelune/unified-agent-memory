@@ -2,6 +2,7 @@
 """unified-agent-memory setup — one-command initialization.
 
     python setup/setup.py init --vault <path>   create vault + config + agent files
+    python setup/setup.py agents [--vault <path>]  DEPRECATED — agent-driven deploy (see docs/AGENT-DEPLOY.md)
     python setup/setup.py cron [--vault <path>] register daily promotion
     python setup/setup.py selfcheck             verify the deployment
 
@@ -23,6 +24,21 @@ from unified_memory import promoter  # noqa: E402
 from unified_memory.common import resolve_vault  # noqa: E402
 
 
+def cmd_agents(args: argparse.Namespace) -> None:
+    """Deprecated: global-instruction wiring is now AGENT-DRIVEN.
+
+    Scripted writing of per-agent global instruction files was removed on
+    purpose — each agent's prompt must be tailored to its own file format and
+    conventions, which is a job for the model (DSH), not a template copier.
+    """
+    print("setup agents is deprecated — deployment is agent-driven.")
+    print("On first install, let DSH (DeepSeek Harness) complete the wiring:")
+    print("  have DSH read  docs/AGENT-DEPLOY.md  and follow it end-to-end.")
+    print("It will update each detected agent's global instruction file")
+    print("(dsh / Codex / Claude Code / Hermes or similar) itself.")
+    print("For the vault itself use:  setup init / setup selfcheck")
+
+
 def copy_integration_files(vault: Path) -> None:
     """Copy AGENTS.md / CLAUDE.md templates next to the vault for easy pickup."""
     repo = Path(__file__).resolve().parents[1]
@@ -42,8 +58,8 @@ def cmd_init(args: argparse.Namespace) -> None:
     print("next steps:")
     print("  1. dsh users:  dsh plugin --profile web add dsh-unified-agent-memory")
     print("     and set vaultPath (env UNIFIED_MEMORY_VAULT) to this vault.")
-    print("  2. Codex/Claude: copy AGENTS.md / CLAUDE.md from the vault root")
-    print("     into ~/.codex/ and ~/.claude/ (or use them as references).")
+    print("  2. Wire agents: let DSH follow docs/AGENT-DEPLOY.md end-to-end")
+    print("     (agent-driven; `setup agents` is deprecated and does nothing).")
     print("  3. Optional daily promotion:")
     print("       python setup/setup.py cron --vault <path>")
     print("     or manually: python -m unified_memory.promoter --review / --apply")
@@ -97,6 +113,10 @@ def main() -> None:
     p_init.add_argument("--vault", required=True)
     p_init.add_argument("--force", action="store_true")
     p_init.set_defaults(fn=cmd_init)
+    p_agents = sub.add_parser("agents", help="DEPRECATED: let DSH deploy via docs/AGENT-DEPLOY.md instead")
+    p_agents.add_argument("--vault", default=None)
+    p_agents.add_argument("--dry-run", action="store_true")
+    p_agents.set_defaults(fn=cmd_agents)
     p_cron = sub.add_parser("cron", help="register daily promotion")
     p_cron.add_argument("--vault", default=None)
     p_cron.set_defaults(fn=cmd_cron)

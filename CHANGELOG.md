@@ -2,6 +2,32 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.0] — 2026-08-15
+
+### Changed — deployment is now agent-driven (the only supported way)
+
+- **New `docs/AGENT-DEPLOY.md`** — a self-contained deploy task book for DSH:
+  full memory rules, per-agent global-instruction specs (dsh / Codex / Claude
+  Code / Hermes), write conventions, step-by-step flow, verification checklist
+  and pitfalls. On a fresh install DSH reads it and wires every agent itself.
+- **`setup.py agents` is deprecated** — scripted writing of global instruction
+  files was removed on purpose (each agent's prompt must be tailored to its own
+  file format); the command now prints the agent-driven guidance only. The dead
+  template/wiring code was deleted.
+- **Plugin surfaces deployment guidance**: `memory_status` (and the
+  not-configured message) now point DSH to `docs/AGENT-DEPLOY.md` and check the
+  vault structure, so a fresh install is self-discoverable.
+
+### Fixed
+
+- **npm package now ships the Python core** (`core/` sources in the tarball).
+  `corePath` already defaulted to `<plugin>/core`; previously the tarball did
+  not include it, so the four tools failed on a bare npm install. No `pip
+  install` is needed for the plugin tools (PYTHONPATH is injected). `.npmignore`
+  and a glob-based `files` entry keep `__pycache__`/`.pyc` out of the tarball.
+- Removed stale `pip install unified-agent-memory-core` hints — that package is
+  not on PyPI yet; the plugin-bundled core is the supported path.
+
 ## [0.1.1] — 2026-08-15
 
 ### Fixed

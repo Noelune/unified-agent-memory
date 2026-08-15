@@ -36,20 +36,26 @@ drops AGENTS.md / CLAUDE.md next to the vault.
 > by Python on Windows — if you are inside Git-Bash/MSYS, prefer
 > `$HOME/Documents/AgentMemory` or the explicit `C:/` form.
 
-### 3. Connect agents
+### 3. Connect agents — agent-driven (the only supported way)
 
-**dsh** (plugin):
+Wiring agents into the shared memory is done **by DSH, not by a script**: each
+agent's global instruction file has its own format and conventions, so the
+deployer reads the task book and writes each file itself.
 
-```sh
-dsh plugin --profile web add dsh-unified-agent-memory
-export UNIFIED_MEMORY_VAULT=~/Documents/AgentMemory
-# restart the web profile; the model now has memory_search/show/submit/status
-```
+1. `dsh plugin --profile web add dsh-unified-agent-memory`
+2. In the next DSH session, call `memory_status` — on a fresh install it
+   prints a deployment notice pointing to `docs/AGENT-DEPLOY.md`.
+3. Have DSH read **`docs/AGENT-DEPLOY.md`** and follow it end-to-end. It:
+   - checks/creates the vault and installs the Python core;
+   - writes the shared memory rules into `~/.dsh/AGENTS.md`, `~/.codex/AGENTS.md`,
+     `~/.claude/CLAUDE.md` and the Hermes-style agent's behavior file (per-agent
+     specs, backups, idempotent, no overwrites);
+   - verifies with `selfcheck` and reports per-agent results.
 
-**Codex** — copy `AGENTS.md` to `~/.codex/AGENTS.md`.
-**Claude Code** — copy `CLAUDE.md` to `~/.claude/CLAUDE.md`.
-**Any Python agent** — `memory search|show|submit` CLI, or import
-`unified_memory`.
+> The old `setup.py agents` scripted wiring is **deprecated** and only prints
+> this guidance now. `setup.py init / cron / selfcheck` are still the
+> deterministic parts (vault creation, cron registration, verification) and
+> remain available.
 
 ### 4. Verify
 
