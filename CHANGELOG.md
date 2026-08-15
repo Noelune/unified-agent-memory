@@ -25,6 +25,11 @@ All notable changes to this project are documented in this file.
   not include it, so the four tools failed on a bare npm install. No `pip
   install` is needed for the plugin tools (PYTHONPATH is injected). `.npmignore`
   and a glob-based `files` entry keep `__pycache__`/`.pyc` out of the tarball.
+- **npm package ships the full deploy surface**: `vault-template/`,
+  `integrations/hermes/` scripts and all docs are now in the tarball, so a bare
+  npm install can create a complete vault (`memory init`), run the Hermes-style
+  scripts, and resolve the doc links. The agent-driven task book documents the
+  npm-only equivalents of `setup.py` (`memory init` / `memory status`).
 - Removed stale `pip install unified-agent-memory-core` hints — that package is
   not on PyPI yet; the plugin-bundled core is the supported path.
 

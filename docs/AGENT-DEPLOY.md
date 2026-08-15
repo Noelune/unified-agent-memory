@@ -48,6 +48,11 @@
 - Python core：**插件包自带**（`<插件包目录>/core/`，零依赖标准库）。插件的 `corePath` 默认已指向它（`PYTHONPATH` 自动注入），**无需 pip install 即可用四个工具**。可选：若要全局 `memory` CLI，再 `pip install -e ./core`（仓库内）。
 - `setup/setup.py`（仓库内，不在 npm 包）：`init`（创建 vault）/ `selfcheck`（验证）/ `cron`（注册每日晋升）。**不要使用 `agents` 子命令**——脚本化写入已废弃，全局提示词由你亲自写。
 
+> **npm-only 安装**（只装了插件包，没有 git clone 的仓库）：`setup/setup.py` 不在包内，用捆绑 core 的等价命令代替——
+> - 建 vault：`python -m unified_memory.memory init --vault <VAULT>`
+> - 自检：`python -m unified_memory.memory status`（或插件的 `memory_status` 工具）
+> - 插件包自带完整 `vault-template/`，`memory init` 会用它生成全量模板。
+
 ---
 
 ## 2. 记忆系统核心规则（写入素材，逐条完整）
@@ -170,7 +175,7 @@ Obsidian canonical 笔记由**晋升机制（promoter）统一维护**（含主 
 ### Step 2 检查/创建 vault
 - 检查 `<VAULT>/50-Agent-Context/上下文索引.md` 是否存在。
   - 存在 → 继续。
-  - 不存在 → 运行 `python <repo>/setup/setup.py init --vault <VAULT>`（会自动创建 vault 模板与 canonical 笔记骨架），再检查。
+  - 不存在 → 创建 vault：有 `setup.py`（git clone 安装）用 `python <repo>/setup/setup.py init --vault <VAULT>`；npm-only 用 `python -m unified_memory.memory init --vault <VAULT>`（捆绑 core）。会自动创建 vault 模板与 canonical 笔记骨架，再检查。
 - 检查插件配置里 `vaultPath` 是否已指向 `<VAULT>`；未设置则提示用户设置（或在部署汇报中说明需设置的环境变量 `UNIFIED_MEMORY_VAULT`）。
 
 ### Step 3 逐个写入/更新全局提示词（核心步骤）
@@ -181,7 +186,8 @@ Obsidian canonical 笔记由**晋升机制（promoter）统一维护**（含主 
 4. 每完成一个，记录结果（文件路径、更新方式、章节字数）。
 
 ### Step 4 验证（第 6 节清单全过）
-- 运行 `python setup/setup.py selfcheck --vault <VAULT>`，确认全部 ok。
+- 有 `setup.py`：运行 `python setup/setup.py selfcheck --vault <VAULT>`，确认全部 ok。
+- npm-only：运行 `python -m unified_memory.memory status`（或插件 `memory_status`）确认 vault 结构 / 本地索引 / core importable。
 - 逐文件读回检查（第 6 节）。
 
 ### Step 5 汇报

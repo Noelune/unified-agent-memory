@@ -12,7 +12,9 @@
   },
   "files": [
     "lib",
-    "docs/AGENT-DEPLOY.md",
+    "docs",
+    "integrations/hermes",
+    "vault-template",
     "cordis.patch.yml",
     "README.md",
     "core/pyproject.toml",
