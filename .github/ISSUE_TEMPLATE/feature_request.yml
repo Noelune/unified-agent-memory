@@ -1,0 +1,11 @@
+name: ✨ Feature Request / 功能需求
+description: 提交针对 Obsidian Vault 检索、脱敏规则或生命周期管理的新功能设想
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 需求背景与提案 (Feature Proposal)
+      description: 请详细描述您希望新增的技术特性或改进建议
+    validations:
+      required: true

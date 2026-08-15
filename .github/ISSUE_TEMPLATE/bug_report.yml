@@ -1,0 +1,25 @@
+name: 🐛 Bug Report / 问题反馈
+description: 提交针对记忆 Core、Obsidian 索引或生命周期流程的缺陷报告
+labels: ["bug"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 缺陷描述 (Bug Description)
+      description: 请清晰描述您在运行中遇到的问题或异常行为
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 重现步骤 (Steps to Reproduce)
+      description: 提供能够重现问题的具体步骤或命令序列
+    validations:
+      required: false
+  - type: textarea
+    id: environment
+    attributes:
+      label: 运行环境 (Environment)
+      description: Python 版本, SQLite 版本, dsh 版本, 操作系统等信息
+    validations:
+      required: false
