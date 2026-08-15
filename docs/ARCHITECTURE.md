@@ -78,10 +78,11 @@ never deleted).
 6. **Prompt-injection guard.** Search output is wrapped in `<memory-data>`
    markers and every tool description states the content is data.
 7. **Designate a scheduler-capable agent as the main agent.** A daily
-   promotion cron is part of the intended architecture, and the cleanest way
-   to run it is to let **one agent that has a built-in scheduler/cron** own
-   it. That cron drives the full lifecycle — `promoter --auto`, conflict
-   reporting for human adjudication, canonical hygiene, and the periodic
+   promotion is part of the intended architecture, and the cleanest way to run
+   it is to let **one agent that has a built-in scheduler/cron** own it. That
+   agent drives the full lifecycle — `promoter --review` to review the pending
+   list, adjudicate conflicts, then `--apply` (never blind `--auto` unless the
+   operator explicitly opts in), canonical hygiene, and the periodic
    forgetting scan — and implements **missed-run recovery**: if the scheduled
    time passes while the agent is not running, the promotion runs immediately
    on the agent's next startup. A day's submissions are then promoted late,
