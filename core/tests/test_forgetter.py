@@ -39,6 +39,10 @@ class ForgetterScheduleTest(unittest.TestCase):
         self.assertEqual(calls[0][0][0], "schtasks")
         self.assertIn(f'"{bat}"', calls[0][0])
 
+        # The .bat body is only executable on Windows; the generation + task
+        # registration assertions above still run on every platform.
+        if sys.platform != "win32":
+            self.skipTest("forget_weekly.bat can only be executed on Windows")
         repo_core = str(Path(__file__).resolve().parents[1])
         env = os.environ.copy()
         env["PYTHONPATH"] = repo_core + os.pathsep + env.get("PYTHONPATH", "")
