@@ -41,6 +41,23 @@ Out of scope (by design):
 - Remote-index transport security (only relevant when you configure one; use
   SSH/HTTPS and your own server, per DEPLOY.md).
 
+## Remote index
+
+- The optional remote server requires a Bearer token on every request
+  (constant-time comparison). Use a long random token, stored in the OS secret
+  store or an env var — never in the vault.
+- Localhost is the default and safe. Beyond localhost the token prevents
+  forgery but NOT eavesdropping: terminate TLS in front of the port.
+- The client falls back to the local index (with a stderr note) if the server
+  is unreachable or the token is rejected — an offline server never blocks the
+  vault's facts.
+
+## Session archive
+
+`archive_session.py` (and any post-turn hook) redacts credential-shaped lines
+before writing to `会话归档/`. Archived sessions are raw history, not
+canonical facts; secrets never enter the vault in any form.
+
 ## Reporting
 
 Community-maintained project. Security issues: open a GitHub issue; critical

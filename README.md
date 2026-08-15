@@ -28,6 +28,10 @@ Compared with **sgme** (a memory *bridge* to an external engine) this repo is a 
 - **Safe by default**: credential-shaped lines are rejected at submission and redacted in output; search results are wrapped in <memory-data> markers (data, not instructions); promotion is human-confirmed; a file lock + atomic writes make concurrent promoters safe.
 - **dsh first-class**: cordis plugin with memory_search / memory_show / memory_submit / memory_status model tools, graceful degradation when unconfigured.
 - **Codex / Claude / Hermes integrations**: ready-to-copy AGENTS.md / CLAUDE.md templates and hook examples.
+- **Hermes-style automation**: runnable `integrations/hermes/` scripts for
+  pre-turn context injection, a daily promotion cron (with hygiene + weekly
+  forgetting), and session archiving — plus an optional dependency-free remote
+  index server for multi-device search.
 
 ## Quick start (5 steps, no servers, no Hermes)
 
@@ -38,10 +42,10 @@ Compared with **sgme** (a memory *bridge* to an external engine) this repo is a 
     # 2. initialize a vault (creates the full template + config)
     python setup/setup.py init --vault ~/Documents/AgentMemory
 
-    # 3. connect your agents (pick any)
+    # 3. connect your agents — agent-driven (the only supported way)
+    #    install the dsh plugin; on first use, DSH itself wires every agent's
+    #    global instruction file by following docs/AGENT-DEPLOY.md
     dsh plugin --profile web add dsh-unified-agent-memory   # + set vaultPath/UNIFIED_MEMORY_VAULT
-    cp AGENTS.md ~/.codex/AGENTS.md                          # Codex
-    cp CLAUDE.md ~/.claude/CLAUDE.md                         # Claude Code
 
     # 4. write and read a fact
     memory submit "the staging server runs on 127.0.0.1:8080" --agent alpha
@@ -52,6 +56,39 @@ Compared with **sgme** (a memory *bridge* to an external engine) this repo is a 
     python -m unified_memory.promoter --apply
 
 Full guide: [docs/DEPLOY.md](docs/DEPLOY.md) · Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · Security: [docs/SECURITY.md](docs/SECURITY.md)
+
+## Deploy with DSH (agent-driven — the only supported way)
+
+Wiring agents into the shared memory is **not** a copy-paste job: each agent's
+global instruction file has its own format and conventions, so deployment is
+done **by an agent, not by a script**. Because this project is a DeepSeek
+Harness plugin, the deployer is **DSH itself**:
+
+1. `dsh plugin --profile web add dsh-unified-agent-memory`
+2. In the next DSH session, call `memory_status` — on a fresh install it
+   prints a deployment notice pointing to
+   [docs/AGENT-DEPLOY.md](docs/AGENT-DEPLOY.md).
+3. Have DSH read that task book and follow it end-to-end: it checks the vault,
+   installs the core, then writes the shared memory rules into **each** agent's
+   global instruction file (`~/.dsh/AGENTS.md`, `~/.codex/AGENTS.md`,
+   `~/.claude/CLAUDE.md`, and a Hermes-style agent's behavior file) — tailored
+   per agent, idempotent, backed up, verified with `selfcheck`.
+
+The task book is fully self-contained (rules, per-agent specs, write
+conventions, step-by-step flow, verification checklist, pitfalls) so DSH does
+not need to ask anything — it only confirms a few deployment decisions if they
+cannot be inferred from the environment:
+
+| # | Decision | Default |
+|---|----------|---------|
+| 1 | Who is the **main agent** (owns the daily promotion cron)? | Hermes if present, else the deploying agent |
+| 2 | Index on **local machine or remote server**? | local machine |
+| 3 | Promotion **human-confirmed or fully automatic**? | human-confirmed |
+| 4 | Which **agents to connect** (dsh / Codex / Claude / Hermes)? | every detected agent |
+
+> Not using DSH? A generic AI coding agent can also deploy — copy the prompt
+> from [docs/AGENT-DEPLOY-PROMPT.md](docs/AGENT-DEPLOY-PROMPT.md), paste it
+> with this repo URL into any agent, and answer the 4 questions it asks.
 
 ## Repository layout
 

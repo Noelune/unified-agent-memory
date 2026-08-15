@@ -27,6 +27,7 @@
 - **安全默认**：凭据样式的行在提交时拒绝、输出时脱敏；检索结果包在 <memory-data> 标记内（数据而非指令）；晋升默认人工确认；文件锁 + 原子写保证多 Agent 并发安全。
 - **dsh 一等公民**：cordis 插件注册 memory_search / memory_show / memory_submit / memory_status 模型工具，未配置时优雅降级。
 - **Codex / Claude / Hermes 接入**：现成的 AGENTS.md / CLAUDE.md 模板与 hooks 示例。
+- **Hermes 风格自动化**：`integrations/hermes/` 可运行脚本——每轮上下文注入、每日晋升 cron（含整理 + 每周遗忘）、会话归档；另附可选**零依赖远端索引服务器**（多设备检索）。
 
 ## 快速开始（5 步，无服务器、无 Hermes）
 
@@ -37,10 +38,8 @@
     # 2. 一键初始化 vault（完整模板 + 配置）
     python setup/setup.py init --vault ~/Documents/AgentMemory
 
-    # 3. 接入你的 Agent（任选）
+    # 3. 接入你的 Agent —— Agent 驱动（推荐方式，见下节「用 Agent 部署」）
     dsh plugin --profile web add dsh-unified-agent-memory   # + 配置 vaultPath/UNIFIED_MEMORY_VAULT
-    cp AGENTS.md ~/.codex/AGENTS.md                          # Codex
-    cp CLAUDE.md ~/.claude/CLAUDE.md                         # Claude Code
 
     # 4. 写一条、查一条
     memory submit "the staging server runs on 127.0.0.1:8080" --agent alpha
@@ -52,16 +51,36 @@
 
 完整部署：docs/DEPLOY.md · 架构：docs/ARCHITECTURE.md · 安全：docs/SECURITY.md
 
+## 用 Agent 部署（DSH 驱动 —— 推荐方式）
+
+把各 Agent 接进共享记忆**不是复制粘贴**：每个 Agent 的全局指令文件格式与约定都不同，所以部署由 **Agent 亲自完成**。本项目是 DeepSeek Harness 插件，默认部署者就是 **DSH 自己**：
+
+1. `dsh plugin --profile web add dsh-unified-agent-memory`
+2. 下一个 DSH 会话里调用 `memory_status`——全新安装会打印部署提示，指向
+   [docs/AGENT-DEPLOY.md](docs/AGENT-DEPLOY.md)。
+3. 让 DSH 完整阅读该任务书并端到端执行：检查/创建 vault、安装 core，然后把共享记忆规则写入**每个**检测到的 Agent 的全局指令文件（`~/.dsh/AGENTS.md`、`~/.codex/AGENTS.md`、`~/.claude/CLAUDE.md` 及 Hermes 风格运行时的行为文件）——逐个定制、幂等、带备份、`selfcheck` 验证。
+
+任务书自含（规则、逐 Agent 规格、写入规范、分步流程、验证清单、防坑），DSH 几乎不用提问，只在无法从环境推断时才确认几个部署决策：
+
+| # | 决策 | 默认 |
+|---|------|------|
+| 1 | **主 Agent**（负责每日晋升 cron）是谁？ | 有 Hermes 则 Hermes，否则部署者自己 |
+| 2 | 索引放**本机还是远端服务器**？ | 本机 |
+| 3 | 晋升**人工确认还是全自动**？ | 人工确认 |
+| 4 | 接入**哪些 Agent**（dsh / Codex / Claude / Hermes）？ | 检测到的全部 |
+
+> 不用 DSH？通用 AI 编程 Agent 也能部署——把 [docs/AGENT-DEPLOY-PROMPT.md](docs/AGENT-DEPLOY-PROMPT.md) 里的 prompt 连同本仓库地址丢给任意 Agent，回答它问的 4 个问题即可。
+
 ## 仓库结构
 
 | 路径 | 内容 |
 |---|---|
-| core/ | 零依赖 Python 包：memory.py（init/search/show/submit）、promoter.py（review/apply/adjudicate）、forgetter.py、conflict.py |
-| vault-template/ | 可整体复制的 Obsidian vault：7 个 canonical 笔记 + 提交区 + 情境信息 + 记忆遗忘区 |
+| core/ | 零依赖 Python 包：memory.py（init/search/show/submit）、promoter.py（review/apply/adjudicate/repair-existing）、forgetter.py、conflict.py |
+| vault-template/ | 可整体复制的 Obsidian vault：7 个 canonical 笔记 + 提交区 + 情境信息 + 记忆遗忘区 + 会话归档 |
 | lib/ | dsh 插件：memory_search / memory_show / memory_submit / memory_status 工具 |
-| integrations/ | AGENTS.md（Codex）、CLAUDE.md（Claude）、Hermes hooks 示例 |
-| setup/ | setup.py（init/cron/selfcheck）、selfcheck.py |
-| docs/ | ARCHITECTURE / DEPLOY / SECURITY |
+| integrations/ | AGENTS.md（Codex）、CLAUDE.md（Claude）、Hermes 可运行脚本（inject_context/daily_cron/archive_session）与 hooks 示例 |
+| setup/ | setup.py（init/cron/selfcheck）、remote_index_server.py（零依赖远端索引服务） |
+| docs/ | ARCHITECTURE / DEPLOY / SECURITY / AGENT-DEPLOY / AGENT-DEPLOY-PROMPT |
 
 ## 环境要求
 

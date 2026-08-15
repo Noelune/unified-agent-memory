@@ -72,6 +72,10 @@ CATEGORY_RULES: list[tuple[str, re.Pattern, str]] = [
 UNCLASSIFIED_TARGET = "情境信息/未归类事实.md"
 UNCLASSIFIED_DOC = "情境信息/未归类事实.md"
 
+# Template placeholder lines (safe to prune) — matches the starter-vault
+# examples, not real user facts (e.g. a URL containing "example.com").
+TEMPLATE_PLACEHOLDER_RE = re.compile(r"^示例[:：]|（示例，替换为|（示例）")
+
 
 def classify(fact: str) -> str:
     for _name, pattern, doc_id in CATEGORY_RULES:
@@ -84,6 +88,59 @@ def target_path(vault: Path, doc_id: str) -> Path:
     if doc_id == "other":
         return situation_dir(vault) / "未归类事实.md"
     return canonical_path(vault, doc_id)
+
+
+def repair_existing(vault: Path, dry_run: bool = False) -> dict:
+    """Conservative canonical hygiene: drop exact duplicate fact lines and
+    template placeholder lines. Changed notes are backed up first (reversible)."""
+    ensure_vault(vault)
+    touched: dict[str, list[str]] = {}
+    backup_root: Path | None = None
+    with file_lock(vault):
+        for doc_id, name in CANONICAL_DOCS.items():
+            if doc_id == "index":
+                continue
+            path = canonical_path(vault, doc_id)
+            lines = read_maybe(path).splitlines()
+            kept: list[str] = []
+            seen: set[str] = set()
+            drop: list[str] = []
+            for ln in lines:
+                bare = bare_fact_line(ln)
+                if not bare:
+                    kept.append(ln)
+                    continue
+                if TEMPLATE_PLACEHOLDER_RE.search(bare):
+                    drop.append(ln)
+                    continue
+                if bare in seen:
+                    drop.append(ln)
+                    continue
+                seen.add(bare)
+                kept.append(ln)
+            if drop:
+                touched[name] = drop
+                if not dry_run:
+                    backup_root = situation_dir(vault) / f"_repair_backup_{time.strftime('%Y%m%d-%H%M%S')}"
+                    backup_root.mkdir(parents=True, exist_ok=True)
+                    atomic_write(backup_root / name, read_maybe(path))
+                    atomic_write(path, "\n".join(kept) + ("\n" if kept else ""))
+    removed = sum(len(v) for v in touched.values())
+    if dry_run:
+        print(f"repair (dry-run): {len(touched)} note(s), {removed} line(s) would be removed")
+        for name, drops in touched.items():
+            print(f"  {name}: {len(drops)} line(s)")
+        return {"dry_run": True, "changed_count": len(touched), "removed_items": removed}
+    print(f"repair: {len(touched)} note(s) changed, {removed} line(s) removed")
+    for name, drops in touched.items():
+        print(f"  {name}: {len(drops)} line(s)")
+    print(f"backup: {backup_root}")
+    return {
+        "dry_run": False,
+        "changed_count": len(touched),
+        "removed_items": removed,
+        "backup_root": str(backup_root),
+    }
 
 
 # --------------------------------------------------------------------------
@@ -174,18 +231,24 @@ def parse_pending_list(vault: Path) -> list[dict]:
 
 
 def promote(vault: Path, entries: list[dict]) -> list[str]:
-    """Append facts to canonical notes under the file lock; returns promoted lines."""
+    """Append facts to canonical notes under the file lock; returns promoted lines.
+
+    Accepts entries from either source: `apply_pending` (parsed pending list,
+    keys `分类`/`内容`/`来源`) or `auto_promote` (raw review output, keys
+    `doc`/`fact`/`source`). Missing keys fall back to "other"/""/"inbox".
+    """
     promoted: list[str] = []
     today = time.strftime("%Y-%m-%d")
     with file_lock(vault):
         for entry in entries:
-            doc = entry.get("分类", "other")
+            doc = entry.get("分类") or entry.get("doc") or "other"
             target = target_path(vault, doc)
             existing = read_maybe(target)
             if not existing.endswith("\n") and existing:
                 existing += "\n"
             fact = entry.get("内容") or entry.get("fact") or ""
-            line = f"- {fact}{write_stamp(entry.get('来源', 'inbox'), today)}\n"
+            src = entry.get("来源") or entry.get("source") or "inbox"
+            line = f"- {fact}{write_stamp(src, today)}\n"
             # Re-check dedup under the lock (another promoter may have raced).
             bare = strip_suffix(line)
             prior = [bare_fact_line(ln) for ln in existing.splitlines() if ln.strip().startswith("-")]
@@ -333,6 +396,8 @@ def main(argv: list[str] | None = None) -> None:
     group.add_argument("--auto", action="store_true", help="review + apply in one step (explicit opt-in)")
     group.add_argument("--cron", action="store_true", help="register a daily schedule")
     group.add_argument("--adjudicate", action="store_true", help="interactive conflict resolution")
+    group.add_argument("--repair-existing", action="store_true", help="canonical hygiene: drop duplicate/template-placeholder lines (with backup)")
+    parser.add_argument("--dry-run", action="store_true", help="with --repair-existing: preview only, change nothing")
     args = parser.parse_args(argv)
 
     vault = Path(args.vault) if args.vault else resolve_vault()
@@ -341,6 +406,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.cron:
         register_cron(vault)
+        return
+    if args.repair_existing:
+        repair_existing(vault, dry_run=args.dry_run)
         return
     if args.apply:
         apply_pending(vault)

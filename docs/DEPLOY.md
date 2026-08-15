@@ -36,20 +36,26 @@ drops AGENTS.md / CLAUDE.md next to the vault.
 > by Python on Windows — if you are inside Git-Bash/MSYS, prefer
 > `$HOME/Documents/AgentMemory` or the explicit `C:/` form.
 
-### 3. Connect agents
+### 3. Connect agents — agent-driven (the only supported way)
 
-**dsh** (plugin):
+Wiring agents into the shared memory is done **by DSH, not by a script**: each
+agent's global instruction file has its own format and conventions, so the
+deployer reads the task book and writes each file itself.
 
-```sh
-dsh plugin --profile web add dsh-unified-agent-memory
-export UNIFIED_MEMORY_VAULT=~/Documents/AgentMemory
-# restart the web profile; the model now has memory_search/show/submit/status
-```
+1. `dsh plugin --profile web add dsh-unified-agent-memory`
+2. In the next DSH session, call `memory_status` — on a fresh install it
+   prints a deployment notice pointing to `docs/AGENT-DEPLOY.md`.
+3. Have DSH read **`docs/AGENT-DEPLOY.md`** and follow it end-to-end. It:
+   - checks/creates the vault and installs the Python core;
+   - writes the shared memory rules into `~/.dsh/AGENTS.md`, `~/.codex/AGENTS.md`,
+     `~/.claude/CLAUDE.md` and the Hermes-style agent's behavior file (per-agent
+     specs, backups, idempotent, no overwrites);
+   - verifies with `selfcheck` and reports per-agent results.
 
-**Codex** — copy `AGENTS.md` to `~/.codex/AGENTS.md`.
-**Claude Code** — copy `CLAUDE.md` to `~/.claude/CLAUDE.md`.
-**Any Python agent** — `memory search|show|submit` CLI, or import
-`unified_memory`.
+> The old `setup.py agents` scripted wiring is **deprecated** and only prints
+> this guidance now. `setup.py init / cron / selfcheck` are still the
+> deterministic parts (vault creation, cron registration, verification) and
+> remain available.
 
 ### 4. Verify
 
@@ -103,16 +109,46 @@ implement **missed-run recovery**: if the scheduled time passes while the
 agent is not running, fire the promotion immediately on the agent's next
 startup. Submissions are then promoted late, never lost.
 
-### Remote semantic index (optional)
+### Hermes integration scripts (ready to run)
 
-By default the semantic index lives on your machine
-(~/.unified-memory/index.db, SQLite FTS5) — privacy stays local. If you run
-your own server you can put the index there for multi-device recall:
+`integrations/hermes/` ships three runnable, dependency-free scripts that let
+any agent runtime behave like the full reference deployment:
 
-1. Run the index builder on your server (same core package).
-2. Point agents at it with a remote configuration in your deployment; when
-   remote is not configured, `memory search --remote` answers "not
-   configured" and local search keeps working (graceful degradation).
+- `inject_context.py` — print a compact, redacted pack of the canonical notes
+  for pre-turn injection (adapt the hook to your runtime's API).
+- `daily_cron.py` — the full daily lifecycle: `--auto` promotes, `--repair`
+  runs canonical hygiene, `--forget` runs the weekly scan on Mondays. Safe
+  default (no flags) is review-only.
+- `archive_session.py` — append a redacted session summary to
+  `50-Agent-Context/会话归档/`.
+
+All three take `--vault` or `UNIFIED_MEMORY_VAULT`. Example hook wiring is in
+`integrations/hermes/README.md` — the pattern works for any Python-based agent.
+
+### Remote index server (optional)
+
+To let other machines search the same facts without sharing the vault, run the
+included dependency-free server on a machine that can reach the vault:
+
+```sh
+python setup/remote_index_server.py --vault ~/Documents/AgentMemory --token <t> --host 127.0.0.1 --port 8437
+```
+
+Then point clients at it:
+
+```sh
+export UNIFIED_MEMORY_REMOTE_URL=http://127.0.0.1:8437
+export UNIFIED_MEMORY_REMOTE_TOKEN=<t>
+memory search "staging server" --remote
+```
+
+A token stops forgery, NOT eavesdropping — for anything beyond localhost,
+terminate TLS in front of the port. If the server is unreachable or the token
+is wrong, `--remote` falls back to the local index with a stderr note.
+
+**Structured facts (advanced):** keep entity-style facts in their own note
+under `50-Agent-Context/` (e.g. `实体.md`) and read them with
+`memory show 实体.md`.
 
 Details are deployment-specific; the core never sends vault content anywhere
 unless you configure a remote endpoint yourself.
