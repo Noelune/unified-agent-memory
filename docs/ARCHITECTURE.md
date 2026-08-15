@@ -86,6 +86,10 @@ never deleted).
    time passes while the agent is not running, the promotion runs immediately
    on the agent's next startup. A day's submissions are then promoted late,
    never silently lost.
+8. **Remote search is an optional mirror.** A dependency-free HTTP server can
+   expose the same index to other machines (Bearer token + TLS for anything
+   beyond localhost); the client falls back to the local index if remote is
+   unreachable. The vault stays the single source of truth.
 
 ## Compatibility
 

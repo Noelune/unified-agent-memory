@@ -28,6 +28,10 @@ Compared with **sgme** (a memory *bridge* to an external engine) this repo is a 
 - **Safe by default**: credential-shaped lines are rejected at submission and redacted in output; search results are wrapped in <memory-data> markers (data, not instructions); promotion is human-confirmed; a file lock + atomic writes make concurrent promoters safe.
 - **dsh first-class**: cordis plugin with memory_search / memory_show / memory_submit / memory_status model tools, graceful degradation when unconfigured.
 - **Codex / Claude / Hermes integrations**: ready-to-copy AGENTS.md / CLAUDE.md templates and hook examples.
+- **Hermes-style automation**: runnable `integrations/hermes/` scripts for
+  pre-turn context injection, a daily promotion cron (with hygiene + weekly
+  forgetting), and session archiving — plus an optional dependency-free remote
+  index server for multi-device search.
 
 ## Quick start (5 steps, no servers, no Hermes)
 

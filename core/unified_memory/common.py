@@ -41,6 +41,7 @@ PENDING_FILE = "待晋升.md"
 CONFLICT_FILE = "事实冲突待裁决.md"
 ADJUDICATED_FILE = "事实冲突已裁决.md"
 FORGET_DIR = "记忆遗忘区"
+SESSION_DIR = "会话归档"
 LOCK_FILE = ".lock"
 
 # --------------------------------------------------------------------------
@@ -142,6 +143,10 @@ def situation_dir(vault: Path) -> Path:
 
 def forget_dir(vault: Path) -> Path:
     return canonical_dir(vault) / FORGET_DIR
+
+
+def session_dir(vault: Path) -> Path:
+    return canonical_dir(vault) / SESSION_DIR
 
 
 # --------------------------------------------------------------------------

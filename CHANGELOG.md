@@ -28,6 +28,23 @@ All notable changes to this project are documented in this file.
 - Removed stale `pip install unified-agent-memory-core` hints — that package is
   not on PyPI yet; the plugin-bundled core is the supported path.
 
+### Added
+
+- `memory search --remote`: real remote-index client — Bearer-token HTTP query
+  against `setup/remote_index_server.py`; falls back to the local index (with a
+  stderr note) when unconfigured, unreachable, or the token is rejected.
+- `setup/remote_index_server.py`: dependency-free remote index server
+  (`GET /health`, `POST /search`, Bearer token).
+- `promoter --repair-existing`: conservative canonical hygiene (exact
+  duplicates + template placeholders) with automatic backup and `--dry-run`.
+- `memory show <doc>`: accept any canonical note under `50-Agent-Context`
+  (structured-fact notes) in addition to the built-in ids.
+- `integrations/hermes/`: runnable `inject_context.py`, `daily_cron.py`,
+  `archive_session.py` scripts (context injection, full daily lifecycle,
+  session archiving into `会话归档/`).
+- Vault template: `50-Agent-Context/会话归档/` session-archive folder.
+- dsh plugin `memory_search`: optional `remote` parameter.
+
 ## [0.1.1] — 2026-08-15
 
 ### Fixed
