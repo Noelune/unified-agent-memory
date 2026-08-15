@@ -2,18 +2,24 @@
 
 The memory core is **completely independent of Hermes** — the vault, the
 inbox, the promoter and the forgetter run on pure Python. Hermes is just one
-more agent that can read and write the same vault.
+example agent that can read and write the same vault; **the exact same roles
+can be filled by any agent in your deployment** (dsh, Codex, Claude Code, or
+any runtime with a scheduler).
 
-## What you get by wiring Hermes in
+## What you get by wiring an agent in
 
 1. **Context injection** — before each turn, inject a compact pack of the
    canonical notes (read-only) so the model starts from the vault's truth.
-2. **Daily promotion** — schedule `python -m unified_memory.promoter --auto`
-   at 03:00 (system cron / Windows Task Scheduler / Hermes' own scheduler).
+2. **Daily promotion (agent-owned)** — designate **one cron-capable agent** as
+   the promotion owner: it runs `promoter --review`, adjudicates conflicts,
+   then `--apply`. Hermes can do this via its own scheduler; if you use
+   another agent, give that agent an explicit scheduled daily task with the
+   same steps. (A bare system cron calling `daily_cron.py` is only a fallback
+   when no agent has a scheduler.)
 3. **Tools** — expose `memory_search` / `memory_show` / `memory_submit`
    the same way the dsh plugin does.
 
-## Minimal hook sketch (adapt to YOUR Hermes version)
+## Minimal hook sketch (adapt to YOUR agent runtime)
 
 ```python
 # pre_tool_call / pre_llm_call style hook — pseudo-code, adapt to your runtime
