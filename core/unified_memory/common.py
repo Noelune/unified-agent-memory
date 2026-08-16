@@ -24,14 +24,15 @@ DEFAULT_VAULT = Path.home() / "AgentMemory"
 AGENT_CONTEXT = "50-Agent-Context"
 
 # Canonical documents: stable ids (used by `memory show <id>`) -> file names.
+# Names match the live vault's 50-Agent-Context layout (对齐真实 vault 文件名).
 CANONICAL_DOCS = {
     "index": "上下文索引.md",
     "prefs": "我的偏好摘要.md",
     "env": "常用路径与环境.md",
     "rules": "工程执行规则.md",
-    "tools": "工具可用性.md",
-    "ui": "UI 审美.md",
-    "coord": "协作规则.md",
+    "tools": "工具可用性检查.md",
+    "ui": "UI审美准则.md",
+    "coord": "Codex-Claude-Hermes协作规则.md",
 }
 
 SUBMISSION_DIR = "Agent提交区"

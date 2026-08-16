@@ -48,11 +48,13 @@ from .common import (
     write_stamp,
 )
 from .conflict import (
+    CONFLICT_SIM_THRESHOLD,
     append_conflict,
     classify_against,
     read_conflicts,
     record_adjudication,
     remove_conflict,
+    similarity,
 )
 
 # --------------------------------------------------------------------------
@@ -60,12 +62,12 @@ from .conflict import (
 # --------------------------------------------------------------------------
 
 CATEGORY_RULES: list[tuple[str, re.Pattern, str]] = [
-    ("ui", re.compile(r"\bui\b|user interface|interface|design|theme|color|aesthetic|layout|style|dashboard", re.I), "ui"),
-    ("rules", re.compile(r"rule|workflow|process|policy|must|should|always|never|verify|audit|rollback|deploy|red line|红线", re.I), "rules"),
-    ("prefs", re.compile(r"prefer|like|dislike|default|language|format|tone|writing", re.I), "prefs"),
-    ("env", re.compile(r"path|directory|install|version|environment|config|port|server|model|provider|endpoint|host|url|account|backup|cache|storage|home", re.I), "env"),
-    ("tools", re.compile(r"tool|available|broken|status|doctor|install|uninstall|health", re.I), "tools"),
-    ("coord", re.compile(r"coordinat|collaborat|agent|relay|handoff|ownership|boundary|inbox", re.I), "coord"),
+    ("ui", re.compile(r"\bui\b|user interface|interface|design|theme|color|aesthetic|layout|style|dashboard|界面|设计|审美|主题|颜色|布局|风格", re.I), "ui"),
+    ("rules", re.compile(r"rule|workflow|process|policy|must|should|always|never|verify|audit|rollback|deploy|red line|红线|规则|必须|验证|审计|回滚|部署|流程|步骤", re.I), "rules"),
+    ("prefs", re.compile(r"prefer|like|dislike|default|language|format|tone|writing|偏好|喜欢|希望|语言|格式|语气|风格", re.I), "prefs"),
+    ("env", re.compile(r"path|directory|install|version|environment|config|port|server|model|provider|endpoint|host|url|account|backup|cache|storage|home|路径|目录|端口|服务器|服务|环境|安装|版本|地址|配置|账号|依赖|工具版本", re.I), "env"),
+    ("tools", re.compile(r"tool|available|broken|status|doctor|install|uninstall|health|工具|插件|状态|健康|排查", re.I), "tools"),
+    ("coord", re.compile(r"coordinat|collaborat|agent|relay|handoff|ownership|boundary|inbox|协作|代理|边界|共享|隔离|提交|relay", re.I), "coord"),
 ]
 
 UNCLASSIFIED_TARGET = "情境信息/未归类事实.md"
@@ -74,6 +76,15 @@ UNCLASSIFIED_DOC = "情境信息/未归类事实.md"
 # Template placeholder lines (safe to prune) — matches the starter-vault
 # examples, not real user facts (e.g. a URL containing "example.com").
 TEMPLATE_PLACEHOLDER_RE = re.compile(r"^示例[:：]|（示例，替换为|（示例）")
+
+# A "supersession" fact replaces an existing one (version bump, migration,
+# deprecation). When a similar-but-different fact contains one of these cues it
+# is routed to the pending list as a 取代 entry instead of the conflict queue.
+SUPERSESSION_RE = re.compile(
+    r"改为|改用|换成|迁移到|升级到|更新为|弃用|废弃|不再使用|代替|替代|替换|取代|"
+    r"deprecated|superseded|replaced by|now uses|instead of|new version|新版本",
+    re.I,
+)
 
 
 def classify(fact: str) -> str:
@@ -147,6 +158,17 @@ def repair_existing(vault: Path, dry_run: bool = False) -> dict:
 # --------------------------------------------------------------------------
 
 
+def _best_overlap(fact: str, existing: list[str], min_sim: float) -> str | None:
+    """Return the existing line with the highest similarity ≥ min_sim (or None)."""
+    best_line: str | None = None
+    best_sim = 0.0
+    for line in existing:
+        s = similarity(fact, line)
+        if s > best_sim:
+            best_sim, best_line = s, line
+    return best_line if best_sim >= min_sim else None
+
+
 def review(vault: Path, verbose: bool = True) -> dict:
     ensure_vault(vault)
     inbox = canonical_dir(vault) / "Agent提交区"
@@ -155,6 +177,7 @@ def review(vault: Path, verbose: bool = True) -> dict:
     pending: list[dict] = []
     duplicates = 0
     conflicts = 0
+    supersessions = 0
     source_files: set[str] = set()
     for src in sorted(inbox.glob("*.md")):
         if src.name == "README.md":
@@ -174,9 +197,38 @@ def review(vault: Path, verbose: bool = True) -> dict:
                 duplicates += 1
                 continue
             if status == "conflict":
+                if hit and SUPERSESSION_RE.search(clean):
+                    # Replacement cue: keep both in history, mark old superseded.
+                    supersessions += 1
+                    pending.append(
+                        {
+                            "fact": clean,
+                            "doc": doc_id,
+                            "target": str(target.relative_to(vault)) if target.is_relative_to(vault) else str(target),
+                            "source": src.name,
+                            "supersede": hit,
+                        }
+                    )
+                    continue
                 conflicts += 1
                 append_conflict(vault, clean, hit or "", src.name, doc_id)
                 continue
+            # Below the conflict threshold, a replacement cue with a looser
+            # topic overlap still supersedes (e.g. "端口已改为 9090" vs "端口为 8080").
+            if SUPERSESSION_RE.search(clean):
+                topic_hit = _best_overlap(clean, existing, min_sim=0.3)
+                if topic_hit:
+                    supersessions += 1
+                    pending.append(
+                        {
+                            "fact": clean,
+                            "doc": doc_id,
+                            "target": str(target.relative_to(vault)) if target.is_relative_to(vault) else str(target),
+                            "source": src.name,
+                            "supersede": topic_hit,
+                        }
+                    )
+                    continue
             pending.append(
                 {
                     "fact": clean,
@@ -186,10 +238,11 @@ def review(vault: Path, verbose: bool = True) -> dict:
                 }
             )
     if verbose:
-        print(f"review: {len(pending)} pending, {duplicates} duplicate(s), {conflicts} conflict(s)")
+        print(f"review: {len(pending)} pending, {duplicates} duplicate(s), {conflicts} conflict(s), {supersessions} supersession(s)")
         for p in pending:
-            print(f"  -> {p['doc']:6s} | {p['fact'][:80]}")
-    return {"pending": pending, "duplicates": duplicates, "conflicts": conflicts, "source_files": source_files}
+            mark = f" [取代→{p['supersede'][:40]}]" if p.get("supersede") else ""
+            print(f"  -> {p['doc']:6s} | {p['fact'][:60]}{mark}")
+    return {"pending": pending, "duplicates": duplicates, "conflicts": conflicts, "supersessions": supersessions, "source_files": source_files}
 
 
 def write_pending_list(vault: Path, result: dict) -> None:
@@ -205,7 +258,8 @@ def write_pending_list(vault: Path, result: dict) -> None:
     if not result["pending"]:
         lines.append("_无待晋升事实。_")
     for i, p in enumerate(result["pending"], 1):
-        lines.append(f"- [ ] {i}. 分类:{p['doc']}｜目标:{p['target']}｜来源:{p['source']}｜内容:{p['fact']}")
+        extra = f"｜取代:{p['supersede']}" if p.get("supersede") else ""
+        lines.append(f"- [ ] {i}. 分类:{p['doc']}｜目标:{p['target']}｜来源:{p['source']}{extra}｜内容:{p['fact']}")
     lines.append("")
     atomic_write(path, "\n".join(lines))
     return path
@@ -242,7 +296,7 @@ def parse_pending_list(vault: Path) -> list[dict]:
             continue
         fields: dict[str, str] = {}
         payload = m.group(1)
-        markers = [(key, payload.find(key + ":")) for key in ("分类", "目标", "来源", "内容")]
+        markers = [(key, payload.find(key + ":")) for key in ("分类", "目标", "来源", "取代", "内容")]
         markers = [(key, pos) for key, pos in markers if pos >= 0]
         for key, pos in markers:
             end = min((other for _, other in markers if other > pos), default=len(payload))
@@ -251,12 +305,44 @@ def parse_pending_list(vault: Path) -> list[dict]:
     return entries
 
 
+def _move_to_superseded(text: str, old_bare: str) -> str:
+    """Move an old fact line under the note's 已取代 section (create if absent).
+
+    The index rebuild marks lines under a 已取代 heading as ``superseded``, so
+    this keeps history while removing the old value from active recall.
+    """
+    lines = text.splitlines()
+    removed: str | None = None
+    kept: list[str] = []
+    for ln in lines:
+        if removed is None and ln.lstrip().startswith("-") and bare_fact_line(ln) == old_bare:
+            removed = ln
+            continue
+        kept.append(ln)
+    if removed is None:
+        return text
+    removed_stripped = removed.rstrip()
+    section_idx = next(
+        (i for i, ln in enumerate(kept) if re.match(r"^#{1,4}\s*已取代", ln)),
+        None,
+    )
+    if section_idx is None:
+        return "\n".join(kept).rstrip() + "\n\n## 已取代\n\n" + removed_stripped + "\n"
+    insert_at = len(kept)
+    for i in range(section_idx + 1, len(kept)):
+        if kept[i].startswith("#"):
+            insert_at = i
+            break
+    kept.insert(insert_at, removed_stripped)
+    return "\n".join(kept) + ("\n" if kept else "")
+
+
 def promote(vault: Path, entries: list[dict], *, locked: bool = False) -> list[str]:
     """Append facts to canonical notes under the file lock; returns promoted lines.
 
     Accepts entries from either source: `apply_pending` (parsed pending list,
-    keys `分类`/`内容`/`来源`) or `auto_promote` (raw review output, keys
-    `doc`/`fact`/`source`). Missing keys fall back to "other"/""/"inbox".
+    keys `分类`/`内容`/`来源`/`取代`) or `auto_promote` (raw review output, keys
+    `doc`/`fact`/`source`/`supersede`). Missing keys fall back to "other"/""/"inbox".
     """
     if not locked:
         with file_lock(vault):
@@ -278,6 +364,12 @@ def promote(vault: Path, entries: list[dict], *, locked: bool = False) -> list[s
         if any(p.strip() == bare.strip() for p in prior):
             continue
         atomic_write(target, existing + line)
+        # Supersession: move the old fact line under 已取代 (keeps history).
+        old_bare = entry.get("取代") or entry.get("supersede") or ""
+        if old_bare:
+            after = _move_to_superseded(existing + line, old_bare)
+            if after != existing + line:
+                atomic_write(target, after)
         promoted.append(line.strip())
     return promoted
 

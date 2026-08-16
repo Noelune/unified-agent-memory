@@ -2,6 +2,52 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.3.0] — 2026-08-16
+
+### Added — fused memory architecture (informed by rohitg00/agentmemory & TencentDB-Agent-Memory)
+
+- **`index.py` — memory database (derived copy of the vault)**. Per-vault SQLite
+  now holds `memories` (one record per canonical fact line: type / importance /
+  status / version / superseded_by / source_agent / created / updated /
+  access_count), `embeddings` (Float32 vectors), `access_log`, `graph_nodes` /
+  `graph_edges` and `audit`, alongside the legacy `docs`/`fts` tables. Incremental
+  rebuild by content digest.
+- **`embed.py` — optional semantic vectors**. `memory embed` uses SiliconFlow
+  `Qwen/Qwen3-Embedding-4B` (1024 dims) to embed every memory line; API key from
+  `SILICONFLOW_API_KEY` or `~/.unified-memory/secrets.yaml`; graceful degradation
+  to BM25 when unavailable.
+- **`search.py` — hybrid retrieval**. `memory search --hybrid` fuses BM25 +
+  vectors + concept graph with weighted RRF, diversifies per note, and caps
+  output by a token budget (`--format`, `--budget`).
+- **`digest.py` — session summarization (default on)**. Extracts durable facts
+  from archived sessions via a lightweight LLM call into the submission inbox;
+  cursor-idempotent, `--dry-run` preview, `--off` to disable.
+- **`graph.py` — optional concept graph** (ASCII + CJK-bigram co-occurrence)
+  feeding the third retrieval stream.
+- **Supersession in the promoter**. Replacement cues (“改用/迁移到/instead of”)
+  move the superseded old line under a `已取代` section instead of the conflict
+  queue; the index marks it `superseded`.
+- **Scored forgetting**. `forgetter.py` now uses `importance × (durable floor +
+  decay) + access-reinforcement` instead of a plain 90-day rule.
+- **Chinese-aware classification** in the promoter (偏好/路径/端口/服务器/规则 …)
+  so non-English facts route to the correct canonical note.
+- **Canonical filenames aligned to the live vault** (`工具可用性检查.md`,
+  `UI审美准则.md`, `Codex-Claude-Hermes协作规则.md`) and the vault template /
+  fallback template updated to match.
+
+### Changed
+
+- `core` index/search logic consolidated into `index.py`; `memory.py` delegates
+  and keeps its public call shapes (`search_index`, `index_db_for`,
+  `update_index`) so the remote server and existing tests keep working.
+- **HKMemory SSH recall deprecated and removed.** The external Hermes semantic
+  memory provider (`HKMEMORY_SSH_HOST`, `--hk`, the `_hkmemory` SSH bridge) is
+  deleted. Its recall role is fully replaced by the fused local hybrid
+  retrieval (`search.py`: BM25 + SiliconFlow vectors + concept graph) — the
+  same capability the two reference projects provide, but local-first, faster
+  and without an SSH/server dependency. The dsh plugin no longer passes
+  `--hk`/`noHk`.
+
 ## [0.2.1] — 2026-08-15
 
 ### Fixed

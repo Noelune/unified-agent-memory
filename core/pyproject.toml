@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "unified-agent-memory-core"
-version = "0.2.1"
+version = "0.3.0"
 description = "Dependency-free core of unified-agent-memory: shared Obsidian-vault memory with search, promotion, conflict adjudication and forgetting — no agent runtime required."
 readme = "README.md"
 requires-python = ">=3.10"
