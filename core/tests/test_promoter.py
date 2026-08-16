@@ -243,6 +243,38 @@ with file_lock(vault):
         append_conflict(self.vault, fact, "old branch label", "a.md", "env")
         self.assertEqual(read_conflicts(self.vault)[0]["新"], fact)
 
+    def test_review_detects_supersession_not_conflict(self):
+        # A replacement cue ("instead of") with a similar fact is a supersession,
+        # routed to the pending list — not to the conflict queue.
+        self.seed_canonical("coord", "the relay broker listens on 19121")
+        self.write_inbox("dsh-20260814-120000-01.md", ["the relay broker now listens on 19999 instead of 19121"])
+        result = promoter.review(self.vault, verbose=False)
+        self.assertEqual(result["conflicts"], 0)
+        self.assertEqual(result["supersessions"], 1)
+        self.assertEqual(result["pending"][0]["supersede"], "the relay broker listens on 19121")
+        self.assertEqual(len(read_conflicts(self.vault)), 0)
+
+    def test_apply_moves_superseded_fact_under_deprecated_section(self):
+        self.seed_canonical("coord", "the relay broker listens on 19121")
+        self.write_inbox("dsh-20260814-120000-01.md", ["the relay broker now listens on 19999 instead of 19121"])
+        result = promoter.review(self.vault, verbose=False)
+        promoter.write_pending_list(self.vault, result)
+        promoter.apply_pending(self.vault, verbose=False)
+        text = read_maybe(canonical_path(self.vault, "coord"))
+        self.assertIn("the relay broker now listens on 19999", text)
+        self.assertIn("## 已取代", text)
+        self.assertIn("the relay broker listens on 19121", text)
+
+    def test_chinese_fact_classifies_to_env(self):
+        self.write_inbox("claude-20260814-120000-01.md", ["服务端口已改为 9090"])
+        result = promoter.review(self.vault, verbose=False)
+        self.assertEqual(result["pending"][0]["doc"], "env")
+
+    def test_chinese_preference_classifies_to_prefs(self):
+        self.write_inbox("claude-20260814-120000-01.md", ["用户偏好简体中文回复"])
+        result = promoter.review(self.vault, verbose=False)
+        self.assertEqual(result["pending"][0]["doc"], "prefs")
+
 
 if __name__ == "__main__":
     unittest.main()

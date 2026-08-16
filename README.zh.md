@@ -38,6 +38,16 @@
   检索输出强制采用 `<memory-data>` 安全隔离标记包装，明确提示 LLM 区分数据上下文与系统指令；知识摄取前自动对敏感凭据（API Keys/Tokens）执行掩码清洗。
 - **完整知识生命周期控制 (Full Lifecycle Pipeline)**  
   内置完整的状态流转机制：包含写收件箱暂存、Promoter 知识审核归纳、Adjudicator 冲突事实裁决、Atomic Lock 并发文件锁与 Forgetter 定期记忆衰减归档。
+- **混合检索 (Hybrid Retrieval)**  
+  `memory search --hybrid` 融合三重流：BM25 词法 + 语义向量 + 概念图谱，加权 RRF 融合、同文档多样化、Token 预算裁剪。无向量时自动回退纯 BM25。
+- **语义向量层 (Semantic Embeddings, 可选)**  
+  `memory embed` 用 SiliconFlow `Qwen/Qwen3-Embedding-4B`(1024 维)给每条记忆生成向量，本地 SQLite 存储；搜索“换措辞”也能命中同义事实。API key 存于 `~/.unified-memory/secrets.yaml`(0600/用户 ACL)，失败静默降级。
+- **会话自动提炼 (Session Digest, 默认开启)**  
+  `memory digest` 用轻量 LLM 从历史会话归档提炼持久事实，脱敏后写入提交区，经 Promoter 正常晋升；按日期游标幂等，可 `--dry-run` 预览、`--off` 关闭。
+- **版本化取代 (Supersession)**  
+  Promoter 识别“改用/迁移到/instead of”等取代信号时，把旧事实移入该笔记 `已取代` 小节并保留历史，索引标记旧行 `superseded`，检索只返回最新。
+- **智能遗忘评分 (Salience × Decay × Reinforcement)**  
+  Forgetter 从“90 天未用”升级为 `重要性 × (持久地板 + 时间衰减) + 访问强化`：偏好/架构/规则等高价值记忆长期保留，普通事实随时间衰减，始终可逆。
 
 ---
 
@@ -55,16 +65,27 @@
 
 ## 📂 Obsidian Vault 存储结构规范
 
-系统自动在指定目录生成标准化 Obsidian Vault 存储层层级：
+系统自动在指定目录生成标准化 Obsidian Vault 存储层层级。事实总库位于 `50-Agent-Context/`：
 
 ```text
-~/Documents/AgentMemory/
-├── 00_Inbox/         # 代理提交的待审核临时知识节点 (Draft Notes)
-├── 10_Canonical/     # 经 Promoter 归纳晋升的标准化主知识库 (Canonical Notes)
-├── 20_Conflicts/     # 多代理矛盾事实等待裁决的队列 (Conflict Queue)
-├── 99_Forget/        # 已衰减或废弃的历史知识归档区 (Archived Memories)
-└── .vault_config.json # Vault 属性与索引配置文件
+50-Agent-Context/
+├── 上下文索引.md          # 话题 → 文件映射表（入口）
+├── 我的偏好摘要.md         # L3 用户画像：偏好/风格/语言
+├── 常用路径与环境.md       # L3 画像：路径/版本/环境/服务器
+├── 工程执行规则.md         # L3 画像：工程规则/验证红线
+├── UI审美准则.md           # L3 画像：界面与设计偏好
+├── 工具可用性检查.md       # L3 画像：工具/服务状态
+├── Codex-Claude-Hermes协作规则.md  # L3 画像：多 Agent 协作边界
+├── Agent提交区/           # 写入口：<agent>-<时间戳>.md（唯一写入通道）
+│   └── 已处理/            # 晋升后归档留痕
+├── 情境信息/              # L2：待晋升清单 / 冲突待裁决 / 已裁决 / 未归类
+├── 记忆遗忘区/            # 衰减降级（可逆，不删除）
+├── 会话归档/              # L0：脱敏会话历史
+└── Hermes会话自动归档/     # L0：Hermes 每日会话归档
 ```
+
+> 记忆数据库（派生副本）在 `~/.unified-memory/index-<vault-hash>.db`：docs / FTS5 /
+> memories（逐行记忆，带类型/重要性/版本/来源）/ embeddings（向量，可选）/ 图谱 / 审计。
 
 ---
 
