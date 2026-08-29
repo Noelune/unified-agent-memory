@@ -34,7 +34,9 @@ flowchart TB
         M[memory.py<br/>init · search · show · submit · embed · digest · graph]
         P[promoter.py<br/>review · apply · adjudicate · supersede]
         F[forgetter.py<br/>salience × decay × reinforcement]
-        I[index.py<br/>memory database: docs · fts · memories · embeddings]
+        I[index.py<br/>index orchestration + public compatibility exports]
+        SC[schema.py<br/>SQLite schema + per-vault connection lifecycle]
+        MA[maintenance.py<br/>canonical repair + reversible backups]
         S[search.py<br/>hybrid: BM25 + vectors + graph, RRF]
         E[embed.py<br/>SiliconFlow Qwen3-Embedding-4B · optional]
         G[graph.py<br/>concept co-occurrence · optional]
@@ -53,6 +55,8 @@ flowchart TB
     D -->|writes| INBOX
     C -->|CLI| M
     M --> I
+    I --> SC
+    P --> MA
     S --> I
     P -->|promotes/archives/supersedes| CAN
     P -->|conflicts| SIT
@@ -66,6 +70,12 @@ flowchart TB
 
 The SQLite index (`~/.unified-memory/index-<vault-hash>.db`) is a **derived
 copy** of the vault, rebuilt incrementally from content digests. It holds:
+
+`index.py` remains the public compatibility facade. SQLite schema creation,
+migration and per-vault connections live in `schema.py`; canonical duplicate
+and template cleanup lives in `maintenance.py`. The old public imports remain
+re-exported so existing CLI, remote-index and integration callers do not need
+to change.
 
 | Table | Purpose |
 |---|---|
@@ -145,6 +155,21 @@ layout; the index/model layer organizes content across layers.
 8. **Everything reversible.** Forgetting demotes to `记忆遗忘区/`; supersession
    moves old lines under `已取代`; migration backs up the vault first and is
    verified against a content baseline.
+
+## Runtime adapters and responsibility boundaries
+
+The core package is deliberately separated from agent-specific adapters:
+
+| Component | Responsibility | Writes canonical notes? |
+|---|---|---|
+| `unified-agent-memory` core | index, search, promotion, conflicts, forgetting | Only the reviewed promoter path |
+| `dsh-hermes-memory` | dsh tools, status UI, read/show/search and inbox submission | No |
+| `dsh-memory-discipline` | optional pre-step recall and memory-discipline instructions | No |
+| `Agent提交区/` | isolated cross-agent submission files | Submission files only |
+
+`dsh-memory-discipline` is an optional runtime policy layer. It invokes the
+core CLI for recall; it does not replace the core, bypass review, or write the
+canonical vault directly.
 
 ## Migration & verification
 

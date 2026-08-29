@@ -24,6 +24,10 @@
 
 **`unified-agent-memory` 架构旨在为多 Agent 舰队提供统一的知识管理基座**：它允许 `dsh`、`Codex`、`Claude Code` 与 `Hermes` 等多个独立代理共享基于 Markdown 规范的 Obsidian Vault 知识仓库，配合纯 Python 标准库核心与 SQLite FTS5 本地索引，构建涵盖**知识摄取 (Ingestion)、知识晋升 (Promotion)、冲突裁决 (Adjudication) 与衰减遗忘 (Decay/Retention)** 的全闭环生命周期管理系统。
 
+核心与 DSH 适配器分层维护，具体职责和写入边界见
+[docs/DSH-MEMORY-ADAPTERS.md](docs/DSH-MEMORY-ADAPTERS.md)。该文档明确区分
+`unified-agent-memory`、`dsh-hermes-memory` 与 `dsh-memory-discipline`。
+
 ---
 
 ## 🚀 核心技术优势
