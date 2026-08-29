@@ -47,7 +47,11 @@ class ArchiveSessionTest(unittest.TestCase):
         with patch("sys.stdin", io.StringIO("line one\napi_key: secret123\n")):
             with redirect_stdout(io.StringIO()):
                 archive_session.main(["--vault", str(self.vault)])
-        target = next((self.vault / "50-Agent-Context" / "会话归档").glob("*.md"))
+        # Pick the dated daily file explicitly: the seeded README.md shares the
+        # directory, and pathlib glob order is filesystem-dependent (sorted on
+        # NTFS, hash order on ext4/APFS) — next(glob("*.md")) picked different
+        # files on CI vs Windows.
+        target = next((self.vault / "50-Agent-Context" / "会话归档").glob("????-??-??.md"))
         text = target.read_text(encoding="utf-8")
         self.assertIn("line one", text)
         self.assertIn("<REDACTED>", text)
@@ -61,7 +65,11 @@ class ArchiveSessionTest(unittest.TestCase):
                     "--agent", "api_key: header-secret\n# injected",
                     "--title", "token: title-secret\n## injected",
                 ])
-        target = next((self.vault / "50-Agent-Context" / "会话归档").glob("*.md"))
+        # Pick the dated daily file explicitly: the seeded README.md shares the
+        # directory, and pathlib glob order is filesystem-dependent (sorted on
+        # NTFS, hash order on ext4/APFS) — next(glob("*.md")) picked different
+        # files on CI vs Windows.
+        target = next((self.vault / "50-Agent-Context" / "会话归档").glob("????-??-??.md"))
         text = target.read_text(encoding="utf-8")
         self.assertNotIn("header-secret", text)
         self.assertNotIn("title-secret", text)
