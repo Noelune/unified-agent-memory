@@ -47,7 +47,11 @@ class ArchiveSessionTest(unittest.TestCase):
         with patch("sys.stdin", io.StringIO("line one\napi_key: safe1234\n")):
             with redirect_stdout(io.StringIO()):
                 archive_session.main(["--vault", str(self.vault)])
-        target = next((self.vault / "50-Agent-Context" / "会话归档").glob("*.md"))
+        # Pick the dated daily file explicitly: the seeded README.md shares the
+        # directory, and pathlib glob order is filesystem-dependent (sorted on
+        # NTFS, hash order on ext4/APFS) — next(glob("*.md")) picked different
+        # files on CI vs Windows.
+        target = next((self.vault / "50-Agent-Context" / "会话归档").glob("????-??-??.md"))
         text = target.read_text(encoding="utf-8")
         self.assertIn("line one", text)
         self.assertIn("<REDACTED>", text)
@@ -61,7 +65,11 @@ class ArchiveSessionTest(unittest.TestCase):
                     "--agent", "api_key: hdr1234\n# injected",
                     "--title", "token: ttl1234\n## injected",
                 ])
-        target = next((self.vault / "50-Agent-Context" / "会话归档").glob("*.md"))
+        # Pick the dated daily file explicitly: the seeded README.md shares the
+        # directory, and pathlib glob order is filesystem-dependent (sorted on
+        # NTFS, hash order on ext4/APFS) — next(glob("*.md")) picked different
+        # files on CI vs Windows.
+        target = next((self.vault / "50-Agent-Context" / "会话归档").glob("????-??-??.md"))
         text = target.read_text(encoding="utf-8")
         self.assertNotIn("hdr1234", text)
         self.assertNotIn("ttl1234", text)
