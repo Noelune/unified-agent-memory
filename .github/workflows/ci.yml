@@ -28,7 +28,19 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Scan repository history after force-push
+        if: github.event_name == 'push' && github.event.forced == true
+        shell: bash
+        run: |
+          version="8.24.3"
+          curl --fail --silent --show-error --location \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${version}/gitleaks_${version}_linux_x64.tar.gz" \
+            --output /tmp/gitleaks.tar.gz
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          /tmp/gitleaks detect --redact --verbose --exit-code 2 \
+            --report-format sarif --report-path results.sarif
       - uses: gitleaks/gitleaks-action@v2
+        if: github.event_name != 'push' || github.event.forced != true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
