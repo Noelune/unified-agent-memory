@@ -32,7 +32,7 @@ class DigestTest(unittest.TestCase):
         facts = digest._parse_facts("- 用户偏好简体中文\n- api_key: shortkey\n- 决策：用向量检索\n")
         self.assertIn("用户偏好简体中文", facts)
         self.assertIn("决策：用向量检索", facts)
-        self.assertFalse(any("sk-super" in f for f in facts))
+        self.assertFalse(any("shortkey" in f for f in facts))
 
     def test_archive_files_only_accepts_date_names(self):
         self._write_session("2026-08-16.md", "session body\n")

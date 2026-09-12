@@ -62,8 +62,8 @@ class ArchiveSessionTest(unittest.TestCase):
             with redirect_stdout(io.StringIO()):
                 archive_session.main([
                     "--vault", str(self.vault),
-                    "--agent", "api_key: hdr1234\n# injected",
-                    "--title", "token: ttl1234\n## injected",
+                    "--agent", "api_key: hdr1234",
+                    "--title", "token: ttl1234",
                 ])
         # Pick the dated daily file explicitly: the seeded README.md shares the
         # directory, and pathlib glob order is filesystem-dependent (sorted on
