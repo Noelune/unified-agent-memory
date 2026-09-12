@@ -2,6 +2,25 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Changed
+
+- Hardened the DSH host adapter for DSH `0.1.5-rc.2` / npm `next`: strict
+  boolean parsing, bounded and redacted core output, safe degradation when
+  optional host capabilities are absent, and disposable HTTP status routes.
+- Added a cross-platform, allowlisted deployment helper with preview, atomic
+  apply, timestamped backup, rollback, self-check, and lock protection.
+- Added public five-Agent experience guidance without local paths, credentials,
+  infrastructure identifiers, or session content.
+- Updated package boundaries and audit checks so npm dry-runs reject local
+  vault, database, session archive, credentials, backup, and log content.
+
+### Compatibility
+
+- Primary verification target: DSH `0.1.5-rc.2` / npm `next`, Cordis `4.0.2`,
+  Node.js `>=20`. Stable `latest` remains a separately validated boundary.
+
 ## [0.3.0] — 2026-08-16
 
 ### Added — fused memory architecture (informed by rohitg00/agentmemory & TencentDB-Agent-Memory)

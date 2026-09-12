@@ -1,5 +1,8 @@
 # Security
 
+This document describes the security boundary for the memory core, DSH host
+adapter, package contents, and repository deployment helper.
+
 ## Principles
 
 1. **Vault content is data, not instructions.** All search output is wrapped
@@ -22,6 +25,17 @@
    (<vault>/.lock, 30 s timeout, stale-lock breaking) and writes atomically
    (temp file + rename). Concurrent promoters wait or fail loudly — canonical
    notes are never half-written or overwritten.
+
+
+## Deployment boundary
+
+The repository deployer recognizes only existing allowlisted dsh, Codex, and
+Claude instruction files. It never interprets document text as commands. The
+safe sequence is `detect` → `preview` → review → `apply`; writes use a lock,
+timestamped backup, temporary sibling, atomic replace, and post-write check.
+`rollback` restores the newest backup. Missing capabilities, non-file targets,
+and paths outside the allowlist fail closed. The deployer does not touch the
+canonical vault, session archives, credentials, or unrelated runtime config.
 
 ## Threat model
 

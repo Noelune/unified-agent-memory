@@ -220,7 +220,7 @@ Hermes 集成（`integrations/hermes/`）只是"其中一个 Agent 接进来"的
 ## 🔧 环境要求 (Requirements)
 
 - Python ≥ 3.10 (核心 Engine，仅需 Python 标准库)
-- Node.js ≥ 20 + dsh 0.1.0-rc.6 (仅 dsh 插件需要)
+- Node.js ≥ 20 + DSH `0.1.5-rc.2` / npm `next` (仅 dsh 插件需要)
 - 推荐使用 Obsidian 浏览和查看 Vault 知识库，但非强制要求 — 所有文件均为标准 Markdown 与 SQLite 数据库。
 
 ---
@@ -229,7 +229,7 @@ Hermes 集成（`integrations/hermes/`）只是"其中一个 Agent 接进来"的
 
 - **Maintainer**: [Noelune](https://github.com/Noelune)
 - **Community-maintained** — 欢迎提交 Issue 与 Pull Request。缺陷修复通常在 1–2 周内处理，安全问题优先解决。
-- **Compatibility**: 基于 **dsh 0.1.0-rc.6** 进行测试验证。上游 API 变更说明记录于 [CHANGELOG.md](CHANGELOG.md)。
+- **Compatibility**: 主要验证目标为 DSH `0.1.5-rc.2` / npm `next`。稳定标签 `latest` 是独立兼容边界，升级前需单独验证；上游 API 变更说明记录于 [CHANGELOG.md](CHANGELOG.md)。
 - **License**: **MIT License** — 允许商业化使用。
 
 ---

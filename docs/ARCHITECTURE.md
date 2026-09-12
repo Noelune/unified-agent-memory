@@ -188,7 +188,7 @@ whole procedure can be re-run at any time without side effects.
 
 ## Compatibility
 
-- dsh 0.1.0-rc.6 plugin; Python ≥ 3.10 for the core; SQLite FTS5 when
+- DSH `0.1.5-rc.2` / npm `next` plugin; Python ≥ 3.10 for the core; SQLite FTS5 when
   available (substring fallback otherwise).
 - SiliconFlow embeddings: `Qwen/Qwen3-Embedding-4B`, 1024 dims (optional; API
   key in `~/.unified-memory/secrets.yaml`, permissions 0600 / user-only ACL).

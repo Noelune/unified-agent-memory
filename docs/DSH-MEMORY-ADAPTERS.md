@@ -3,6 +3,14 @@
 This document separates the three layers that are often called “Agent-memory”.
 They are related, but they do different jobs and have different write rights.
 
+## Compatibility target
+
+The primary host target is DSH `0.1.5-rc.2` / npm `next` with Node.js `>=20`.
+The stable `latest` tag is a separate compatibility boundary and must be
+validated independently before upgrading. The plugin keeps its four memory
+tools available when optional HTTP or injection capabilities are absent; route
+registration is best-effort and returns cleanup when the host supports it.
+
 ## Components
 
 | Component | What it does | Write boundary |
@@ -61,3 +69,9 @@ Verify the core with the Python test suite. Verify the dsh tool/UI adapter with
 its host and HTTP smoke tests. Verify the discipline adapter with tests covering
 the sensitive-topic gate, relay-message exclusion, allowlisted interpreters,
 failure logging and frozen-message behavior.
+
+For repository checkout deployment, run `python setup/deploy.py detect`, then
+`preview --target <allowlisted-file>`, review the result, and only then run
+`apply`. The deployer is idempotent, backup-protected, atomic, and rollbackable;
+it never edits canonical notes, session archives, credentials, or arbitrary
+runtime configuration.

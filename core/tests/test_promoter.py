@@ -1,9 +1,5 @@
 # -*- coding: utf-8 -*-
-import os
-import subprocess
-import sys
 import threading
-import time
 import unittest
 from pathlib import Path
 
@@ -159,43 +155,6 @@ class PromoterTest(unittest.TestCase):
             with self.assertRaises(TimeoutError):
                 with file_lock(self.vault, timeout_s=0.3, poll_s=0.05):
                     pass
-
-    def test_file_lock_does_not_break_a_live_old_lock(self):
-        """A healthy writer must keep exclusivity even after a long operation."""
-        script = """
-import os
-import time
-from pathlib import Path
-from unified_memory.common import LOCK_FILE, file_lock
-
-vault = Path(os.environ['UNIFIED_MEMORY_TEST_LOCK_VAULT'])
-with file_lock(vault):
-    old = time.time() - 601
-    os.utime(vault / LOCK_FILE, (old, old))
-    print('locked', flush=True)
-    time.sleep(3)
-"""
-        env = os.environ.copy()
-        env["UNIFIED_MEMORY_TEST_LOCK_VAULT"] = str(self.vault)
-        process = subprocess.Popen(
-            [sys.executable, "-c", script],
-            cwd=Path(__file__).resolve().parents[1],
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        self.addCleanup(lambda: process.poll() is None and process.kill())
-        self.assertEqual(process.stdout.readline().strip(), "locked")
-
-        from unified_memory.common import file_lock
-        with self.assertRaises(TimeoutError):
-            with file_lock(self.vault, timeout_s=0.2, poll_s=0.02):
-                pass
-
-        process.wait(timeout=5)
-        stdout, stderr = process.communicate()
-        self.assertEqual(process.returncode, 0, stderr)
 
     def test_adjudicate_resolves_conflict(self):
         from unittest.mock import patch

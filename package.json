@@ -15,7 +15,10 @@
     "docs",
     "integrations/hermes/*.py",
     "integrations/hermes/README.md",
-    "vault-template",
+    "vault-template/50-Agent-Context/*.md",
+    "vault-template/50-Agent-Context/Agent提交区",
+    "vault-template/50-Agent-Context/情境信息",
+    "vault-template/50-Agent-Context/记忆遗忘区",
     "cordis.patch.yml",
     "README.md",
     "core/pyproject.toml",
@@ -23,11 +26,13 @@
     "core/unified_memory/*.py"
   ],
   "scripts": {
-    "test": "python -m unittest discover -s core/tests"
+    "test": "python core/run_tests.py",
+    "test:node": "node --test test/*.test.mjs",
+    "pack:audit": "node scripts/audit-package.mjs"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6"
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/dsh-tools": "^0.1.5-rc.2"
   },
   "engines": {
     "node": ">=20"

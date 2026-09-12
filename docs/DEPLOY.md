@@ -168,5 +168,12 @@ unless you configure a remote endpoint yourself.
 ## Upgrading
 
 - Core CLI is versioned; check CHANGELOG.md for changes.
-- The dsh plugin is tested against dsh 0.1.0-rc.6; dsh API changes are
-  tracked with upgrade notes in CHANGELOG.md.
+- The DSH plugin's primary compatibility target is DSH `0.1.5-rc.2` / npm
+  `next`. The stable `latest` tag is a separately validated boundary; do not
+  assume candidate and stable host APIs are interchangeable.
+- For global instruction deployment, use `python setup/deploy.py preview`
+  first, then `apply` only after reviewing the diff. The deployer recognizes
+  only existing allowlisted instruction files, writes one marker-delimited
+  section, takes a backup, uses atomic replacement, and supports `rollback`.
+  It never edits canonical vault notes, sessions, credentials, or arbitrary
+  runtime configuration.

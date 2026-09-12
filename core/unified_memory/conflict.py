@@ -79,8 +79,10 @@ def append_conflict(vault: Path, new_fact: str, existing_line: str, source: str,
         if fields in read_conflicts(vault):
             return
         entry = "- [ ] 冲突 " + json.dumps(fields, ensure_ascii=False, separators=(",", ":")) + "\n"
-        with open(path, "a", encoding="utf-8") as fh:
-            fh.write(entry)
+        current = read_maybe(path)
+        if not current.endswith("\n"):
+            current += "\n"
+        atomic_write(path, current + entry)
 
 
 def read_conflicts(vault: Path) -> list[dict]:

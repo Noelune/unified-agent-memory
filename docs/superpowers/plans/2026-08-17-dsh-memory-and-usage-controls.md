@@ -22,9 +22,9 @@
 ### Task 1: Unified-memory status and bounded footer panel
 
 **Files:**
-- Modify: `<repo>\lib\index.js:24-209`
-- Modify: `<repo>\lib\client-ui.js:19-109`
-- Create: `<repo>\test\web-ui-contract.test.mjs`
+- Modify: `<repo>/lib/index.js:24-209`
+- Modify: `<repo>/lib/client-ui.js:19-109`
+- Create: `<repo>/test/web-ui-contract.test.mjs`
 
 **Interfaces:**
 - Consumes: `resolveConfig(config)` and the existing `GET /api/dsh-unified-agent-memory/status` route.
@@ -99,8 +99,8 @@ git commit -m "feat: restore memory settings status"
 ### Task 2: OpenCodeGo persistent visibility switch
 
 **Files:**
-- Modify: `<opencodego-repo>\client.js:15-283`
-- Create: `<opencodego-repo>\test\client-contract.test.mjs`
+- Modify: `<opencodego-repo>/client.js:15-283`
+- Create: `<opencodego-repo>/test/client-contract.test.mjs`
 
 **Interfaces:**
 - Consumes: `window.localStorage`, existing `conversation.input.right` slot, and `GET /opencodego-usage`.
@@ -160,7 +160,7 @@ If `<opencodego-repo>` remains a linked non-repository directory, do not force a
 - Modify only generated Web profile artifacts created by the profile rebuild.
 
 **Interfaces:**
-- Consumes: `<web-profile>\package.json` and the existing DSH Web process at `<local-web-url>`.
+- Consumes: `<web-profile>/package.json` and the existing local DSH Web process at `<local-web-url>`.
 - Produces: rebuilt client plugin assets used by the current GUI.
 
 - [ ] **Step 1: Determine the configured profile build command**

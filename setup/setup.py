@@ -2,7 +2,8 @@
 """unified-agent-memory setup — one-command initialization.
 
     python setup/setup.py init --vault <path>   create vault + config + agent files
-    python setup/setup.py agents [--vault <path>]  DEPRECATED — agent-driven deploy (see docs/AGENT-DEPLOY.md)
+    python setup/setup.py deploy preview --home <agent-home>   preview safe prompt deployment
+    python setup/setup.py deploy apply --home <agent-home>     apply with backup and rollback
     python setup/setup.py cron [--vault <path>] register daily promotion
     python setup/setup.py selfcheck             verify the deployment
 
@@ -18,6 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "core"))
 
+from deploy import main as deploy_main
 from unified_memory import memory as mem_mod  # noqa: E402
 from unified_memory import promoter  # noqa: E402
 from unified_memory.common import resolve_vault  # noqa: E402
@@ -105,6 +107,12 @@ def cmd_selfcheck(args: argparse.Namespace) -> None:
     sys.exit(1 if failures else 0)
 
 
+def cmd_deploy(args: argparse.Namespace) -> None:
+    argv = [args.deploy_command, "--home", args.home, "--vault", args.vault, "--agent", args.agent]
+    for target in args.target:
+        argv.extend(("--target", target))
+    raise SystemExit(deploy_main(argv))
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="setup", description="unified-agent-memory setup")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -119,6 +127,14 @@ def main() -> None:
     p_cron = sub.add_parser("cron", help="register daily promotion")
     p_cron.add_argument("--vault", default=None)
     p_cron.set_defaults(fn=cmd_cron)
+    p_deploy = sub.add_parser("deploy", help="preview/apply/rollback allowlisted agent instruction updates")
+    p_deploy.add_argument("deploy_command", choices=("detect", "preview", "apply", "rollback", "selfcheck"))
+    p_deploy.add_argument("--home", default=str(Path.home()))
+    p_deploy.add_argument("--vault", default="<your-vault>")
+    p_deploy.add_argument("--agent", default="dsh")
+    p_deploy.add_argument("--target", action="append", default=[])
+    p_deploy.set_defaults(fn=cmd_deploy)
+
     p_self = sub.add_parser("selfcheck", help="verify deployment")
     p_self.add_argument("--vault", default=None)
     p_self.set_defaults(fn=cmd_selfcheck)
