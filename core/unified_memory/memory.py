@@ -22,7 +22,6 @@ import time
 from pathlib import Path
 
 from . import digest as digest_mod
-from . import drift as drift_mod
 from . import embed as embed_mod
 from . import graph as graph_mod
 from . import index as index_mod
@@ -387,6 +386,7 @@ def cmd_status(args: argparse.Namespace) -> None:
 
 def cmd_drift(args: argparse.Namespace) -> None:
     """Detect code-memory drift."""
+    from . import drift as drift_mod  # lazy import — avoids yaml dependency at module load
     repo_root = Path(__file__).resolve().parent.parent.parent  # repo root
     vault_path = Path(args.vault).resolve() if args.vault else None
     if args.template:

@@ -15,13 +15,17 @@ Usage:
     python -m unified_memory.drift --vault <path> [--strict]
     python -m unified_memory.drift --template   (checks against vault-template/)
     python -m unified_memory.drift --git-precommit  (checks staged changes)
+
+Note: This module does NOT import yaml at module level — the import is
+lazy (inside load_driftrc) so that importing this module never fails
+when PyYAML is not installed. The drift check itself only fails at
+runtime when yaml is actually needed.
 """
 from __future__ import annotations
 
 import os
 import re
 import sys
-import yaml
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -97,6 +101,7 @@ class DriftDetector:
 
     def load_driftrc(self) -> dict:
         """Load driftrc.yaml from the repo root."""
+        import yaml  # lazy import: PyYAML may not be installed on CI/core-only setups
         if self._driftrc is not None:
             return self._driftrc
         path = self.repo_root / DRIFTRC_NAME
