@@ -37,10 +37,11 @@
     "typecheck": "tsc --noEmit",
     "drift:check": "node scripts/drift-check.mjs",
     "drift:python": "python -m unified_memory.drift --template",
+    "sync:check": "node scripts/sync-check.mjs",
     "setup-hooks": "node scripts/install-hooks.mjs",
     "test": "python -m unittest discover -s core/tests",
     "test:js": "vitest run",
-    "check": "pnpm run typecheck && pnpm run drift:check && pnpm run test:js && pnpm run test && pnpm run build && pnpm run drift:python"
+    "check": "pnpm run typecheck && pnpm run drift:check && pnpm run sync:check && pnpm run test:js && pnpm run test && pnpm run build && pnpm run drift:python"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",

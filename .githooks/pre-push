@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# ──────────────────────────────────────────────────────────────────────────────
+# pre-push hook — dsh-unified-agent-memory version consistency guard.
+#
+# Blocks the push when:
+#   1. Working tree has uncommitted changes
+#   2. package.json version has been bumped but no matching git tag exists
+#      (run: git tag v$(node -p "require('./package.json').version"))
+#
+# This prevents the "local vs remote mismatch" problem by ensuring every
+# version change is tagged and every change is committed before push.
+# ──────────────────────────────────────────────────────────────────────────────
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+# ── 1. Check working tree is clean ────────────────────────────────────
+if [ -n "$(git status --porcelain)" ]; then
+    echo "❌ [sync-pre-push] Working tree has uncommitted changes — push blocked."
+    echo "   Commit or stash before pushing:"
+    git status --short
+    exit 1
+fi
+
+# ── 2. Check version tag exists for current version ───────────────────
+LOCAL_VER="$(node -p "require('./package.json').version" 2>/dev/null || echo "")"
+if [ -n "$LOCAL_VER" ]; then
+    if git rev-parse "v$LOCAL_VER" >/dev/null 2>&1; then
+        : # tag exists — good
+    else
+        # Check if this version differs from the last tagged version
+        LAST_TAG="$(git describe --tags --abbrev=0 2>/dev/null || echo "")"
+        if [ "$LAST_TAG" != "v$LOCAL_VER" ]; then
+            echo "⚠️  [sync-pre-push] Version v$LOCAL_VER has no git tag."
+            echo "   Last tag: ${LAST_TAG:-'(none)'}"
+            echo "   If this is intentional, create the tag:"
+            echo "     git tag v$LOCAL_VER && git push origin v$LOCAL_VER"
+            echo "   To skip this check: git config hooks.sync-skip-tag-check true"
+            if [ "$(git config hooks.sync-skip-tag-check)" != "true" ]; then
+                exit 1
+            fi
+        fi
+    fi
+fi
+
+exit 0
