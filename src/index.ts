@@ -38,6 +38,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { resolveConfig } from './utils.ts'
 import { registerAll } from './tools.ts'
+import { checkForUpdate, getUpdateInfo } from './updater.ts'
 export const name = 'dsh-unified-agent-memory'
 
 /**
@@ -61,6 +62,9 @@ export function apply(ctx: Context, config: Record<string, unknown> = {}): void 
   // ---- Register 4 model tools ----
   registerAll(ctx, cfg, configured)
 
+  // ---- Fire-and-forget update check against npm registry ----
+  checkForUpdate()
+
   // ---- Optional HTTP status route (for browser client half) ----
   // The client-ui.js polls /api/dsh-unified-agent-memory/status for
   // configuration and health data. We inject webServer dynamically
@@ -79,6 +83,7 @@ export function apply(ctx: Context, config: Record<string, unknown> = {}): void 
       path: '/api/dsh-unified-agent-memory/status',
       handler(_req: unknown, res: { writeHead: (code: number, headers: Record<string, string>) => void; end: (body: string) => void }) {
         try {
+          const ui = getUpdateInfo()
           const body = JSON.stringify({
             ok: true,
             configured: Boolean(cfg.vaultPath),
@@ -86,6 +91,9 @@ export function apply(ctx: Context, config: Record<string, unknown> = {}): void 
             pythonPath: cfg.pythonPath,
             corePath: cfg.corePath,
             remoteEnabled: cfg.remoteEnabled,
+            version: ui.currentVersion,
+            latestVersion: ui.latestVersion,
+            updateAvailable: ui.updateAvailable,
           })
           res.writeHead(200, {
             'content-type': 'application/json; charset=utf-8',
