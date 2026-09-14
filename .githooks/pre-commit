@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# ──────────────────────────────────────────────────────────────────────────────
+# pre-commit hook — dsh-unified-agent-memory drift prevention.
+#
+# Runs before every commit and blocks (or warns) when code changes happen
+# without corresponding vault-template documentation updates.
+#
+# Three tiers of strictness:
+#   strict  — error if any drift (exit 1, blocks commit)
+#   normal  — warn but allow commit (default)
+#   off     — skip all drift checks
+#
+# Set via: git config hooks.drift-mode strict|normal|off
+# ──────────────────────────────────────────────────────────────────────────────
+set -euo pipefail
+
+MODE="${DSH_DRIFT_MODE:-$(git config hooks.drift-mode || echo "normal")}"
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+# ── Fast path: only check if src/ or core/ files changed ─────────────
+CHANGED="$(git diff --cached --name-only -- 'src/' 'core/' 'driftrc.yaml' '.githooks/' 'build.mjs' 'package.json' 2>/dev/null || true)"
+if [ -z "$CHANGED" ]; then
+    exit 0  # No relevant files changed — skip
+fi
+
+echo "🔍 [drift-precommit] Code files changed, checking vault-template sync…"
+
+# ── Check if vault-template files also changed ───────────────────────
+TEMPLATE_CHANGED="$(git diff --cached --name-only -- 'vault-template/' 2>/dev/null || true)"
+
+# ── Detect drift ─────────────────────────────────────────────────────
+DRIFT_FOUND=0
+DRIFT_MSG=""
+
+if [ -z "$TEMPLATE_CHANGED" ]; then
+    DRIFT_FOUND=1
+    DRIFT_MSG="⚠️  Code changed but no vault-template updates staged.
+   Commit includes:      $(echo "$CHANGED" | tr '\n' ' ')
+   No template changes:  vault-template/50-Agent-Context/
+   
+   📋  Did you update the corresponding memory docs?
+      Check: driftrc.yaml for which docs map to which code."
+fi
+
+# ── Act on drift ─────────────────────────────────────────────────────
+if [ "$DRIFT_FOUND" -eq 1 ]; then
+    echo "$DRIFT_MSG"
+    echo ""
+
+    if [ "$MODE" = "strict" ]; then
+        echo "❌ [drift-precommit] DRIFT DETECTED — commit blocked (hooks.drift-mode=strict)"
+        echo "   To override: git config hooks.drift-mode normal"
+        exit 1
+    elif [ "$MODE" = "off" ]; then
+        echo "ℹ️  [drift-precommit] Drift check skipped (hooks.drift-mode=off)"
+        exit 0
+    else
+        echo "⚠️  [drift-precommit] WARNING: potential code/doc drift"
+        echo "   To block on this: git config hooks.drift-mode strict"
+        echo "   To silence:       git config hooks.drift-mode off"
+        echo "   To run full drift check: python -m unified_memory.drift --template"
+        # Don't block in normal mode — just warn
+        exit 0
+    fi
+fi
+
+exit 0

@@ -96,3 +96,4 @@ try {
 }
 
 console.log('[build] Done.')
+console.log('[build] All checks passed.')

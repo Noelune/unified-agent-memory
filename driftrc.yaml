@@ -1,0 +1,53 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# driftrc.yaml — Drift detection configuration for dsh-unified-agent-memory.
+#
+# Maps code-defined entities to the memory vault documents that describe them.
+# The `memory drift` command reads this file and compares code definitions
+# against vault/template content, flagging any mismatches as drift.
+#
+# This file is the SINGLE SOURCE OF TRUTH for what should be documented.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Version of the drift config schema (bump when changing structure).
+version: 1
+
+# ── Tools (model tools registered by the plugin) ──────────────────────────
+tools:
+  - name: memory_search
+    doc: 工具可用性检查.md
+    description_must_contain: "search"
+  - name: memory_show
+    doc: 工具可用性检查.md
+  - name: memory_submit
+    doc: 工具可用性检查.md
+    description_must_contain: "submit"
+  - name: memory_status
+    doc: 工具可用性检查.md
+    description_must_contain: "status"
+
+# ── Configuration keys (plugin config + env vars) ──────────────────────────
+config:
+  - key: vaultPath
+    env: UNIFIED_MEMORY_VAULT
+    doc: 常用路径与环境.md
+  - key: pythonPath
+    env: UNIFIED_MEMORY_PYTHON
+    doc: 常用路径与环境.md
+  - key: corePath
+    env: UNIFIED_MEMORY_COREPATH
+    doc: 常用路径与环境.md
+
+# ── Canonical documents (doc ID → filename mapping) ───────────────────────
+canonical_docs:
+  doc: 上下文索引.md
+  expected_map:
+    index: 上下文索引.md
+    prefs: 我的偏好摘要.md
+    env: 常用路径与环境.md
+    rules: 工程执行规则.md
+    tools: 工具可用性检查.md
+    ui: UI审美准则.md
+    coord: Codex-Claude-Hermes协作规则.md
+
+# ── Vault template directory (relative to repo root) ──────────────────────
+vault_template: vault-template/50-Agent-Context

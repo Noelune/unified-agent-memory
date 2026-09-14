@@ -22,6 +22,7 @@ import time
 from pathlib import Path
 
 from . import digest as digest_mod
+from . import drift as drift_mod
 from . import embed as embed_mod
 from . import graph as graph_mod
 from . import index as index_mod
@@ -71,9 +72,9 @@ REMOTE_TIMEOUT = 10
 TEMPLATE_FILES: dict[str, str] = {
     "上下文索引.md": "# 上下文索引\n\n> 话题 → 文件映射表。用 <VAULT>/50-Agent-Context 替换所有占位符。\n\n- 偏好 → 我的偏好摘要.md\n- 环境与路径 → 常用路径与环境.md\n- 规则 → 工程执行规则.md\n- 工具状态 → 工具可用性检查.md\n- UI 审美 → UI审美准则.md\n- 协作规则 → Codex-Claude-Hermes协作规则.md\n",
     "我的偏好摘要.md": "# 我的偏好摘要\n\n> 该用户的稳定偏好（语言、格式、工作方式）。逐行一条事实。\n\n- 示例：prefers concise bullet-point answers（示例，替换为你自己的偏好）\n",
-    "常用路径与环境.md": "# 常用路径与环境\n\n> 常用路径、工具版本、环境事实。逐行一条。\n\n- 示例：the project lives at <your-home>/projects/my-app（示例，替换为你自己的环境）\n",
+    "常用路径与环境.md": "# 常用路径与环境\n\n> 常用路径、工具版本、环境事实。逐行一条。以下为 dsh-unified-agent-memory 插件配置项。\n\n- UNIFIED_MEMORY_VAULT — path to the Obsidian vault (required; config key vaultPath)\n- UNIFIED_MEMORY_PYTHON — Python interpreter for the memory core (default \"python\"; config key pythonPath)\n- UNIFIED_MEMORY_COREPATH — path to core/ directory for PYTHONPATH (auto-set by plugin; config key corePath)\n- UNIFIED_MEMORY_REMOTE_URL — optional remote index server URL\n- UNIFIED_MEMORY_REMOTE_TOKEN — optional remote index auth token\n",
     "工程执行规则.md": "# 工程执行规则\n\n> 跨会话执行规则（验证、审计、安全红线）。逐行一条。\n\n- 示例：verify builds before claiming success（示例）\n",
-    "工具可用性检查.md": "# 工具可用性检查\n\n> 工具/服务可用状态。逐行一条。\n\n- 示例：the local relay broker listens on 127.0.0.1:19121（示例）\n",
+    "工具可用性检查.md": "# 工具可用性\n\n> 工具/服务可用状态与故障记录。逐行一条。以下为 dsh-unified-agent-memory 插件提供的模型工具。\n\n- memory_search — search canonical notes in the shared agent memory vault (local SQLite FTS5 index; pass --remote for remote index)\n- memory_show — print one canonical memory document (index, prefs, env, rules, tools, ui, coord, or a *.md note)\n- memory_submit — write new durable facts into the Agent提交区 inbox (the ONLY write path to canonical memory)\n- memory_status — show configuration and index health (vault path, FTS5 availability, pending inbox count)\n",
     "UI审美准则.md": "# UI审美准则\n\n> 界面与设计偏好。逐行一条。\n\n- 示例：dark theme preferred（示例）\n",
     "Codex-Claude-Hermes协作规则.md": "# Codex-Claude-Hermes协作规则\n\n> 多 Agent 协作约定（读写边界、提交格式）。逐行一条。\n\n- 示例：agents read canonical notes and write only to the inbox（示例）\n",
 }
@@ -384,6 +385,21 @@ def cmd_status(args: argparse.Namespace) -> None:
         print(f"vault structure: MISSING ({exc})")
 
 
+def cmd_drift(args: argparse.Namespace) -> None:
+    """Detect code-memory drift."""
+    repo_root = Path(__file__).resolve().parent.parent.parent  # repo root
+    vault_path = Path(args.vault).resolve() if args.vault else None
+    if args.template:
+        vault_path = repo_root / "vault-template" / "50-Agent-Context"
+    detector = drift_mod.DriftDetector(repo_root=repo_root, vault_path=vault_path)
+    report = detector.run()
+    report.print()
+    if report.has_errors:
+        sys.exit(1)
+    if args.strict and report.has_warnings:
+        sys.exit(1)
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="memory", description="unified agent memory CLI")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -426,6 +442,12 @@ def main(argv: list[str] | None = None) -> None:
 
     p_graph = sub.add_parser("graph", help="build the lightweight concept graph (optional, feeds hybrid search)")
     p_graph.set_defaults(fn=cmd_graph)
+
+    p_drift = sub.add_parser("drift", help="detect code-memory synchronization drift")
+    p_drift.add_argument("--vault", "-v", help="path to the vault (default: UNIFIED_MEMORY_VAULT env)")
+    p_drift.add_argument("--template", "-t", action="store_true", help="check against vault-template/")
+    p_drift.add_argument("--strict", action="store_true", help="treat warnings as errors")
+    p_drift.set_defaults(fn=cmd_drift)
 
     args = parser.parse_args(argv)
     args.fn(args)
