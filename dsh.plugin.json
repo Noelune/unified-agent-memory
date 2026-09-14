@@ -1,0 +1,16 @@
+{
+  "name": "dsh-unified-agent-memory",
+  "description": "Unified agent memory — shared Obsidian vault with zero-dep Python core (search/promote/adjudicate/forget) and 4 model tools (memory_search/show/submit/status).",
+  "version": "0.3.1",
+  "entry": {
+    "name": "dsh-unified-agent-memory",
+    "inject": ["tools"]
+  },
+  "client": {
+    "platform": "web",
+    "inject": [
+      "@deepseek-ai/dsh-client-runtime",
+      "@deepseek-ai/dsh-client-ui-sidebar"
+    ]
+  }
+}

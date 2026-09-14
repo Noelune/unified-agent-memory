@@ -1,4 +1,13 @@
-# dsh-unified-agent-memory bundle patch: joins the profile layer stack on install.
+# dsh-unified-agent-memory bundle patch.
+#
+# Inserts this plugin into the profile layer stack so it is loaded by the
+# Cordis application on every harness start.  The patch is the standard DSH
+# mechanism for making a plugin permanent (as opposed to ephemeral plugins
+# injected per-session).
+#
+# Config fields (vaultPath, pythonPath, corePath, remoteEnabled) are
+# intentionally omitted here — they are user/deployment-specific and should
+# be set via environment variables or the plugin settings UI.
 - insert:
     - id: dsh-unified-agent-memory
       name: 'dsh-unified-agent-memory'

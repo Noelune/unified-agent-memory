@@ -1,12 +1,20 @@
 {
   "name": "dsh-unified-agent-memory",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Unified agent memory for DeepSeek Harness — one shared Obsidian vault for every agent (dsh, Codex, Claude, Hermes). Ships the dependency-free Python core (search/promote/adjudicate/forget), a vault template, and a dsh plugin with memory_search / memory_show / memory_submit / memory_status tools. · 统一 Agent 记忆系统：多 Agent 共享一个 Obsidian vault，附零依赖 Python core 与 dsh 插件。",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
-    ".": "./lib/index.js",
-    "./client": "./lib/client-ui.js",
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "import": "./lib/index.js",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "types": "./lib/types/client/index.d.ts",
+      "import": "./lib/client-ui.js",
+      "default": "./lib/client-ui.js"
+    },
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
@@ -15,27 +23,51 @@
     "docs",
     "integrations/hermes/*.py",
     "integrations/hermes/README.md",
-    "vault-template/50-Agent-Context/*.md",
-    "vault-template/50-Agent-Context/Agent提交区",
-    "vault-template/50-Agent-Context/情境信息",
-    "vault-template/50-Agent-Context/记忆遗忘区",
+    "vault-template",
     "cordis.patch.yml",
+    "dsh.plugin.json",
     "README.md",
     "core/pyproject.toml",
     "core/README.md",
     "core/unified_memory/*.py"
   ],
+  "sideEffects": false,
   "scripts": {
-    "test": "python core/run_tests.py",
-    "test:node": "node --test test/*.test.mjs",
-    "pack:audit": "node scripts/audit-package.mjs"
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "python -m unittest discover -s core/tests",
+    "test:js": "vitest run",
+    "check": "pnpm run typecheck && pnpm run test:js && pnpm run test && pnpm run build"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.2",
-    "@deepseek-ai/dsh-tools": "^0.1.5-rc.2"
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-host-webserver": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6",
+    "@types/node": "^24.13.4",
+    "@types/react": "^18.3.31",
+    "esbuild": "^0.25.12",
+    "react": "^18.3.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
   },
   "engines": {
     "node": ">=20"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ],
+      "platform": "web"
+    }
   },
   "keywords": [
     "deepseek",
@@ -52,18 +84,6 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Noelune/unified-agent-memory.git"
-  },
-  "dsh": {
-    "bundle": {
-      "patch": "./cordis.patch.yml"
-    },
-    "client": {
-      "inject": [
-        "@deepseek-ai/dsh-client-runtime",
-        "@deepseek-ai/dsh-client-ui-sidebar"
-      ],
-      "platform": "web"
-    }
   },
   "publishConfig": {
     "registry": "https://registry.npmjs.org/"

@@ -25,6 +25,9 @@ promote.log
 node_modules/
 *.tgz
 
+# Build output (source lives in src/ now)
+lib/
+
 # Python
 __pycache__/
 *.pyc

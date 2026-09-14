@@ -40,23 +40,9 @@ Thumbs.db
 
 # Extra excludes for the npm package
 core/tests/
-# Local memory/runtime content — never publish
-vault/
-**/50-Agent-Context/
-**/会话归档/
-**/session*/
-*.sqlite
-*.sqlite3
-*.db
-credentials/
-*credential*
-*.pem
-*.key
-*.bak-*
-*.backup*
-*.local
-*.pid
-docs/superpowers/
-setup/
+src/
 test/
 scripts/
+build.mjs
+tsconfig.json
+vitest.config.ts
