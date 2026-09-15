@@ -4,8 +4,25 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-09-15
+
+### Added
+
+- **Drift prevention system**: checks memory structure drift between vault
+  template expectations and actual vault layout, with automated correction.
+- **In-app update notification**: periodic npm registry check to alert users
+  when a new plugin version is available.
+- **TypeScript type declarations**: published `.d.ts` bundles alongside the
+  compiled output for both host and client entry points.
+- **Sync check / pre-push hooks**: prevent version drift between `package.json`
+  and `dsh.plugin.json` on every commit and push.
+
 ### Changed
 
+- **Migrated from plain JavaScript to TypeScript** — full type coverage across
+  host entry (`src/index.ts`), tools (`src/tools.ts`), utilities (`src/utils.ts`),
+  and client module (`src/client/`). Build pipeline uses esbuild for both host
+  (Node ESM) and client (AMD with ModuleLoader wrapper).
 - Hardened the DSH host adapter for DSH `0.1.5-rc.2` / npm `next`: strict
   boolean parsing, bounded and redacted core output, safe degradation when
   optional host capabilities are absent, and disposable HTTP status routes.
@@ -15,10 +32,23 @@ All notable changes to this project are documented in this file.
   infrastructure identifiers, or session content.
 - Updated package boundaries and audit checks so npm dry-runs reject local
   vault, database, session archive, credentials, backup, and log content.
+- Bumped `dsh.plugin.json` version to align with `package.json` at `0.5.0`.
+
+### Fixed (DSH STORE compliance)
+
+- Added `dsh.compatibility.dshReleases` with explicit declarations for DSH
+  `0.1.5-alpha.2` (unknown), `0.1.5-rc.1` (compatible), and `0.1.5-rc.2`
+  (compatible), resolving the "compatibility unlisted" status in the catalog.
+- Added `dsh.compatibility.node` range (`>=20`) alongside the existing
+  `engines.node` declaration.
+- Removed protected `@deepseek-ai/*` package references from
+  `dsh.client.inject` in both `package.json` and `dsh.plugin.json`; now uses
+  the plugin-owned client module ID (`dsh-unified-agent-memory`) only.
+- Versions bumped for DSH STORE fixed-Commit recheck.
 
 ### Compatibility
 
-- Primary verification target: DSH `0.1.5-rc.2` / npm `next`, Cordis `4.0.2`,
+- Primary verification target: DSH `0.1.5-rc.2` / npm `next`, Cordis `4.0.1`,
   Node.js `>=20`. Stable `latest` remains a separately validated boundary.
 
 ## [0.3.0] — 2026-08-16
