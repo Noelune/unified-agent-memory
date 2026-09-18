@@ -4,6 +4,42 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-09-18
+
+### Fixed
+
+- **The client entry is now a Cordis plugin.** `src/client/index.ts` exported
+  no `apply`, so the DSH client loader rejected the bundle with
+  `invalid plugin, expect function or object with an "apply" method, received
+  object` and the harness booted into its "Failed to load plugins" screen. The
+  module now declares `inject: ['slots']` and contributes UI from inside
+  `apply(ctx)`, which is the shape the client runtime registers.
+- **The sidebar trigger actually mounts.** It previously wrote to
+  `window.__DSH_SIDEBAR_SEATS__` — a global the harness does not provide — so
+  the button never appeared even when the module loaded. It now occupies the
+  additive `sidebar.footer.action` seat beside Settings, and skips registration
+  cleanly in hosts without a slot registry (headless, mobile shells).
+- **Atomic build output.** esbuild results are buffered and published with
+  temp file + rename. A profile that installs this package via `link:` with
+  live patch reload can no longer observe a half-written `lib/index.js` and
+  fail the entry for missing exports.
+- **Self-referential `client.inject`.** `dsh.client.inject` listed this
+  package's own module id; it now lists nothing, since the bundle loads its own
+  client half.
+- **Style tag ownership.** `adoptStyles()` gives each `<style>` its own
+  instance token instead of removing the first matching tag, so two mounted
+  instances (rail and wide sidebar) cannot dispose each other's CSS.
+
+### Changed
+
+- `build.mjs` no longer prints "All checks passed" when declaration emit did
+  not run. It reports the skip explicitly, fails under `--strict`/`CI`, and
+  asserts that the built client bundle exports `apply`.
+- `exports` no longer advertise `types` paths that the published package does
+  not contain. 0.5.0 shipped the pointer but never the files: `typescript` is
+  not installed in this checkout, and the old `catch` turned that into a
+  warning plus a success message.
+
 ## [0.5.0] — 2026-09-15
 
 ### Added

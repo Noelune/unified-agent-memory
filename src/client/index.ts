@@ -1,36 +1,60 @@
 /**
  * dsh-unified-agent-memory — browser half entry.
  *
- * Client-side module loaded by the DSH client runtime. Mounts a sidebar-footer
- * glyph that opens a small status panel (vault path, index health, pending
- * inbox count) by polling the host tool route.
+ * A DSH client module is a Cordis plugin: the ModuleLoader factory must return
+ * `{ name, inject, apply }`, and the client runtime registers it with
+ * `registry.plugin()`. Anything that only runs for its side effects at module
+ * evaluation time exports no `apply`, so the loader rejects it with
+ * `invalid plugin, expect function or object with an "apply" method`.
+ *
+ * UI is contributed through the `slots` service — this module takes the
+ * additive `sidebar.footer.action` seat beside Settings and renders the memory
+ * status trigger there. Per the client contract, no `window` globals or
+ * hard-coded product DOM are touched; the component owns its own styles.
  *
  * Read-only: no memory content is displayed.
- *
- * The module is compiled via esbuild with the ModuleLoader wrapper,
- * following the standard DSH client plugin pattern.
  *
  * @module src/client/index
  */
 
+import type { Context } from '@deepseek-ai/cordis'
 import { MemoryButton } from './Panel.tsx'
 
-/** Client services needed: sidebar footer slot. */
-export const inject: readonly string[] = []
+export const name = 'dsh-unified-agent-memory'
 
-// Sidebar seat injection — uses the global sidebar registry.
-// Since the AMD ModuleLoader wrapper is added at build time, this
-// client module runs in the browser context where the DSH runtime
-// provides the necessary registration points.
+/**
+ * Required client services.
+ *
+ * `slots` owns every UI extension point. It is injected rather than read off
+ * the global realm so the module also loads cleanly in hosts without a
+ * sidebar (headless / mobile shells) — see the guard in {@link apply}.
+ */
+export const inject: readonly string[] = ['slots']
 
-// We mount directly into the sidebar footer seat during module evaluation.
-const seats = (window as unknown as Record<string, unknown>).__DSH_SIDEBAR_SEATS__ as
-  | { footer?: { action?: { mount: (opts: { id: string; render: (props: Record<string, unknown>) => unknown }) => void } } }
-  | undefined
+/** Additive action seat beside Settings in the sidebar foot. */
+const SLOT = 'sidebar.footer.action'
 
-if (seats?.footer?.action) {
-  seats.footer.action.mount({
-    id: 'dsh-unified-agent-memory',
-    render: (props: Record<string, unknown>) => MemoryButton(props as { wide?: boolean }),
-  })
+/** Registrant id within the slot; keeps the seat stable across reloads. */
+const SEAT_ID = 'dsh-unified-agent-memory'
+
+/** Minimal shape of the client `slots` service used here. */
+interface SlotsService {
+  /** Defer registration until the slot exists, disposing it with the plugin. */
+  inject(name: string, callback: () => void | (() => void)): unknown
+  /** Occupy a seat with a component; returns the disposer. */
+  register(entry: { name: string; id: string }, component: unknown): () => void
+}
+
+// ── Plugin entry ────────────────────────────────────────────────────
+
+export function apply(ctx: Context): void {
+  const slots = (ctx as unknown as { slots?: SlotsService }).slots
+  // No slot registry in this host (e.g. a headless or non-sidebar shell):
+  // the plugin still loads, it just contributes no client UI.
+  if (!slots) return
+
+  slots.inject(SLOT, () => slots.register(
+    { name: SLOT, id: SEAT_ID },
+    MemoryButton,
+  ))
 }

@@ -47,14 +47,21 @@ export const PANEL_CSS = `
 /**
  * Inject styles into document head, scoped by attribute.
  * Returns a cleanup function for unmount.
+ *
+ * Each call owns its own <style> tag via a unique `data-dsh-memory` token, so
+ * two mounted instances (e.g. the rail and the wide sidebar rendering at once)
+ * cannot dispose each other's stylesheet.
  */
+let styleSeq = 0
+
 export function adoptStyles(): () => void {
+  const token = String(++styleSeq)
   const style = document.createElement('style')
   style.textContent = PANEL_CSS
-  style.setAttribute('data-dsh-memory', '')
+  style.setAttribute('data-dsh-memory', token)
   document.head.appendChild(style)
   return () => {
-    const el = document.head.querySelector('style[data-dsh-memory]')
-    if (el) document.head.removeChild(el)
+    const el = document.head.querySelector(`style[data-dsh-memory='${token}']`)
+    if (el) el.remove()
   }
 }
