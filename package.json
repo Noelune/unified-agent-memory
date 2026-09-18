@@ -6,10 +6,12 @@
   "main": "lib/index.js",
   "exports": {
     ".": {
+      "types": "./lib/types/index.d.ts",
       "import": "./lib/index.js",
       "default": "./lib/index.js"
     },
     "./client": {
+      "types": "./lib/types/client/index.d.ts",
       "import": "./lib/client-ui.js",
       "default": "./lib/client-ui.js"
     },
@@ -34,12 +36,12 @@
     "build": "node build.mjs",
     "typecheck": "tsc --noEmit",
     "drift:check": "node scripts/drift-check.mjs",
-    "drift:python": "python -m unified_memory.drift --template",
+    "drift:python": "node scripts/drift-python.mjs",
     "sync:check": "node scripts/sync-check.mjs",
     "setup-hooks": "node scripts/install-hooks.mjs",
     "test": "python -m unittest discover -s core/tests",
     "test:js": "vitest run",
-    "check": "pnpm run typecheck && pnpm run drift:check && pnpm run sync:check && pnpm run test:js && pnpm run test && pnpm run build && pnpm run drift:python"
+    "check": "npm run typecheck && npm run drift:check && npm run sync:check && npm run test:js && npm run test && npm run build && npm run drift:python"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
@@ -48,7 +50,8 @@
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-host-webserver": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-tools": "0.1.5-rc.2",
     "@types/node": "^24.13.4",
     "@types/react": "^18.3.31",
     "esbuild": "^0.25.12",

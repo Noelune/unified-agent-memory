@@ -29,16 +29,32 @@ All notable changes to this project are documented in this file.
 - **Style tag ownership.** `adoptStyles()` gives each `<style>` its own
   instance token instead of removing the first matching tag, so two mounted
   instances (rail and wide sidebar) cannot dispose each other's CSS.
+- **Uninstallable dev tree.** `@deepseek-ai/dsh-tools` and
+  `@deepseek-ai/dsh-host-webserver` were ranged at `^0.1.0-rc.6`, which spans
+  incompatible prereleases: `0.1.0-rc.8` requires peer
+  `@deepseek-ai/dsh-llm@^0.1.0-rc.8`, colliding with `0.1.5-rc.2`. `npm install`
+  failed with ERESOLVE. `devDependencies` now pin the harness release this
+  plugin targets (`0.1.5-rc.2`); the `peerDependencies` ranges stay permissive
+  so installs keep resolving against whatever harness the user runs.
+- **Corrupt lockfile.** `package-lock.json` had been committed with unresolved
+  git merge conflict markers (six blocks, since `0bed915`), so it was not valid
+  JSON and `npm ci` refused to run at all. Regenerated from `package.json`.
+- **Latent type errors in the tool handlers.** `CoreResult` and `ToolOutput`
+  were `interface`s, and TypeScript only infers an implicit index signature for
+  object type aliases, so all four `tools.register()` handlers failed
+  assignment against the harness contract's `Record<string, JsonValue>`. These
+  were never observed because `typescript` was not installed and the build
+  swallowed the failure.
 
 ### Changed
 
+- `npm run typecheck`, `npm run test:js` (32 tests) and declaration emit now
+  actually run; the toolchain they need is installed from the lockfile.
+- `exports.types` points at `lib/types/**` again, because those files are now
+  genuinely emitted.
 - `build.mjs` no longer prints "All checks passed" when declaration emit did
   not run. It reports the skip explicitly, fails under `--strict`/`CI`, and
   asserts that the built client bundle exports `apply`.
-- `exports` no longer advertise `types` paths that the published package does
-  not contain. 0.5.0 shipped the pointer but never the files: `typescript` is
-  not installed in this checkout, and the old `catch` turned that into a
-  warning plus a success message.
 
 ## [0.5.0] — 2026-09-15
 

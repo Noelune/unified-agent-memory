@@ -21,7 +21,16 @@ export interface PluginConfig {
 
 export type CoreExitKind = 'ok' | 'timeout' | 'crash' | 'missing'
 
-export interface CoreResult {
+/**
+ * Result of one Python-core invocation.
+ *
+ * Declared as a type alias rather than an interface on purpose: every field is
+ * JSON-serialisable, and the harness tool contract expects the handler result
+ * to satisfy `Record<string, JsonValue>`. TypeScript only infers that implicit
+ * index signature for object type aliases, not for interfaces, so an interface
+ * here fails assignment at every `tools.register()` call site.
+ */
+export type CoreResult = {
   ok: boolean
   output: string
   error?: string
@@ -30,7 +39,7 @@ export interface CoreResult {
 
 // ── Tool output schema ───────────────────────────────────────────────
 
-export interface ToolOutput {
+export type ToolOutput = {
   ok: boolean
   output?: string
   error?: string
