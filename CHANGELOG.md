@@ -4,6 +4,31 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.5.2] — 2026-09-19
+
+### Fixed
+
+- **The host plugin never applied at all.** `apply` read `ctx.webServer` from
+  inside a nested `ctx.inject(['webServer'], ...)` callback, but cordis resolves
+  services against the plugin's own declared `inject`, so that read threw
+  `cannot get property "webServer" without inject`. The loader failed the entry,
+  and none of the four `memory_*` tools nor
+  `/api/dsh-unified-agent-memory/status` ever registered. It was invisible from
+  outside: the harness booted, no banner appeared, the sidebar button rendered —
+  the panel just polled a route that had never existed. `webServer` is now
+  declared statically and the route is registered directly, matching the other
+  route-registering plugins in this profile.
+
+### Added
+
+- **Loopback-only status route.** The payload carries local filesystem paths
+  (vault, python, core) and the harness may sit behind a reverse proxy, so
+  non-loopback peers now get 403 and non-`GET`/`HEAD` methods 405.
+- **`test/plugin.test.ts`** applies the entry against a context that enforces
+  the same undeclared-service guard cordis uses, and covers the tool set, the
+  route path, the payload and both guards. It fails against the 0.5.1 code with
+  the original error and passes with the fix.
+
 ## [0.5.1] — 2026-09-18
 
 ### Fixed
