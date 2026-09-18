@@ -45,6 +45,13 @@ All notable changes to this project are documented in this file.
   assignment against the harness contract's `Record<string, JsonValue>`. These
   were never observed because `typescript` was not installed and the build
   swallowed the failure.
+- **`sync:check` never checked npm.** It shelled out to `npm view`, which
+  cannot be spawned that way on Windows (`npm` is `npm.cmd`, and Node 20+
+  rejects a `.cmd` without a shell), and the throw landed in an empty `catch` —
+  so the published-version gate always printed "All in sync" while doing
+  nothing. It now reads the registry over HTTPS, and an unreachable registry is
+  an error rather than a pass. It also no longer calls `process.exit()` after a
+  top-level await, which aborted Node on Windows.
 
 ### Changed
 

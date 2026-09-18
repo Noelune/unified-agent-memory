@@ -62,10 +62,38 @@ if (unpushed) {
 
 // ── 3. Check npm published version matches local ──────────────────────
 
+// This used to shell out to `npm view`, and it never ran: `npm` is npm.cmd,
+// execFileSync cannot spawn it by bare name, and Node 20+ rejects a .cmd
+// without a shell. Every failure landed in an empty catch, so the check
+// reported success while doing nothing. Querying the registry over HTTPS keeps
+// this deterministic — no child process, no PATH assumptions — and the package
+// is public, so no credentials are involved.
+
+const registry = (PKG.publishConfig && PKG.publishConfig.registry) || 'https://registry.npmjs.org/'
+// A scoped name keeps its leading '@'; everything else is percent-encoded so a
+// malformed name can never escape into a different registry path.
+const encodedName = PKG.name
+  .split('/')
+  .map((part) => (part.startsWith('@') ? `@${encodeURIComponent(part.slice(1))}` : encodeURIComponent(part)))
+  .join('/')
+const lookup = new URL(encodedName, registry.endsWith('/') ? registry : `${registry}/`)
+
 try {
-  const npmVer = execFileSync('npm', ['view', PKG.name, 'version'], {
-    cwd: ROOT, encoding: 'utf-8', stdio: 'pipe', timeout: 10000,
-  }).trim()
+  // An AbortSignal.timeout() timer stays armed after the response and keeps a
+  // libuv handle alive past process.exit(), which aborts Node on Windows. Own
+  // the controller so the timer is always cleared.
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 20000)
+  let res
+  try {
+    res = await fetch(lookup.href, { signal: ctrl.signal })
+  } finally {
+    clearTimeout(timer)
+  }
+  if (!res.ok) throw new Error(`registry returned HTTP ${res.status}`)
+
+  const doc = await res.json()
+  const npmVer = (doc['dist-tags'] && doc['dist-tags'].latest) || doc.version || ''
 
   if (npmVer === LOCAL_VER) {
     ok(`npm published version (${npmVer}) matches local (${LOCAL_VER})`)
@@ -73,13 +101,14 @@ try {
     // Only error if local has a git tag — otherwise it's WIP
     const tag = run(['tag', '-l', `v${LOCAL_VER}`])
     if (tag) {
-      error(`npm has ${npmVer} but local is tagged v${LOCAL_VER} — run 'npm publish'`)
+      error(`npm has ${npmVer || '(none)'} but local is tagged v${LOCAL_VER} — run 'npm publish'`)
     } else {
       ok(`Local v${LOCAL_VER} not yet tagged/published (WIP)`)
     }
   }
-} catch {
-  // npm view failed (no network, package not published yet)
+} catch (err) {
+  // An unreachable registry is not "in sync"; say so instead of passing.
+  error(`could not read published version from ${lookup.origin} (${String(err.message).split('\n')[0].slice(0, 60)})`)
 }
 
 // ── Summary ───────────────────────────────────────────────────────────
@@ -90,4 +119,7 @@ if (exitCode === 0) {
   console.error(`\n❌ [sync] ${exitCode} issue(s) found — run the suggested fixes.`)
 }
 
-process.exit(exitCode)
+// The registry lookup above is awaited at module scope, so calling
+// process.exit() here tears down libuv handles that are still closing and
+// aborts the process on Windows. Set the code and let the loop drain instead.
+process.exitCode = exitCode
