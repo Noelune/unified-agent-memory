@@ -45,12 +45,13 @@ import { resolveConfig, runCore } from './utils.ts'
 import { registerAll } from './tools.ts'
 import { checkForUpdate, getUpdateInfo } from './updater.ts'
 import { buildStatusPayload } from './status-payload.ts'
-import { guard, queryParam, sendJson } from './routes.ts'
+import { guard, queryParam, readBody, sendJson } from './routes.ts'
 import type { RouteReq, RouteRes } from './routes.ts'
 import { SEARCH_PATH, handleSearch } from './route-search.ts'
 import {
   NOTE_PATH, PREVIEW_PATH, PREVIEW_VIEWS, clampPreviewLimit, handleNote, handlePreview,
 } from './route-preview.ts'
+import { DISMISS_PATH, handleDismiss, parseDismissBody } from './route-dismiss.ts'
 import type { PluginConfig } from './types.ts'
 import type { StatusStats } from './status-payload.ts'
 export const name = 'dsh-unified-agent-memory'
@@ -236,6 +237,47 @@ export function apply(ctx: Context, config: Record<string, unknown> = {}): void 
           return
         }
         sendJson(res, 200, await handleNote(cfg, name))
+      })()
+    },
+  })
+
+  // ---- HTTP dismiss route: the plugin's ONLY write path ----
+  // POST-only, and narrow by construction: the core's `dismiss` moves one inbox
+  // entry into `已处理/` — it never deletes and never rewrites a note, and the
+  // canonical store stays read-only. The name is whitelisted here before the
+  // core is spawned (the core repeats the check; doing it here turns a hostile
+  // name into a 400 instead of a wasted process), and the route deliberately
+  // does NOT use the read routes' ['GET','HEAD'] guard.
+  //
+  // Status: 200 when the entry moved, 409 when the core refused it (not-found,
+  // outside-inbox, …) — the request was well-formed, it just could not be
+  // carried out. 400 is reserved for a body this layer itself rejects, and a
+  // failed core call degrades to `{ok:false}` inside handleDismiss rather than
+  // becoming a 500; only a serialisation failure in sendJson can 500.
+  ws.webServer.register({
+    kind: 'exact',
+    path: DISMISS_PATH,
+    handler(req, res) {
+      if (!guard(req, res, ['POST'])) return
+      return (async () => {
+        let raw: string
+        try {
+          raw = await readBody(req)
+        } catch {
+          // Over the 2048-byte cap for a single filename: caller's fault.
+          sendJson(res, 413, { ok: false, error: 'body too large' })
+          return
+        }
+        const name = parseDismissBody(raw)
+        if (!name) {
+          // Absent, empty, non-string or unsafe name — all malformed input,
+          // never a vault fact. Refusing here also keeps a traversal name from
+          // reaching the core.
+          sendJson(res, 400, { ok: false, error: 'invalid name' })
+          return
+        }
+        const result = await handleDismiss(cfg, name)
+        sendJson(res, result.ok ? 200 : 409, result)
       })()
     },
   })
