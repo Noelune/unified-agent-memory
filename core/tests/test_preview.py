@@ -12,9 +12,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import shutil
+import tempfile
+
 from test_common import destroy_scratch, make_scratch_vault
 from unified_memory import memory, preview
 from unified_memory.common import canonical_dir, read_maybe
+from unified_memory.preview import INBOX_REL
 
 
 def _empty_inbox(vault: Path) -> Path:
@@ -249,6 +253,37 @@ class PreviewCliTest(unittest.TestCase):
 
         self.assertIn("<memory-data>", out)
         self.assertIn("no items in view 'pending'", out)
+
+
+class ReadInboxItemTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        inbox = os.path.join(self.tmp, INBOX_REL)
+        os.makedirs(inbox, exist_ok=True)
+        self.inbox = inbox
+
+    def test_reads_existing_item(self):
+        path = os.path.join(self.inbox, "dsh-20260101-000000-01.md")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("- 事实一\n- 事实二\n")
+        got = preview.read_inbox_item(self.tmp, "dsh-20260101-000000-01.md")
+        self.assertEqual(got["name"], "dsh-20260101-000000-01.md")
+        self.assertIn("事实一", got["body"])
+
+    def test_rejects_traversal(self):
+        for bad in ("../secret.md", "..\\secret.md", "sub/dir.md", "", ".", "a\x00b"):
+            with self.subTest(bad=bad):
+                got = preview.read_inbox_item(self.tmp, bad)
+                self.assertIsNone(got["body"])
+
+    def test_missing_file_yields_none_body(self):
+        got = preview.read_inbox_item(self.tmp, "nope.md")
+        self.assertIsNone(got["body"])
+
+    def test_cannot_escape_inbox_via_absolute_like_name(self):
+        got = preview.read_inbox_item(self.tmp, "C:/Windows/win.ini")
+        self.assertIsNone(got["body"])
 
 
 if __name__ == "__main__":

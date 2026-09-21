@@ -17,12 +17,17 @@ redacted. Callers must treat these as DATA. The CLI wraps them in
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from . import index as index_mod
 from .common import canonical_dir, redact
 
 VIEWS = ("pending", "conflicts", "forgetting", "recent")
+
+# Inbox path relative to the vault root. Shared by build()'s pending view and
+# read_inbox_item() so the two can never drift apart.
+INBOX_REL = os.path.join("50-Agent-Context", "Agent提交区")
 
 # Why the conflicts view cannot answer yet: no code path writes this type.
 # classify_type() covers MEMORY_TYPES only, and the column default is 'fact'.
@@ -69,7 +74,7 @@ def envelope(view: str, data: dict) -> str:
 
 
 def _pending(vault: Path, limit: int) -> list[dict]:
-    inbox = canonical_dir(vault) / "Agent提交区"
+    inbox = Path(vault) / INBOX_REL
     if not inbox.is_dir():
         return []
     files = sorted(inbox.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True)[:limit]
@@ -128,3 +133,43 @@ def _recent(vault: Path, limit: int) -> list[dict]:
         {"name": p.name, "path": str(p), "mtime": p.stat().st_mtime, "untrusted": True}
         for p in files[:limit]
     ]
+
+
+def _safe_inbox_name(name: str) -> bool:
+    """A submission filename only — never a path.
+
+    The inbox is user-owned data reached from a browser button, so the name
+    arrives from outside the trust boundary. Reject anything that could name
+    a different file once joined: separators, traversal, drive letters,
+    absolute markers and NUL.
+    """
+    if not name or name in (".", ".."):
+        return False
+    if "\x00" in name:
+        return False
+    if "/" in name or "\\" in name:
+        return False
+    if ":" in name:  # drive letter or stream syntax
+        return False
+    return not name.startswith("~")
+
+
+def read_inbox_item(vault: str, name: str) -> dict:
+    """Read one submission's body. Returns body=None when unreadable.
+
+    Body=None (not "") is deliberate: "no such item" and "empty item" are
+    different facts, and the UI shows different copy for each.
+    """
+    if not _safe_inbox_name(name):
+        return {"name": name, "body": None}
+    inbox = os.path.join(vault, INBOX_REL)
+    target = os.path.join(inbox, name)
+    # Belt and braces: even with the name checked, confirm the resolved path
+    # is still inside the inbox (symlinks, platform quirks).
+    if os.path.realpath(os.path.dirname(target)) != os.path.realpath(inbox):
+        return {"name": name, "body": None}
+    try:
+        with open(target, encoding="utf-8", errors="replace") as fh:
+            return {"name": name, "body": fh.read()}
+    except OSError:
+        return {"name": name, "body": None}

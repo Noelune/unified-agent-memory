@@ -383,6 +383,26 @@ def cmd_preview(args: argparse.Namespace) -> None:
     print(payload)
 
 
+def cmd_note(vault: str, name: str, as_json: bool = False) -> str:
+    """Print one inbox submission's body."""
+    from . import preview as preview_mod
+
+    result = preview_mod.read_inbox_item(vault, name)
+    if as_json:
+        return json.dumps(
+            {"ok": True, "command": "note", "data": result},
+            ensure_ascii=False,
+        )
+    return result["body"] if result["body"] is not None else ""
+
+
+def cmd_note_cli(args: argparse.Namespace) -> None:
+    """CLI adapter for cmd_note: resolves the vault and prints the result."""
+    vault = resolve_vault()
+    ensure_vault(vault)
+    print(cmd_note(vault=str(vault), name=args.name, as_json=args.json))
+
+
 def cmd_graph(args: argparse.Namespace) -> None:
     vault = resolve_vault()
     ensure_vault(vault)
@@ -524,6 +544,11 @@ def main(argv: list[str] | None = None) -> None:
 
     p_graph = sub.add_parser("graph", help="build the lightweight concept graph (optional, feeds hybrid search)")
     p_graph.set_defaults(fn=cmd_graph)
+
+    p_note = sub.add_parser("note", help="print one inbox submission")
+    p_note.add_argument("name")
+    p_note.add_argument("--json", action="store_true", help="emit a machine-readable JSON envelope")
+    p_note.set_defaults(fn=cmd_note_cli)
 
     p_drift = sub.add_parser("drift", help="detect code-memory synchronization drift")
     p_drift.add_argument("--vault", "-v", help="path to the vault (default: UNIFIED_MEMORY_VAULT env)")
