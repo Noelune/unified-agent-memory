@@ -31,11 +31,57 @@ class ProcessInboxItemTest(unittest.TestCase):
         self.assertTrue(os.path.exists(moved), "必须出现在 已处理/ 下")
 
     def test_never_deletes_content(self):
-        self._write("keep.md", "- 必须保留\n")
-        inbox.process_inbox_item(self.tmp, "keep.md")
-        moved = os.path.join(self.inbox, "已处理", "keep.md")
-        with open(moved, encoding="utf-8") as fh:
-            self.assertIn("必须保留", fh.read())
+        """A pre-existing 已处理/ item must survive byte-for-byte.
+
+        The old version of this test only moved a unique file and read it back —
+        it never had a second file to lose, so "unconditional overwrite" stayed
+        green. This one plants the collision first: dismissing a *new* file that
+        shares the old one's name must not touch the old one's bytes.
+        """
+        done = os.path.join(self.inbox, "已处理")
+        os.makedirs(done, exist_ok=True)
+        victim = os.path.join(done, "keep.md")
+        original = "- 旧的一行\n- 第二行\n"
+        with open(victim, "w", encoding="utf-8") as fh:
+            fh.write(original)
+        before = os.stat(victim)
+
+        self._write("keep.md", "- 新的一行\n")
+        got = inbox.process_inbox_item(self.tmp, "keep.md")
+        self.assertTrue(got["ok"])
+
+        with open(victim, encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), original, "旧条目被改写了")
+        after = os.stat(victim)
+        self.assertEqual((before.st_size, before.st_mtime_ns),
+                         (after.st_size, after.st_mtime_ns),
+                         "旧条目被覆盖（大小或 mtime 变了）")
+        self.assertEqual(len(os.listdir(done)), 2, "两份都必须保留")
+
+    def test_three_way_collision_keeps_three_distinct_files(self):
+        """Critical-1: three same-name dismissals must leave three distinct files.
+
+        The previous two-file version stopped one step short of the bug: the
+        second file got a timestamp, and the *third* dismissal recomputed the
+        same second-resolution timestamp, hit an existing path, and let
+        shutil.move silently clobber it. Asserting on the payloads (not just the
+        count) is what makes that undetectable-class loss visible.
+        """
+        for i in (1, 2, 3):
+            self._write("dup.md", f"- 第{i}次\n")
+            got = inbox.process_inbox_item(self.tmp, "dup.md")
+            self.assertTrue(got["ok"], f"第 {i} 次 dismiss 应成功：{got}")
+
+        done = os.path.join(self.inbox, "已处理")
+        entries = sorted(os.listdir(done))
+        self.assertEqual(len(entries), 3, f"三次都应留存，实际 {entries}")
+        payloads = []
+        for entry in entries:
+            with open(os.path.join(done, entry), encoding="utf-8") as fh:
+                payloads.append(fh.read())
+        self.assertEqual(len(set(payloads)), 3,
+                         f"三份内容必须互不相同，实际 {payloads}")
+        self.assertEqual(sorted(payloads), ["- 第1次\n", "- 第2次\n", "- 第3次\n"])
 
     def test_collision_gets_timestamp_suffix(self):
         self._write("dup.md", "- 第一次\n")
@@ -59,6 +105,30 @@ class ProcessInboxItemTest(unittest.TestCase):
         got = inbox.process_inbox_item(self.tmp, "ghost.md")
         self.assertFalse(got["ok"])
         self.assertIsNotNone(got["reason"])
+
+    def test_symlinked_done_dir_outside_inbox_is_rejected(self):
+        """Important-2: 已处理/ must resolve inside the inbox, like the read path.
+
+        The old code validated only the *source* dirname, so a symlinked
+        Agent提交区/已处理/ pointing anywhere on disk would receive the file —
+        a write escaping the inbox. preview.read_inbox_item already guards both
+        sides; the write path must match.
+        """
+        outside = os.path.join(self.tmp, "outside")
+        os.makedirs(outside, exist_ok=True)
+        done = os.path.join(self.inbox, "已处理")
+        try:
+            os.symlink(outside, done, target_is_directory=True)
+        except (OSError, NotImplementedError) as exc:  # pragma: no cover
+            self.skipTest(f"symlinks unavailable on this host: {exc}")
+
+        self._write("escape.md", "- 不该出去\n")
+        got = inbox.process_inbox_item(self.tmp, "escape.md")
+        self.assertFalse(got["ok"], "symlink 逃逸必须被拒绝")
+        self.assertEqual(got["reason"], "outside-inbox")
+        self.assertEqual(os.listdir(outside), [], "外部目录不得收到任何文件")
+        self.assertTrue(os.path.exists(os.path.join(self.inbox, "escape.md")),
+                        "被拒绝的条目必须留在 inbox 原位")
 
 
 class DismissCliTest(unittest.TestCase):
