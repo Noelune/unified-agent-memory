@@ -88,11 +88,6 @@ export function shapePreviewResult(raw: string): PreviewPayload {
   }
 }
 
-/** True when `view` is one of the governance views the core implements. */
-export function isPreviewView(view: string): boolean {
-  return (PREVIEW_VIEWS as readonly string[]).includes(view)
-}
-
 /** Unwrap a note read. `body: null` is "not readable", distinct from "". */
 export function shapeNoteResult(raw: string): NotePayload {
   try {
