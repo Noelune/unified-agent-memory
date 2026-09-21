@@ -245,11 +245,19 @@ def cmd_init(args: argparse.Namespace) -> None:
 
 def cmd_search(args: argparse.Namespace) -> None:
     vault = resolve_vault()
+    want_json = getattr(args, "json", False)
     if getattr(args, "hybrid", False):
         ensure_vault(vault)
         result = search_mod.hybrid_search(
             vault, args.query, limit=args.limit, format_=getattr(args, "format", "full"), budget=getattr(args, "budget", None)
         )
+        if want_json:
+            results = [dict(r, untrusted=True) for r in result["results"]]
+            emit_json(
+                "search",
+                {"query": args.query, "mode": "hybrid", "count": result["count"], "streams": result["streams"], "results": results},
+            )
+            return
         print(search_mod.render_hybrid(result["results"], args.query))
         return
     if args.remote:
@@ -273,6 +281,10 @@ def cmd_search(args: argparse.Namespace) -> None:
         return
     ensure_vault(vault)
     result = search_index(args.query, args.limit, vault)
+    if want_json:
+        results = [dict(r, untrusted=True) for r in result["results"]]
+        emit_json("search", {"query": args.query, "mode": "local", "count": len(results), "results": results})
+        return
     print_memory_data(args.query, result["results"])
 
 
@@ -442,6 +454,7 @@ def main(argv: list[str] | None = None) -> None:
     p_search.add_argument("--hybrid", action="store_true", help="hybrid retrieval: BM25 + semantic vectors + graph")
     p_search.add_argument("--format", choices=("full", "compact", "narrative"), default="full", help="result format (hybrid only)")
     p_search.add_argument("--budget", type=int, default=None, help="token budget cap (hybrid only)")
+    p_search.add_argument("--json", action="store_true", help="emit a machine-readable JSON envelope")
     p_search.set_defaults(fn=cmd_search)
 
     p_show = sub.add_parser("show", help="print a canonical document")
