@@ -32,6 +32,20 @@ const STRICT = process.argv.includes('--strict') || process.env.CI === 'true'
 
 mkdirSync('lib', { recursive: true })
 
+// ── Manifest backfill: keep dsh.plugin.json version/description in sync ──
+// package.json is the single source of truth; the plugin manifest is derived.
+{
+  const pkg = JSON.parse(readFileSync('package.json', 'utf-8'))
+  const manifestPath = 'dsh.plugin.json'
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'))
+  manifest.version = pkg.version
+  if (!manifest.description && pkg.description) {
+    manifest.description = pkg.description.split(' · ')[0].trim()
+  }
+  writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n', 'utf-8')
+  console.log(`[build] manifest version backfilled to ${manifest.version}`)
+}
+
 const DSH_EXTERNAL = ['@deepseek-ai/*']
 
 /**
