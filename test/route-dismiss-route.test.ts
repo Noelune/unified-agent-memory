@@ -116,10 +116,11 @@ describe('POST /dismiss route', () => {
     expect(out.code).toBe(200)
     expect(out.headers['cache-control']).toBe('no-store')
     expect(JSON.parse(out.body)).toEqual({ ok: true, name: 'a.md', reason: null })
-    // The name reaches the core as argv, never through a shell.
+    // The name reaches the core as argv, never through a shell, and sits behind
+    // the `--` option terminator so no name can ever be read as a flag.
     expect(vi.mocked(runCore)).toHaveBeenCalledWith(
       expect.anything(),
-      ['dismiss', 'a.md', '--json'],
+      ['dismiss', '--', 'a.md', '--json'],
     )
   })
 
@@ -135,7 +136,9 @@ describe('POST /dismiss route', () => {
   })
 
   it('answers 409 when the core call itself fails, without a 500', async () => {
-    vi.mocked(runCore).mockResolvedValue({ ok: false, output: '' })
+    vi.mocked(runCore).mockResolvedValue({
+      ok: false, output: '', kind: 'missing', error: 'python not found',
+    })
 
     const out = await post('{"name":"a.md"}')
 
@@ -180,6 +183,8 @@ describe('POST /dismiss route', () => {
     ['{"name":"a\\\\b"}', 'backslash'],
     ['{"name":"~x"}', 'tilde prefix'],
     ['{"name":"a:b"}', 'colon'],
+    ['{"name":"--json"}', 'flag-shaped (dash prefix)'],
+    ['{"name":"-x"}', 'single-dash prefix'],
   ])('answers 400 and never spawns the core for %s (%s)', async (body) => {
     const out = await post(body)
 

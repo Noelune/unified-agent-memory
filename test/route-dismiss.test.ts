@@ -37,7 +37,16 @@ describe('parseDismissBody', () => {
 
 describe('buildDismissArgs', () => {
   it('invokes the core dismiss command', () => {
-    expect(buildDismissArgs('a.md')).toEqual(['dismiss', 'a.md', '--json'])
+    expect(buildDismissArgs('a.md')).toEqual(['dismiss', '--', 'a.md', '--json'])
+  })
+  it('terminates options so a flag-shaped name stays a name', () => {
+    // `dismiss --json extra` really moved `extra`: argparse ate `--json` as a
+    // flag and the next token slid into the `name` position, so the core moved
+    // an entry the caller never named. Unreachable while the argv is exactly
+    // three tokens, but any future flag added to dismiss arms it — the `--`
+    // std::process::Command terminator makes the shape safe by construction.
+    expect(buildDismissArgs('x.md')).toContain('--')
+    expect(buildDismissArgs('-x')).toEqual(['dismiss', '--', '-x', '--json'])
   })
 })
 
@@ -76,11 +85,17 @@ describe('parseDismissBody name whitelist', () => {
     ['{"name":"a\\u0000b"}', 'NUL byte'],
     ['{"name":"."}', 'dot'],
     ['{"name":".."}', 'dot-dot'],
+    ['{"name":"--json"}', 'dash-prefixed (argparse would read it as a flag)'],
+    ['{"name":"-x"}', 'single-dash-prefixed'],
   ])('rejects %s (%s)', (raw) => {
     expect(parseDismissBody(raw)).toBeNull()
   })
 
   it('accepts an ordinary inbox filename', () => {
+    expect(parseDismissBody('{"name":"dsh-2026-09-22-001.md"}')).toBe('dsh-2026-09-22-001.md')
+  })
+
+  it('accepts an interior dash, which is not flag-shaped', () => {
     expect(parseDismissBody('{"name":"dsh-2026-09-22-001.md"}')).toBe('dsh-2026-09-22-001.md')
   })
 })
@@ -110,9 +125,32 @@ describe('handleDismiss', () => {
   it('degrades to unavailable when the core call itself fails (!r.ok)', async () => {
     // The mutation Task 5's reviewer used: flipping this branch to report
     // success kept the old suite green because nothing observed it.
-    vi.mocked(runCore).mockResolvedValue({ ok: false, output: '' })
+    // `kind` is carried through so this models genuine unavailability (a
+    // timeout) rather than an empty-stdout argparse rejection, which the next
+    // test pins to `invalid-name`.
+    vi.mocked(runCore).mockResolvedValue({
+      ok: false, output: '', kind: 'timeout', error: 'timed out',
+    })
     const got = await handleDismiss(cfg, 'a.md')
     expect(got.ok).toBe(false)
+    expect(got.reason).toBe('unavailable')
+  })
+
+  it('blames the name, not the core, when argparse rejected the argv', async () => {
+    // argparse exits 2 with EMPTY stdout — no JSON envelope ever reaches us —
+    // and runCore reports it as a plain crash. Reporting 'unavailable' here
+    // tells an operator the core is down when in fact the caller handed us a
+    // flag-shaped name; that is a wild goose chase over a request error.
+    vi.mocked(runCore).mockResolvedValue({ ok: false, output: '', kind: 'crash' })
+    const got = await handleDismiss(cfg, '--json')
+    expect(got.reason).toBe('invalid-name')
+  })
+
+  it('still says unavailable for a timeout even though stdout is empty', async () => {
+    // The `kind` guard: a killed process also prints nothing, and calling that
+    // an invalid name would invert the same diagnostic mistake.
+    vi.mocked(runCore).mockResolvedValue({ ok: false, output: '', kind: 'timeout' })
+    const got = await handleDismiss(cfg, 'a.md')
     expect(got.reason).toBe('unavailable')
   })
 

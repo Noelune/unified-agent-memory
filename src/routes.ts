@@ -103,7 +103,15 @@ export function queryParam(url: string | undefined, key: string): string | null 
 /** Cap on an accepted request body: these are one short filename. */
 const MAX_BODY = 2048
 
-/** Read a request body, refusing anything oversized. */
+/**
+ * Read a request body, refusing anything oversized.
+ *
+ * The cap is counted in **bytes**, not UTF-16 code units: a CJK body is up to
+ * three bytes per character, so a `.length` check would let 2–3× the intended
+ * payload through. Chunks arrive as Buffer under Node's HTTP server, but the
+ * `RouteReq.on` contract also admits a pre-decoded string, so each chunk is
+ * normalised before measuring.
+ */
 export function readBody(req: RouteReq, limit: number = MAX_BODY): Promise<string> {
   return new Promise((resolve, reject) => {
     if (typeof req.on !== 'function') {
@@ -111,11 +119,14 @@ export function readBody(req: RouteReq, limit: number = MAX_BODY): Promise<strin
       return
     }
     let data = ''
+    let bytes = 0
     let settled = false
     req.on('data', (chunk) => {
       if (settled) return
-      data += String(chunk ?? '')
-      if (data.length > limit) {
+      const text = String(chunk ?? '')
+      data += text
+      bytes += Buffer.byteLength(text)
+      if (bytes > limit) {
         settled = true
         reject(new Error('body too large'))
       }

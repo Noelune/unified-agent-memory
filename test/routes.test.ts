@@ -149,4 +149,34 @@ describe('readBody', () => {
     req.fail(new Error('socket reset'))
     await expect(body).rejects.toThrow('body too large')
   })
+
+  it('counts the cap in bytes, not UTF-16 code units', async () => {
+    // 700 CJK characters: the fullwidth comma is 3 bytes in UTF-8 but only one
+    // code unit, so a `.length` check would wave through 2100 bytes under a
+    // "2048 byte" cap. The limit must be measured the way the comment claims.
+    const cjk = '，'.repeat(700)
+    expect(cjk.length).toBeLessThan(2048)
+    expect(Buffer.byteLength(cjk)).toBeGreaterThan(2048)
+
+    const req = fakeReq([cjk])
+    const body = readBody(req)
+    req.push()
+    await expect(body).rejects.toThrow('body too large')
+  })
+
+  it('measures a Buffer chunk by its bytes', async () => {
+    // Node's HTTP server hands over Buffers; the RouteReq contract also admits
+    // a pre-decoded string. Both must land on the same byte count.
+    const req = fakeReq([Buffer.from('，'.repeat(700), 'utf8') as never])
+    const body = readBody(req)
+    req.push()
+    await expect(body).rejects.toThrow('body too large')
+  })
+
+  it('still accepts a body comfortably under the cap', async () => {
+    const req = fakeReq(['{"name":"dsh-2026-09-22-001.md"}'])
+    const body = readBody(req)
+    req.push()
+    await expect(body).resolves.toBe('{"name":"dsh-2026-09-22-001.md"}')
+  })
 })
