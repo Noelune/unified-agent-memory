@@ -40,6 +40,14 @@ export interface NotePayload {
   ok: boolean
   name: string
   body: string | null
+  /**
+   * The core's own failure label (`invalid-name` / `not-found`), passed through
+   * verbatim. Task 1 made the core distinguish "this name was refused" from
+   * "this item is gone"; dropping the field here would collapse both back into
+   * `body: null` and make a refused name look like a missing file — or like a
+   * dead core. Absent on a successful read.
+   */
+  reason?: string | null
 }
 
 export function buildPreviewArgs(view: string, limit: number): string[] {
@@ -80,12 +88,17 @@ export function shapePreviewResult(raw: string): PreviewPayload {
   }
 }
 
+/** True when `view` is one of the governance views the core implements. */
+export function isPreviewView(view: string): boolean {
+  return (PREVIEW_VIEWS as readonly string[]).includes(view)
+}
+
 /** Unwrap a note read. `body: null` is "not readable", distinct from "". */
 export function shapeNoteResult(raw: string): NotePayload {
   try {
     const parsed = JSON.parse(raw) as {
       ok?: boolean
-      data?: { name?: string; body?: string | null }
+      data?: { name?: string; body?: string | null; reason?: string | null }
     }
     if (parsed.ok !== true || !parsed.data) {
       return { ok: false, name: '', body: null }
@@ -95,6 +108,7 @@ export function shapeNoteResult(raw: string): NotePayload {
       ok: true,
       name: String(parsed.data.name ?? ''),
       body: typeof body === 'string' ? body : null,
+      reason: parsed.data.reason ?? null,
     }
   } catch {
     return { ok: false, name: '', body: null }

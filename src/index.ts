@@ -49,7 +49,7 @@ import { guard, queryParam, sendJson } from './routes.ts'
 import type { RouteReq, RouteRes } from './routes.ts'
 import { SEARCH_PATH, handleSearch } from './route-search.ts'
 import {
-  NOTE_PATH, PREVIEW_PATH, clampPreviewLimit, handleNote, handlePreview,
+  NOTE_PATH, PREVIEW_PATH, PREVIEW_VIEWS, clampPreviewLimit, handleNote, handlePreview,
 } from './route-preview.ts'
 import type { PluginConfig } from './types.ts'
 import type { StatusStats } from './status-payload.ts'
@@ -198,9 +198,12 @@ export function apply(ctx: Context, config: Record<string, unknown> = {}): void 
   })
 
   // ---- HTTP preview route: read-only governance views ----
-  // `view` travels to the core verbatim (an unknown view is the core's problem,
-  // not ours) but `limit` is clamped here: a non-numeric or non-positive value
-  // would make argparse exit non-zero and render an available view as an error.
+  // `view` is validated here against PREVIEW_VIEWS before it reaches the core:
+  // an unknown view would make argparse exit 2 with empty stdout, which the
+  // caller sees as a bare `{ok:false}` — indistinguishable from a dead core, so
+  // a typo would send an operator looking at the wrong thing. 400 says "your
+  // request was wrong"; `limit` is likewise clamped here, since a non-numeric or
+  // non-positive value would also trip argparse.
   ws.webServer.register({
     kind: 'exact',
     path: PREVIEW_PATH,
@@ -208,6 +211,10 @@ export function apply(ctx: Context, config: Record<string, unknown> = {}): void 
       if (!guard(req, res, ['GET', 'HEAD'])) return
       return (async () => {
         const view = queryParam(req.url, 'view') ?? 'pending'
+        if (!(PREVIEW_VIEWS as readonly string[]).includes(view)) {
+          sendJson(res, 400, { ok: false, error: 'unknown view' })
+          return
+        }
         const limit = clampPreviewLimit(queryParam(req.url, 'limit'))
         sendJson(res, 200, await handlePreview(cfg, view, limit))
       })()
