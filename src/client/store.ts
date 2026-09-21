@@ -12,7 +12,7 @@
  * @module src/client/store
  */
 
-import { useCallback, useEffect, useState } from '../deps.ts'
+import { useCallback, useEffect, useRef, useState } from '../deps.ts'
 import type { PreviewData, PreviewView, SearchHit, StatusPayload } from './types.ts'
 
 export const STATUS_URL = '/api/dsh-unified-agent-memory/status'
@@ -202,6 +202,39 @@ export function runSearchSequence(
   }
 }
 
+/**
+ * The body of `useSearch.run`, lifted out of the hook so the production path is
+ * directly testable (there is no renderer in this repo, so the hook itself
+ * cannot be mounted).
+ *
+ * `useSearch` passes its three `useState` setters and a `useRef({current:0})`
+ * cell. The seq MUST survive across `run()` calls — that is the whole point. An
+ * earlier revision allocated a fresh `{current:0}` per call, so every call saw
+ * `mine === seq.current` and the guard could never fire: a slow older response
+ * silently overwrote the newest results. Sharing one seq across calls is what
+ * makes "the newer run wins" true, and it is exactly what this function does.
+ */
+export function useSearchRun(
+  setResults: (hits: SearchHit[]) => void,
+  setBusy: (busy: boolean) => void,
+  setError: (error: boolean) => void,
+  seq: SearchSeq = { current: 0 },
+): (q: string, hybrid: boolean) => void {
+  return function (q: string, hybrid: boolean) {
+    const mine = nextSeq(seq)
+    setBusy(true)
+    setError(false)
+    runSearch(q, hybrid)
+      .then(function (hits) {
+        // A slower earlier run must not overwrite a newer one's results.
+        if (!isCurrentSearch(seq, mine)) return
+        setResults(hits)
+      })
+      .catch(function () { if (isCurrentSearch(seq, mine)) setError(true) })
+      .finally(function () { if (isCurrentSearch(seq, mine)) setBusy(false) })
+  }
+}
+
 /** Search state for the panel's first tab. Runs on demand, never polls. */
 export function useSearch(): {
   results: SearchHit[]
@@ -212,19 +245,14 @@ export function useSearch(): {
   const [results, setResults] = useState<SearchHit[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(false)
+  // Persistent across every `run()` call in this hook's lifetime. See
+  // `useSearchRun` for why a per-call token here was the bug.
+  const seq = useRef<SearchSeq>({ current: 0 })
 
-  const run = useCallback(function (q: string, hybrid: boolean) {
-    setBusy(true)
-    setError(false)
-    // Delegates to the shared helper: the guard is written once, in
-    // `runSearchSequence`, and the hook only reacts to a verdict it never
-    // computes itself. `apply` is the hook's own "the newest result landed"
-    // edge, and it fires only for the token that is still current.
-    runSearchSequence([[q, hybrid]], function (hits) { setResults(hits) })
-      .all()
-      .catch(function () { setError(true) })
-      .finally(function () { setBusy(false) })
-  }, [])
+  const run = useCallback(
+    useSearchRun(setResults, setBusy, setError, seq.current),
+    [],
+  )
 
   return { results, busy, error, run }
 }

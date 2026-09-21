@@ -38,7 +38,10 @@ import {
   previewEffectKey,
   runSearch,
   runSearchSequence,
+  useSearchRun,
 } from '../src/client/store.ts'
+
+import type { SearchHit } from '../src/client/types.ts'
 
 type Reply = { ok?: boolean; status?: number; body?: unknown; throws?: boolean }
 
@@ -242,6 +245,72 @@ describe('search race guard', () => {
   })
 })
 
+describe('useSearch concurrency across separate run() calls (production path)', () => {
+  // Why this test exists: the hook's guard used to be dead on the production
+  // path. `run()` allocated a FRESH `seq = {current:0}` on every call and asked
+  // about a SINGLE-element array, so `mine = 1` always equalled `seq.current = 1`
+  // and the "is it still current?" check was vacuously true. Two overlapping
+  // `run()` calls therefore could not see each other, and a slow older response
+  // overwrote the newer result. Replacing the hook's `apply` with a no-op left
+  // the whole suite green — the production guard was untested.
+  //
+  // This test drives the REAL production path (`useSearchRun`, the same closure
+  // `useSearch.run` executes) with real `runSearch` and only `fetch` stubbed. It
+  // asserts the cross-call property the guard exists for: state must end on the
+  // NEWEST result even though the OLDEST request settles LAST.
+  it('drops a slow earlier run() response and keeps the newer results', async () => {
+    let releaseSlow: (r: Reply) => void = () => {}
+    const slow = new Promise<Reply>((resolve) => { releaseSlow = resolve })
+    // First request (old) hangs; second (new) answers immediately.
+    stubFetch(() => slow, { body: { ok: true, results: [hit('new.md')] } })
+
+    // The two state holders stand in for React's `useState` cells.
+    let results: SearchHit[] = []
+    let busy = false
+    const run = useSearchRun(
+      (next) => { results = next },
+      (next) => { busy = next },
+      () => {},
+    )
+
+    run('old', false) // slow: settles last, must be discarded
+    run('new', false) // fast: settles first, must win
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // The stale response arrives afterwards carrying real hits…
+    releaseSlow({ body: { ok: true, results: [hit('old.md')] } })
+    await new Promise((r) => setTimeout(r, 20))
+
+    // …and must NOT have overwritten the newer result.
+    expect(results).toEqual([hit('new.md')])
+    expect(busy).toBe(false)
+  })
+
+  it('keeps busy true until the newest run settles, not the stale one', async () => {
+    let releaseSlow: (r: Reply) => void = () => {}
+    const slow = new Promise<Reply>((resolve) => { releaseSlow = resolve })
+    stubFetch(() => slow, { body: { ok: true, results: [hit('new.md')] } })
+
+    const busyLog: boolean[] = []
+    const run = useSearchRun(() => {}, (next) => { busyLog.push(next) }, () => {})
+
+    run('old', false)
+    run('new', false)
+    await new Promise((r) => setTimeout(r, 20))
+    // The newer run has settled, so the spinner is off even though the stale
+    // request is still in flight. A dead guard would flip busy on the stale
+    // settle (or leave it stuck).
+    expect(busyLog[busyLog.length - 1]).toBe(false)
+
+    releaseSlow({ body: { ok: true, results: [hit('old.md')] } })
+    await new Promise((r) => setTimeout(r, 20))
+    // A stale settle must not restart the spinner.
+    expect(busyLog[busyLog.length - 1]).toBe(false)
+  })
+})
+
 describe('useSearch delegates its guard to the shared path', () => {
   // Why this test exists: `useSearch` used to carry its OWN copy of the
   // `isCurrentSearch` branch, so mutating the guard inside the hook left every
@@ -250,22 +319,32 @@ describe('useSearch delegates its guard to the shared path', () => {
   //
   // The hook cannot be mounted here (no renderer, by design), so instead of
   // re-testing the guard we pin the one property that makes the mountable
-  // guard reachable: the hook's `run` must route through the same shared
-  // helper the tests drive. Re-inlining the guard into the hook breaks this.
+  // guard reachable: the hook's `run` must route through `useSearchRun` — the
+  // shared body the concurrency tests above drive — and must hand it a
+  // PERSISTENT seq cell rather than a fresh per-call literal. Re-inlining the
+  // guard, or re-introducing a per-call `{current:0}`, breaks this.
   const hookBody = (): string => {
     const start = SRC.indexOf('export function useSearch(')
     expect(start, 'useSearch not found').toBeGreaterThan(-1)
-    return SRC.slice(start, SRC.indexOf('export function usePreview('))
+    return SRC.slice(start, SRC.indexOf('function useSearchRun(') === -1
+      ? SRC.indexOf('export function usePreview(')
+      : SRC.length)
   }
 
-  it('routes the hook run through the shared race helper, not a private copy', () => {
+  it('routes the hook run through the shared body, not a private guard copy', () => {
     const body = hookBody()
     // The single-source-of-truth call the hook must make.
-    expect(body).toMatch(/runSearchSequence\s*\(/)
+    expect(body).toMatch(/useSearchRun\s*\(/)
     // The private re-inlined guard must be gone: the hook may not test the
-    // sequence itself, it may only read the helper's verdict.
+    // sequence itself.
     expect(body).not.toMatch(/isCurrentSearch\s*\(/)
     expect(body).not.toMatch(/nextSeq\s*\(/)
+  })
+
+  it('holds the sequence token in a useRef cell, not a per-call allocation', () => {
+    const body = hookBody()
+    // The seq must outlive a single `run()` call, or the guard is dead again.
+    expect(body).toMatch(/useRef<\s*SearchSeq\s*>\s*\(\s*\{\s*current:\s*0\s*\}\s*\)/)
   })
 })
 
@@ -305,5 +384,28 @@ describe('usePreview effect decision (pure, no renderer)', () => {
     const start = SRC.indexOf('export function usePreview(')
     const body = SRC.slice(start, SRC.indexOf('export async function dismissItem('))
     expect(body).toMatch(/\[\s*view\s*,\s*nonce\s*\]/)
+  })
+
+  it('makes the hook actually CALL the guard: gate, three checks, one cleanup', () => {
+    // The gap this closes: the pure functions above were tested on their own,
+    // but nothing forced `usePreview` to call them. Deleting the gate from the
+    // hook — restoring the exact "setState after unmount" accident this task
+    // exists to prevent — left the whole suite green.
+    //
+    // The effect cannot be executed here (no renderer, no jsdom, by
+    // constraint), so this pins the call sites at source level. It answers
+    // "does the hook consult the guard?" — NOT "does React's scheduling deliver
+    // the response at the wrong time?". See the report for that ceiling.
+    const start = SRC.indexOf('export function usePreview(')
+    const body = SRC.slice(start, SRC.indexOf('export async function dismissItem('))
+
+    // One gate per effect run.
+    expect(body).toMatch(/newPreviewGate\s*\(\)/)
+    // Every settling branch — then, catch, finally — must consult it. Three
+    // separate checks, or a late response leaks through the ungated branch.
+    const checks = body.match(/canApplyPreview\s*\(\s*gate\s*\)/g) ?? []
+    expect(checks.length).toBe(3)
+    // The cleanup must dispose the gate, or it stays alive past unmount.
+    expect(body).toMatch(/return\s+gate\.dispose/)
   })
 })
