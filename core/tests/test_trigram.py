@@ -122,6 +122,36 @@ class TrigramSearchTest(unittest.TestCase):
         # yields nothing.
         self.assertEqual(index.trigram_memory_search(self.vault, "葡萄"), [])
 
+    def test_three_char_cjk_query_still_resolves_via_the_fts_path(self):
+        # Pins WHICH branch serves a query. Asserting only that 记忆 returns a
+        # row would pass for any substring implementation, so it could not tell
+        # "the fallback fired" from "the gate was widened".
+        #
+        # The discriminator is structural: the FTS branch selects `rank AS rnk`
+        # from the JOIN, so its records carry an `rnk` key; the fallback reads
+        # plain `memories` columns and has none. Ordering was tried first and
+        # rejected — FTS rank order and row order coincide on small fixtures.
+        self._write_note("方案.md", "# 标题\n- 记忆系统升级方案已落地\n")
+        index.update_index(self.vault)
+
+        fts_hits = index.trigram_memory_search(self.vault, "记忆系统")
+        self.assertIn("记忆系统升级方案已落地", [h["line"] for h in fts_hits])
+        self.assertIn("rnk", fts_hits[0], "a 3-char query must be served by the FTS path")
+
+        # And the short-query fallback is the other branch: no `rnk`.
+        fallback_hits = index.trigram_memory_search(self.vault, "记忆")
+        self.assertIn("记忆系统升级方案已落地", [h["line"] for h in fallback_hits])
+        self.assertNotIn("rnk", fallback_hits[0], "a 2-char query must fall back to the scan")
+
+    def test_substring_fallback_honours_the_limit(self):
+        # The fallback scans row by row and breaks at `limit`; without the break
+        # it would return the whole table for any short query.
+        for i in range(5):
+            self._write_note(f"方案{i}.md", f"# 标题\n- 记忆系统升级方案第{i}条\n")
+        index.update_index(self.vault)
+        self.assertEqual(len(index.trigram_memory_search(self.vault, "记忆", limit=2)), 2)
+        self.assertEqual(len(index.trigram_memory_search(self.vault, "记忆", limit=1)), 1)
+
     def test_trigram_search_returns_empty_when_table_missing(self):
         # Drop the table to simulate an older SQLite that never created it.
         conn = schema.get_conn(self.vault)

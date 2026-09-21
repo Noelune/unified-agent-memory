@@ -7,15 +7,25 @@ All notable changes to this project are documented in this file.
 ### Added
 
 - P0(U-2): `memory_search` 工具支持 hybrid/format/budget 参数，消除 ARCHITECTURE 文档漂移。
+- Phase 1：`memory status/search/preview --json` 机器可读契约（统一信封 `{ok, command, data}`），
+  JSON 模式下 vault 派生字段逐条打 `untrusted: true`，文本模式保留 `<memory-data>` 包裹。
+  详见 `docs/JSON-CONTRACT.md`。
+- Phase 1：`memory_preview` 工具与四个只读治理视图（pending / conflicts / forgetting / recent）。
+- Phase 1：中文检索新增 trigram FTS 表（`tokenize='trigram'`，独立于既有 `fts`/`fts_mem`），
+  作为 RRF 第四路召回；短于 3 字的 CJK 查询（如 `记忆`）回退到子串扫描。
+- Phase 1：`/status` 路由新增只读 `index` 与 `stats` 字段（`memories`/`vectors`/`pending`）。
 
 ### Changed
 
 - P0(U-1): `dsh.plugin.json` 的 version/description 由 package.json 单一事实源回填（build 自动完成），drift-check 硬校验版本一致。
 - P0(S-1): CI 增加 Windows 测试 runner 与完整 JS 检查 job（typecheck/drift/sync/vitest/build/audit）。
+- Phase 1：记忆面板客户端重构为分组卡片（黑灰白/银系、卡片层次、无裸 JSON）。
 
 ### Fixed
 
 - 修复 `audit-package.mjs` 在 Windows 上的 spawn 失败（经 `process.execPath` 调用 npm-cli.js，不依赖 shell），并豁免 vault-template 归档区 README 占位文档的违禁路径误报。
+- Phase 1：`/status` 的 `pending` 计数此前把非有限值悄悄折成 `0`，使「读取损坏」与「确实没有待办」
+  不可区分；现与 `memories`/`vectors` 兄弟字段一致——任一计数非有限即整体 `stats` 降级为 `null`。
 
 ## [0.5.2] — 2026-09-19
 

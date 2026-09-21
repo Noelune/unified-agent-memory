@@ -1,0 +1,33 @@
+client module id  : dsh-unified-agent-memory
+client plugin keys: ["apply","inject","name"]
+slot seat         : sidebar.footer.action / dsh-unified-agent-memory
+registered type   : function
+
+=== PANEL VISUAL CONTRACT CHECKS (against built bundle) ===
+  OK    sheet container class      "dsh-memory-sheet"
+  OK    header row                 "dsh-memory-head"
+  OK    title text                 "Unified Memory"
+  OK    4 card group titles        "dsh-memory-card-title"
+  OK    status group label         "状态概览"
+  OK    stats group label          "统计"
+  OK    config group label         "配置（只读）"
+  OK    update group label         "更新"
+  OK    stat tiles                 "dsh-memory-stat"
+  OK    kv rows                    "dsh-memory-kv"
+  OK    health dot                 "dsh-memory-dot"
+  OK    dot ok variant             "--dsw-alias-ok"
+  OK    dot warn variant           "--dsw-alias-warn"
+  OK    dot err variant            "--dsw-alias-err"
+  OK    trigger button             "dsh-memory-trigger"
+  OK    rail width attr            "rail"
+  OK    wide width attr            "row"
+  OK    empty-count placeholder    "—"
+  OK    null-stats note            "Counts unavailable"
+
+=== COLOUR DISCIPLINE ===
+  --dsw-* tokens   : 14 ["--dsw-alias-label-secondary","--dsw-alias-interactive-bg-hover","--dsw-alias-label-primary","--dsw-alias-interactive-bg-active","--dsw-alias-bg-layer-2","--dsw-alias-border-l2","--dsw-shadow-lv2","--dsw-alias-label-tertiary","--dsw-alias-bg-layer-1","--dsw-alias-border-l1","--dsw-alias-err-bg","--dsw-alias-err","--dsw-alias-ok","--dsw-alias-warn"]
+  hard-coded hex   : 0 []
+  rgb()/rgba()     : 0 []
+
+=== ALL dsh-memory-* CLASSES IN BUILT BUNDLE ===
+  ["dsh-memory-badge","dsh-memory-card","dsh-memory-card-title","dsh-memory-dot","dsh-memory-head","dsh-memory-kv","dsh-memory-note","dsh-memory-sheet","dsh-memory-stat","dsh-memory-stats","dsh-memory-title","dsh-memory-trigger","dsh-memory-ver"]

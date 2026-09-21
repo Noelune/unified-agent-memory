@@ -14,7 +14,10 @@
  * @module test/plugin.test
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 vi.mock('../src/updater.ts', () => ({
   checkForUpdate: vi.fn(),
@@ -89,6 +92,82 @@ function capture() {
   }
   return { res, out }
 }
+
+describe('status route: corrupt core readings degrade the whole stats object', () => {
+  /**
+   * Stand in for the Python core without depending on a real vault.
+   *
+   * runCore spawns `<pythonPath> -m unified_memory.memory status --json` with
+   * corePath prepended to PYTHONPATH, so a scratch directory holding a stub
+   * `unified_memory/memory.py` makes the route's real parse/coerce path run
+   * against a controlled payload. (`pythonPath` cannot point at the .py file
+   * itself: Windows refuses to execFile a script it cannot associate — EFTYPE.)
+   */
+  const PYTHON = process.env.UNIFIED_MEMORY_PYTHON ?? 'python'
+
+  function stubCore(payload: string): string {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-stub-core-'))
+    mkdirSync(join(dir, 'unified_memory'), { recursive: true })
+    writeFileSync(join(dir, 'unified_memory', '__init__.py'), '', 'utf8')
+    writeFileSync(
+      join(dir, 'unified_memory', 'memory.py'),
+      ['import sys', `sys.stdout.write(${JSON.stringify(payload + '\n')})`, ''].join('\n'),
+      'utf8',
+    )
+    return dir
+  }
+
+  let dir: string
+  afterEach(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true })
+  })
+
+  async function statsFrom(data: Record<string, unknown>) {
+    dir = stubCore(JSON.stringify({ ok: true, command: 'status', data }))
+    const { ctx, routes } = makeCtx()
+    host.apply(ctx as never, { vaultPath: 'C:/tmp/vault', pythonPath: PYTHON, corePath: dir })
+    const { res, out } = capture()
+    await routes[0].handler({ socket: { remoteAddress: '127.0.0.1' }, method: 'GET' }, res)
+    return JSON.parse(out.body)
+  }
+
+  it('nulls stats when memories/vectors are non-numeric', async () => {
+    const body = await statsFrom({
+      memories: { count: 'n/a', vectors: 0 },
+      index: { fts5: true },
+      inboxPending: 3,
+    })
+    expect(body.stats).toBe(null)
+  })
+
+  it('nulls stats when inboxPending is non-finite, matching its siblings', async () => {
+    // A corrupt reading must not be disguised as "0 pending": a genuine 0 and
+    // an unreadable value have to stay distinguishable to the client.
+    const body = await statsFrom({
+      memories: { count: 42, vectors: 7 },
+      index: { fts5: true },
+      inboxPending: 'corrupt',
+    })
+    expect(body.stats).toBe(null)
+  })
+
+  it('keeps a genuine zero pending reading as zero', async () => {
+    const body = await statsFrom({
+      memories: { count: 42, vectors: 7 },
+      index: { fts5: true },
+      inboxPending: 0,
+    })
+    expect(body.stats).toEqual({ memories: 42, vectors: 7, pending: 0 })
+  })
+
+  it('keeps an absent inboxPending as zero', async () => {
+    const body = await statsFrom({
+      memories: { count: 42, vectors: 7 },
+      index: { fts5: true },
+    })
+    expect(body.stats).toEqual({ memories: 42, vectors: 7, pending: 0 })
+  })
+})
 
 describe('host plugin contract', () => {
   beforeEach(() => {

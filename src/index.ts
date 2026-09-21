@@ -106,10 +106,18 @@ async function readStats(cfg: PluginConfig): Promise<StatusStats | null> {
     if (!Number.isFinite(count) || !Number.isFinite(vectors)) return null
 
     const index = data?.index as { fts5?: unknown } | null | undefined
+    // `inboxPending` degrades exactly like count/vectors: an absent field is a
+    // legitimate 0 (a fresh vault has no submissions), but a present yet
+    // non-finite one is a corrupt reading and must null the whole object rather
+    // than be flattened to 0 — "0 pending" and "unreadable" are different facts.
+    const pendingRaw = data?.inboxPending ?? 0
+    const pending = Number(pendingRaw)
+    if (!Number.isFinite(pending)) return null
+
     return {
       memories: count,
       vectors,
-      pending: Number(data?.inboxPending ?? 0) || 0,
+      pending,
       indexOk: Boolean(index?.fts5),
     }
   } catch {
