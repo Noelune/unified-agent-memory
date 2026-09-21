@@ -31,6 +31,32 @@ import type { TabId } from './view.ts'
 export { CONSOLE_TABS }
 export type { TabId }
 
+/**
+ * The tab id → pane renderer map.
+ *
+ * The strip draws a button per `CONSOLE_TABS` entry and looks the pane up
+ * here, so the constant stays the single source of truth: adding a tab to
+ * `CONSOLE_TABS` without giving it a pane is a type error, and the render path
+ * holds no tab-id literal of its own that could drift from the constant.
+ */
+type PaneOf = (props: { status: ConsoleStatus | null }) => Child
+
+const TAB_PANE: Record<TabId, PaneOf> = {
+  search: function SearchPane() { return h(SearchTab, null) },
+  inbox: function InboxPane(props) {
+    return h('div', { className: 'dsh-memory-pane' },
+      h(StatusStrip, { status: props.status }),
+      h(ListTab, { view: 'pending', head: '提交区 · 等待晋升' }))
+  },
+  vault: function VaultPane(props) {
+    return h(VaultTab, {
+      stats: props.status?.stats ?? null,
+      version: props.status?.version ?? '—',
+    })
+  },
+  system: function SystemPane(props) { return h(SystemTab, { status: props.status }) },
+}
+
 export interface ConsoleStats {
   memories?: number
   vectors?: number
@@ -290,22 +316,14 @@ function SystemTab(props: { status: ConsoleStatus | null }): Child {
 
 /** The four-tab console. Each tab owns its own data loading. */
 export function Console(props: { status?: ConsoleStatus | null }): Child {
-  const [active, setActive] = useState<TabId>('search')
+  const [active, setActive] = useState<TabId>(CONSOLE_TABS[0])
   const pending = props.status?.stats?.pending ?? 0
+  const status = props.status ?? null
+  const Pane = TAB_PANE[active]
 
   return h('div', { className: 'dsh-memory-console' },
     h(TabBar, { active, onPick: setActive, pending }),
-    active === 'search' ? h(SearchTab, null)
-      : active === 'inbox'
-        ? h('div', { className: 'dsh-memory-pane' },
-            h(StatusStrip, { status: props.status ?? null }),
-            h(ListTab, { view: 'pending', head: '提交区 · 等待晋升' }))
-        : active === 'vault'
-          ? h(VaultTab, {
-              stats: props.status?.stats ?? null,
-              version: props.status?.version ?? '—',
-            })
-          : h(SystemTab, { status: props.status ?? null }),
+    h(Pane, { status }),
   )
 }
 

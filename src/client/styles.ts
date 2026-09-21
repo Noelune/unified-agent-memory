@@ -90,7 +90,7 @@ export const PANEL_CSS = `
 }
 .dsh-memory-tabs {
   display: flex; gap: 1px; padding: 8px 8px 0;
-  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
   background: var(--dsw-alias-bg-layer-1);
 }
 .dsh-memory-tab {
@@ -162,15 +162,19 @@ export const PANEL_CSS = `
 }
 .dsh-memory-toggle[data-on='true'] { color: var(--dsw-alias-accent); }
 .dsh-memory-card {
+  /* The card fill sits only 1.16:1 above the dark page, so fill alone cannot
+     draw the boundary — a 1px l2 stroke plus an lv2 shadow does (measured
+     1.51:1 of edge contrast; see the contrast block in test/client-console). */
   display: flex; flex-direction: column;
   background: var(--dsw-alias-bg-layer-1);
-  border: 1px solid var(--dsw-alias-border-l1);
+  border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 11px; padding: 11px 12px;
   box-shadow: var(--dsw-shadow-lv2);
 }
 .dsh-memory-card-lead {
   background: var(--dsw-alias-bg-layer-3);
-  border-color: var(--dsw-alias-border-l2);
+  border-color: var(--dsw-alias-border-l3);
+  box-shadow: var(--dsw-shadow-lv3);
 }
 .dsh-memory-cardhead {
   display: flex; align-items: center; gap: 7px;

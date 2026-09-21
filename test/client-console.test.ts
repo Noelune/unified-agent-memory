@@ -303,6 +303,201 @@ describe('console styles', () => {
   })
 })
 
+// ── Contrast ───────────────────────────────────────────────────────
+//
+// The console renders inside a `shell.overlay` sheet whose card surface is
+// `--dsw-alias-bg-layer-1`. On the dark theme that token resolves to
+// `--dsw-static-neutral-bluish-875` = #232324, so every text token the console
+// uses must clear WCAG AA body text (4.5:1) against THAT surface, not against
+// the page behind it.
+//
+// The token graph is asserted structurally rather than by parsing var() at
+// runtime: `styles.ts` names the alias, and this block holds the alias →
+// static → hex chain plus the arithmetic. Both links are needed, because the
+// failure mode is a plausible-looking alias whose literal is too dark (that is
+// exactly how `--dsw-alias-label-caption` gets in).
+
+/** WCAG 2.x relative luminance from an sRGB hex string. */
+function luminance(hex: string): number {
+  const h = hex.replace('#', '')
+  const channels = [0, 2, 4].map(function (i) {
+    const c = parseInt(h.slice(i, i + 2), 16) / 255
+    return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)
+  })
+  return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+}
+
+/** WCAG contrast ratio between two sRGB hex colours. */
+function contrast(a: string, b: string): number {
+  const la = luminance(a)
+  const lb = luminance(b)
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05)
+}
+
+/**
+ * The alias → literal chain the dark theme actually resolves.
+ *
+ * `--dsw-alias-*` values come from the host theme's alias block; the
+ * `--dsw-static-neutral-bluish-*` values are the palette those aliases point
+ * at. Kept here so the arithmetic below runs on real numbers instead of a
+ * `var()` string no test runner can resolve.
+ */
+const DARK_THEME = {
+  '--dsw-alias-bg-base': '#151517',        // bluish-950
+  '--dsw-alias-bg-layer-1': '#232324',     // bluish-875 — the card surface
+  '--dsw-alias-bg-layer-2': '#2c2c2e',     // bluish-850
+  '--dsw-alias-bg-layer-3': '#353638',     // bluish-800
+  '--dsw-alias-label-primary': '#f9fafb',  // bluish-50
+  '--dsw-alias-label-secondary': '#cfd3d6', // bluish-300
+  '--dsw-alias-label-tertiary': '#adb2b8', // bluish-400
+  '--dsw-alias-label-caption': '#81858c',  // bluish-600  ← 3.90:1 on the card
+  '--dsw-alias-label-dimmed': '#43454a',   // bluish-750
+} as const
+
+const CARD = DARK_THEME['--dsw-alias-bg-layer-1']
+
+describe('contrast: minor text clears WCAG AA against the card', () => {
+  it('checks the arithmetic itself, so the numbers are not taken on faith', () => {
+    // #7E8288 on #1C2026 is the value an earlier review round mis-reported as
+    // 4.9:1. It is 4.23:1 — below AA. Pinning it keeps the helper honest.
+    expect(contrast('#7E8288', '#1C2026')).toBeCloseTo(4.23, 1)
+    // The reference extremes.
+    expect(contrast('#ffffff', '#000000')).toBeCloseTo(21, 1)
+    expect(contrast('#232324', '#232324')).toBeCloseTo(1, 5)
+  })
+
+  it('shows why the caption token was the trap, not the tertiary one', () => {
+    // Both are "grey", one passes and one does not. This is the distinction an
+    // eyeball (or an approximate tool) cannot make, and the reason the console
+    // must not reach for `--dsw-alias-label-caption`.
+    expect(contrast(DARK_THEME['--dsw-alias-label-tertiary'], CARD)).toBeGreaterThanOrEqual(4.5)
+    expect(contrast(DARK_THEME['--dsw-alias-label-caption'], CARD)).toBeLessThan(4.5)
+  })
+
+  it('uses only text tokens that clear 4.5:1 against the card surface', () => {
+    // Every `color:`/`--text:` declaration in the console that points at a
+    // `--dsw-alias-label-*` token must resolve to a passing value. A new
+    // declaration naming a too-dark alias fails here instead of shipping.
+    const failing = Object.entries(DARK_THEME)
+      .filter(function (e) { return e[0].includes('label-') })
+      .filter(function (e) { return contrast(e[1], CARD) < 4.5 })
+      .map(function (e) { return e[0] })
+
+    const used = Array.from(STYLES.matchAll(/var\((--dsw-alias-label-[a-z0-9-]+)\)/g))
+      .map(function (m) { return m[1] })
+    const usedFailing = Array.from(new Set(used)).filter(function (t) {
+      return failing.indexOf(t) >= 0
+    })
+
+    expect(usedFailing, `text token below 4.5:1 on the card: ${usedFailing.join(', ')}`)
+      .toEqual([])
+    // Guard the guard: the console must actually name some text token, or the
+    // assertion above passes vacuously on an empty stylesheet.
+    expect(used.length).toBeGreaterThan(0)
+  })
+})
+
+describe('contrast: the card boundary is visible against the page', () => {
+  it('separates the card surface from the sheet background by more than 1.2:1', () => {
+    // Measured on the shipped screenshot: page #131419, card #1C2026 = 1.12:1,
+    // which reads as one flat mass. The live dark theme does better (1.16:1)
+    // but still needs a real edge, so the console draws its own border.
+    expect(contrast(DARK_THEME['--dsw-alias-bg-layer-1'], DARK_THEME['--dsw-alias-bg-base']))
+      .toBeGreaterThan(1.12)
+  })
+
+  it('does not leave the card edge to a fill difference alone', () => {
+    // 1.16:1 of fill difference cannot carry the boundary on its own; the card
+    // must also declare a stroke stronger than the hairline l1. Read the rule
+    // from the console section, past the leftover pre-console `.dsh-memory-card`.
+    const consoleCss = STYLES.slice(STYLES.indexOf('── Four-tab console'))
+    const card = consoleCss.slice(consoleCss.indexOf('.dsh-memory-card {'))
+    const rule = card.slice(0, card.indexOf('}'))
+    expect(rule).toMatch(/border:\s*1px solid var\(--dsw-alias-(border-l2|border-l3)\)/)
+  })
+})
+
+// ── Wiring ─────────────────────────────────────────────────────────
+//
+// The pure functions above are tested by importing them. The *call sites* are
+// source-asserted, because there is no DOM renderer here and `Console.tsx`
+// pulls in React through `deps.ts`. That is a real ceiling: these assertions
+// prove the wiring EXISTS, not that React renders it in a particular order.
+//
+// They are still worth having, because the failure they catch is the one that
+// escapes: a helper that is tested, correct, and never called. Each assertion
+// below is written to go red the moment the call is deleted.
+
+const PANEL = readFileSync(new URL('../src/client/Panel.tsx', import.meta.url), 'utf8')
+
+describe('wiring: MemorySheet renders the Console', () => {
+  it('imports Console from the component module, not from view', () => {
+    expect(PANEL).toMatch(/import\s*\{\s*Console\s*\}\s*from\s*['"]\.\/Console\.tsx['"]/)
+  })
+
+  it('passes the live status payload into it', () => {
+    // Not merely `h(Console, null)` — the sheet must forward the store data,
+    // or the system tab shows "—" for a vault that is actually connected.
+    const call = PANEL.slice(PANEL.indexOf('h(Console'))
+    expect(call.slice(0, call.indexOf(')'))).toMatch(/status\s*:/)
+  })
+
+  it('renders it on the production path', () => {
+    // MemoryOverlay is the registered shell.overlay occupant; the sheet inside
+    // it is what a user sees. If `MemorySheet` stops reaching `Console`, the
+    // console never appears even though every unit test above still passes.
+    expect(PANEL).toMatch(/export function MemorySheet\(\)/)
+    expect(PANEL).toMatch(/h\(MemorySheet,\s*null\)/)
+  })
+})
+
+describe('wiring: the four tabs come from CONSOLE_TABS', () => {
+  it('derives the tab strip from the constant instead of four literals', () => {
+    // The mutation to catch: replacing `CONSOLE_TABS.map(...)` with four
+    // hand-written buttons. That would still render four tabs and still pass
+    // the value test on CONSOLE_TABS itself — the array would simply stop
+    // driving anything.
+    expect(CONSOLE).toMatch(/CONSOLE_TABS\.map\(/)
+  })
+
+  it('does not hardcode the tab list a second time', () => {
+    // Exactly one occurrence of the tab-id tuple: the one inside the
+    // CONSOLE_TABS declaration. A second copy in the render path means the
+    // constant can drift away from what is drawn.
+    const literals = CONSOLE.match(/'search'|"search"/g) ?? []
+    expect(literals.length, 'the tab ids should be declared once, in view.ts').toBe(0)
+  })
+
+  it('keeps the labels keyed by tab so no tab can be added without copy', () => {
+    expect(CONSOLE).toMatch(/TAB_LABEL\[t\]/)
+  })
+})
+
+describe('wiring: a dismiss refusal is turned into a sentence', () => {
+  it('routes the reason through dismissReasonText', () => {
+    // The mutation to catch: `dismissItem(name).then(ok => { if (ok) reload() })`
+    // — the refusal is dropped on the floor and the user sees nothing happen.
+    expect(CONSOLE).toMatch(/dismissReasonText\(/)
+  })
+
+  it('stores the mapped text in state that the render path reads', () => {
+    const handler = CONSOLE.slice(CONSOLE.indexOf('function onDismiss'))
+    const body = handler.slice(0, handler.indexOf('const items'))
+    // The mapped sentence must reach a setter...
+    expect(body).toMatch(/set[A-Za-z]+\(dismissReasonText\(/)
+    // ...and the value that setter owns must be rendered, not merely stored.
+    const stateName = (body.match(/set([A-Za-z]+)\(/) ?? [])[1]
+    const varName = stateName.charAt(0).toLowerCase() + stateName.slice(1)
+    expect(CONSOLE).toMatch(new RegExp(varName + '\\s*\\?\\s*h\\(Failure'))
+  })
+
+  it('does not discard the verdict with an empty branch', () => {
+    // A plausible "simplification": `if (!ok) return`. That is the exact shape
+    // of silently doing nothing on refusal.
+    expect(CONSOLE).not.toMatch(/then\(function \(ok[^)]*\) \{\s*if \(!ok\) return/)
+  })
+})
+
 describe('mutation: colour-token guard', () => {
   it('goes red when a hardcoded colour is introduced', () => {
     // The guard must bite, or "no hardcoded colours" is a slogan. Feed it a

@@ -1,0 +1,245 @@
+<!doctype html><html lang="zh"><head><meta charset="utf-8">
+<title>记忆控制台 · Task 8 修复后复核</title><style>
+/* Token values copied from the live DSH dark theme
+   (dsh-client-ui-theme/lib/client.js), so this preview is not a re-invention:
+   --dsw-alias-bg-layer-1 -> --dsw-static-neutral-bluish-875 = #232324, etc. */
+:root{
+  --dsw-alias-bg-base:#151517;
+  --dsw-alias-bg-layer-1:#232324;
+  --dsw-alias-bg-layer-2:#2c2c2e;
+  --dsw-alias-bg-layer-3:#353638;
+  --dsw-alias-border-l1:rgba(255,255,255,.059);
+  --dsw-alias-border-l2:rgba(255,255,255,.122);
+  --dsw-alias-border-l3:rgba(255,255,255,.161);
+  --dsw-alias-label-primary:#f9fafb;
+  --dsw-alias-label-secondary:#cfd3d6;
+  --dsw-alias-label-tertiary:#adb2b8;
+  --dsw-alias-interactive-bg-hover:rgba(255,255,255,.078);
+  --dsw-alias-interactive-bg-active:rgba(255,255,255,.141);
+  --dsw-alias-accent:#679efe;
+  --dsw-alias-ok:#22c55e;
+  --dsw-alias-warn:#f59e0b;
+  --dsw-alias-err:#f25a5a;
+  --dsw-shadow-lv2:0 4px 12px 0 #00000005, 0 2px 8px 0 #0000000a;
+  --dsw-shadow-lv3:0 0 1px 0 #0003, 0 0 4px 0 #00000005, 0 12px 32px 0 #00000014;
+  --mono:ui-monospace,"SF Mono","JetBrains Mono",Consolas,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;padding:26px 22px;background:var(--dsw-alias-bg-base);
+  color:var(--dsw-alias-label-primary);
+  font:13px/1.5 ui-sans-serif,system-ui,"Segoe UI","Microsoft YaHei",sans-serif;
+  -webkit-font-smoothing:antialiased}
+.hdr{display:flex;align-items:baseline;gap:10px;margin:0 0 16px}
+.hdr h2{font-size:15px;font-weight:600;margin:0}
+.hdr p{margin:0;font-size:11.5px;color:var(--dsw-alias-label-tertiary)}
+.stage{display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start}
+.col{display:flex;flex-direction:column}
+.lbl{font-size:10px;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--dsw-alias-label-tertiary);margin:0 0 8px;font-weight:600}
+.sheet{width:388px;background:var(--dsw-alias-bg-base);
+  border:1px solid var(--dsw-alias-border-l2);border-radius:14px;overflow:hidden;
+  box-shadow:var(--dsw-shadow-lv3)}
+.tabs{display:flex;padding:8px 8px 0;gap:1px;
+  border-bottom:1px solid var(--dsw-alias-border-l2);
+  background:var(--dsw-alias-bg-layer-1)}
+.tab{position:relative;padding:9px 12px 10px;font-size:12.5px;
+  color:var(--dsw-alias-label-tertiary);display:flex;align-items:center;gap:6px;
+  border-radius:8px 8px 0 0}
+.tab.on{color:var(--dsw-alias-label-primary);font-weight:600;transform:translateY(-1px);
+  background:var(--dsw-alias-bg-layer-3)}
+.tab.on::after{content:"";position:absolute;left:7px;right:7px;bottom:-1px;height:2px;
+  border-radius:2px;background:var(--dsw-alias-accent);
+  box-shadow:0 0 10px var(--dsw-alias-accent)}
+.tab .ic{width:5px;height:5px;border-radius:50%;background:currentColor;opacity:.5}
+.tab.on .ic{opacity:.85}
+.pill{background:var(--dsw-alias-warn);color:var(--dsw-alias-bg-layer-1);
+  border-radius:999px;font:700 9.5px/1.35 var(--mono);padding:1.5px 6px}
+.body{padding:12px;display:flex;flex-direction:column;gap:10px}
+.search{display:flex;align-items:center;gap:9px;padding:10px 12px;
+  background:var(--dsw-alias-bg-layer-1);
+  border:1px solid var(--dsw-alias-border-l1);border-radius:11px}
+.search .ic{color:var(--dsw-alias-label-tertiary);font-size:11px}
+.search .q{flex:1;color:var(--dsw-alias-label-primary)}
+.tog{display:flex;align-items:center;gap:5px;font-size:10px;font-weight:600;
+  letter-spacing:.04em;text-transform:uppercase;color:var(--dsw-alias-label-tertiary);
+  border-left:1px solid var(--dsw-alias-border-l1);padding-left:9px;height:15px}
+.tog.on{color:var(--dsw-alias-accent)}
+/* The two fixes under review: card = l2 stroke + lv2 shadow; lead card = l3 +
+   lv3. Minor text stays on label-tertiary (7.36:1), never label-caption. */
+.card{display:flex;flex-direction:column;background:var(--dsw-alias-bg-layer-1);
+  border:1px solid var(--dsw-alias-border-l2);border-radius:11px;padding:11px 12px;
+  box-shadow:var(--dsw-shadow-lv2)}
+.card.lead{background:var(--dsw-alias-bg-layer-3);
+  border-color:var(--dsw-alias-border-l3);box-shadow:var(--dsw-shadow-lv3)}
+.ct{display:flex;align-items:center;gap:7px;font-size:10px;font-weight:700;
+  letter-spacing:.09em;text-transform:uppercase;color:var(--dsw-alias-label-tertiary);
+  margin:0 0 8px;line-height:1}
+.ct b{color:var(--dsw-alias-label-secondary);font-weight:700;font-size:9px;
+  border:1px solid var(--dsw-alias-border-l1);border-radius:5px;padding:1.5px 5px}
+.ct .n{margin-left:auto;font:600 10px var(--mono);letter-spacing:.02em;
+  color:var(--dsw-alias-label-tertiary);text-transform:none}
+.rows{display:flex;flex-direction:column}
+.row{display:flex;align-items:center;gap:9px;padding:8px 8px 8px 6px;
+  border-radius:8px;position:relative}
+.row+.row::before{content:"";position:absolute;top:0;left:12px;right:8px;height:1px;
+  background:var(--dsw-alias-border-l1)}
+.bar{width:2.5px;height:15px;border-radius:2px;flex:none;
+  background:var(--dsw-alias-label-tertiary);opacity:.45}
+.bar.doc{background:var(--dsw-alias-accent);opacity:.75}
+.bar.ok{background:var(--dsw-alias-ok);opacity:.7}
+.nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  color:var(--dsw-alias-label-primary);font-size:13px}
+.tm{flex:none;font:10.5px var(--mono);color:var(--dsw-alias-label-tertiary);
+  line-height:1;letter-spacing:.02em}
+mark{background:var(--dsw-alias-interactive-bg-active);
+  color:var(--dsw-alias-accent);border-radius:3px;padding:0 2px;font-weight:600}
+.stats{display:flex;gap:8px}
+.stat{flex:1;display:flex;flex-direction:column;gap:1px;padding:9px 10px 8px;
+  border-radius:9px;background:var(--dsw-alias-bg-layer-2);
+  border:1px solid var(--dsw-alias-border-l1)}
+.stat b{font:600 21px/1.05 var(--mono);letter-spacing:-.02em;
+  font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-primary)}
+.stat span{font-size:9px;letter-spacing:.07em;color:var(--dsw-alias-label-tertiary);
+  font-weight:700;text-transform:uppercase}
+.bt{flex:none;font-size:10.5px;color:var(--dsw-alias-label-tertiary);opacity:.65;
+  border:1px solid var(--dsw-alias-border-l1);border-radius:7px;padding:3px 8px}
+.empty{display:flex;flex-direction:column;align-items:center;gap:6px;padding:22px 14px;
+  color:var(--dsw-alias-label-tertiary)}
+.empty .g{font-size:21px;opacity:.3;line-height:1}
+.empty .t{font-size:12.5px;color:var(--dsw-alias-label-secondary)}
+.empty em{font-size:11px;font-style:normal;color:var(--dsw-alias-label-tertiary);
+  opacity:.82;text-align:center;line-height:1.45}
+.sk{display:flex;flex-direction:column;gap:7px}
+.sk i{height:13px;border-radius:6px;display:block;
+  background:var(--dsw-alias-bg-layer-3)}
+.sk i:nth-child(2){width:82%}
+.sk i:nth-child(3){width:64%}
+.err{display:flex;align-items:center;gap:9px;padding:9px 11px;border-radius:9px;
+  background:color-mix(in srgb, var(--dsw-alias-err) 12%, transparent);
+  border:1px solid var(--dsw-alias-err);color:var(--dsw-alias-err);font-size:11.5px}
+.err .bt{opacity:1;color:var(--dsw-alias-err);border-color:var(--dsw-alias-err);
+  margin-left:auto}
+</style></head><body>
+
+<div class="hdr"><h2>记忆控制台 · Task 8 修复复核</h2>
+<p>卡片 l2 描边 + lv2/lv3 阴影 · 次要文字 label-tertiary</p></div>
+<div class="stage">
+
+  <div class="col">
+    <div class="lbl">Tab 1 · 搜索</div>
+    <div class="sheet">
+      <div class="tabs">
+        <div class="tab on"><i class="ic"></i>搜索</div>
+        <div class="tab"><i class="ic"></i>待处理<span class="pill">1</span></div>
+        <div class="tab"><i class="ic"></i>库全貌</div>
+        <div class="tab"><i class="ic"></i>系统</div>
+      </div>
+      <div class="body">
+        <div class="search"><span class="ic">◇</span><span class="q">记忆</span>
+          <span class="tog on">hybrid</span></div>
+        <div class="card lead">
+          <div class="ct">结果 <b>local</b><span class="n">2 hits</span></div>
+          <div class="rows">
+            <div class="row"><i class="bar doc"></i><span class="nm"><mark>记忆</mark> · README.md</span><span class="tm">README</span></div>
+            <div class="row"><i class="bar doc"></i><span class="nm"><mark>记忆</mark> · 上下文索引.md</span><span class="tm">索引</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="lbl">Tab 2 · 待处理</div>
+    <div class="sheet">
+      <div class="tabs">
+        <div class="tab"><i class="ic"></i>搜索</div>
+        <div class="tab on"><i class="ic"></i>待处理<span class="pill">1</span></div>
+        <div class="tab"><i class="ic"></i>库全貌</div>
+        <div class="tab"><i class="ic"></i>系统</div>
+      </div>
+      <div class="body">
+        <div class="card lead">
+          <div class="ct">提交区 · 等待晋升<span class="n">1 items</span></div>
+          <div class="rows">
+            <div class="row"><i class="bar doc"></i><span class="nm">README.md</span><span class="bt">已处理</span></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="ct">最近更新<span class="n">top 6</span></div>
+          <div class="rows">
+            <div class="row"><i class="bar doc"></i><span class="nm">常用路径与环境.md</span><span class="tm">md</span></div>
+            <div class="row"><i class="bar doc"></i><span class="nm">工具可用性检查.md</span><span class="tm">md</span></div>
+            <div class="row"><i class="bar doc"></i><span class="nm">Codex-Claude-Hermes协作规则.md</span><span class="tm">md</span></div>
+            <div class="row"><i class="bar doc"></i><span class="nm">UI审美准则.md</span><span class="tm">md</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="lbl">Tab 3 · 库全貌</div>
+    <div class="sheet">
+      <div class="tabs">
+        <div class="tab"><i class="ic"></i>搜索</div>
+        <div class="tab"><i class="ic"></i>待处理</div>
+        <div class="tab on"><i class="ic"></i>库全貌</div>
+        <div class="tab"><i class="ic"></i>系统</div>
+      </div>
+      <div class="body">
+        <div class="card lead">
+          <div class="ct">规模</div>
+          <div class="stats">
+            <div class="stat"><b>21</b><span>memories</span></div>
+            <div class="stat"><b>0</b><span>vectors</span></div>
+            <div class="stat"><b>1</b><span>pending</span></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="ct">最近更新<span class="n">top 6</span></div>
+          <div class="rows">
+            <div class="row"><i class="bar doc"></i><span class="nm">常用路径与环境.md</span><span class="tm">md</span></div>
+            <div class="row"><i class="bar doc"></i><span class="nm">工程执行规则.md</span><span class="tm">md</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="lbl">Tab 4 · 系统（三态）</div>
+    <div class="sheet">
+      <div class="tabs">
+        <div class="tab"><i class="ic"></i>搜索</div>
+        <div class="tab"><i class="ic"></i>待处理</div>
+        <div class="tab"><i class="ic"></i>库全貌</div>
+        <div class="tab on"><i class="ic"></i>系统</div>
+      </div>
+      <div class="body">
+        <div class="card lead">
+          <div class="ct">系统</div>
+          <div class="rows">
+            <div class="row"><i class="bar ok"></i><span class="nm">vault connected</span><span class="tm">ok</span></div>
+            <div class="row"><i class="bar"></i><span class="nm">vault path</span><span class="tm">…\Obsidian Vault</span></div>
+            <div class="row"><i class="bar"></i><span class="nm">version</span><span class="tm">0.5.2</span></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="ct">空态 / 加载态</div>
+          <div class="rows">
+            <div class="empty"><span class="g">◇</span>
+              <span class="t">暂无内容</span>
+              <em>这里还没有条目</em></div>
+          </div>
+          <div class="sk" style="margin-top:9px"><i></i><i></i><i></i></div>
+        </div>
+        <div class="card">
+          <div class="ct">错误态</div>
+          <div class="err">◇ 搜索暂不可用，请稍后重试<span class="bt">重试</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</body></html>
