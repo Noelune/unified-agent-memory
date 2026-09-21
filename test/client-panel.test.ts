@@ -56,4 +56,20 @@ describe('client panel rebuild', () => {
     expect(sheet, 'sheet needs a vertical anchor').toMatch(/(top|bottom)\s*:/)
     expect(sheet, 'sheet needs a horizontal anchor').toMatch(/(left|right)\s*:/)
   })
+
+  // Per the DSH plugin contract, a frame-wide floating surface belongs in the
+  // `shell.overlay` list slot (replaceRisk none, additive); `sidebar.footer.action`
+  // is only for a small inline action. The trigger stays in the footer seat, the
+  // sheet moves to the overlay, and the two share one store.
+  it('registers the sheet in shell.overlay and keeps the trigger in the footer seat', () => {
+    const entry = read('src/client/index.ts')
+    expect(entry).toContain("'shell.overlay'")
+    expect(entry).toContain("'sidebar.footer.action'")
+    // The overlay layer is click-through, so the sheet's own cell must opt back
+    // into pointer events or every click falls through to the app underneath.
+    const css = read('src/client/styles.ts')
+    expect(css, 'overlay cell must opt into pointer events').toMatch(
+      /pointer-events:\s*auto/,
+    )
+  })
 })

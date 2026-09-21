@@ -29,14 +29,18 @@ export const PANEL_CSS = `
   background: var(--dsw-alias-interactive-bg-active);
   color: var(--dsw-alias-label-primary);
 }
+/* shell.overlay is a click-through floating layer: entries must opt back into
+   pointer events or every click falls through to the app underneath. The
+   wrapper is transparent and only the sheet inside it is interactive. */
+.dsh-memory-layer {
+  pointer-events: none;
+}
 .dsh-memory-sheet {
-  /* Frame-wide overlay, but mounted in the small sidebar.footer.action seat.
-     Without an explicit offset, a position:fixed box stays at its static
-     position (just above Settings) and grows downward out of the viewport, so
-     the body got clipped off-screen. Anchor it to the viewport instead — the
-     sheet opens upward from the bottom-left rail edge. */
+  /* Frame-wide overlay cell: anchored to the viewport corner so it can never
+     grow out of the screen, and clamped to the viewport on small windows. */
   position: fixed; z-index: 1000;
   bottom: 12px; left: 12px;
+  pointer-events: auto;
   width: min(380px, calc(100vw - 24px));
   max-height: calc(100vh - 24px);
   overflow-y: auto;

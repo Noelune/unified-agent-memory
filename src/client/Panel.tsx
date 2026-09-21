@@ -10,37 +10,9 @@
  * @module src/client/Panel
  */
 
-import { h, Fragment, useState, useEffect, useRef } from '../deps.ts'
+import { h, useEffect, useRef } from '../deps.ts'
 import { adoptStyles } from './styles.ts'
-
-// ── Constants ───────────────────────────────────────────────────────
-
-const STATUS_URL = '/api/dsh-unified-agent-memory/status'
-const POLL_INTERVAL_MS = 10000
-
-/**
- * Shape of the status route payload (src/index.ts).
- *
- * `latestVersion` / `updateAvailable` are null while the npm check is still in
- * flight or when it could not reach the registry, so both are modelled as
- * nullable rather than defaulted to false — "unknown" is not "no update".
- *
- * `index` / `stats` are null when the host could not read the core. They stay
- * nullable all the way to the view: absent counts render as "—", never as 0.
- */
-interface StatusPayload {
-  ok?: boolean
-  configured?: boolean
-  vaultPath?: string
-  pythonPath?: string
-  corePath?: string
-  remoteEnabled?: boolean
-  version?: string
-  latestVersion?: string | null
-  updateAvailable?: boolean | null
-  index?: { ok: boolean } | null
-  stats?: { memories: number; vectors: number; pending: number } | null
-}
+import { setOpen, toggleOpen, useMemoryOpen, useMemoryState } from './store.ts'
 
 // ── Icon glyph with optional update dot ─────────────────────────────
 
@@ -127,9 +99,11 @@ function show(v: unknown, fallback = '—'): string {
 }
 
 /**
- * The sheet body. `data` is null until the first successful poll.
+ * The sheet body. Registered as its own occupant of `shell.overlay`, so it
+ * reads the shared store rather than receiving props from the trigger.
  */
-function MemorySheet({ data, fetchError }: { data: StatusPayload | null; fetchError: boolean }) {
+export function MemorySheet() {
+  const { data, fetchError } = useMemoryState()
   const configured = data?.configured === true
   const version = show(data?.version)
 
@@ -216,60 +190,46 @@ function MemorySheet({ data, fetchError }: { data: StatusPayload | null; fetchEr
   )
 }
 
-// ── Sidebar button ─────────────────────────────────────────────────
+// ── Sidebar trigger (registered in sidebar.footer.action) ──────────
 
 export interface MemoryButtonProps {
   wide?: boolean
 }
 
-export function MemoryButton(props: MemoryButtonProps) {
+/**
+ * The small inline action beside Settings. It only toggles the shared store —
+ * the sheet itself lives in `shell.overlay`, since a frame-wide floating
+ * surface does not belong in an inline action seat.
+ */
+export function MemoryTrigger(props: MemoryButtonProps) {
   const wide = props.wide === true
-  const [open, setOpen] = useState(false)
-  const [hasUpdate, setHasUpdate] = useState(false)
-  const [data, setData] = useState<StatusPayload | null>(null)
-  const [fetchError, setFetchError] = useState(false)
-  const ref = useRef<HTMLButtonElement | null>(null)
+  const open = useMemoryOpen()
+  const { data } = useMemoryState()
+  const hasUpdate = data?.updateAvailable === true
+
+  return h('button', {
+    className: 'dsh-memory-trigger',
+    'data-wide': wide ? 'row' : 'rail',
+    'data-open': open ? 'true' : 'false',
+    title: hasUpdate ? 'Update available — Unified Memory' : 'Unified Memory status',
+    onClick: function () { toggleOpen() },
+  }, h(MemoryGlyph, { size: wide ? 14 : 16, hasUpdate }))
+}
+
+/**
+ * The overlay cell: a click-through layer needs its own wrapper to opt back
+ * into pointer events, and it renders nothing at all while closed.
+ */
+export function MemoryOverlay() {
+  const open = useMemoryOpen()
+  const ref = useRef<HTMLDivElement | null>(null)
 
   // Inject styles on mount, remove on unmount.
   useEffect(function () {
     return adoptStyles()
   }, [])
 
-  // Single poll loop: feeds both the trigger badge and the sheet body, so the
-  // route is hit once per interval regardless of how many instances mount.
-  useEffect(function () {
-    const abort = new AbortController()
-    let timer: number | null = null
-
-    const tick = function () {
-      window
-        .fetch(STATUS_URL, { signal: abort.signal, cache: 'no-store' })
-        .then(function (r: Response) {
-          if (!r.ok) throw new Error('HTTP ' + r.status)
-          return r.json() as Promise<StatusPayload>
-        })
-        .then(function (d) {
-          setData(d)
-          setHasUpdate(d.updateAvailable === true)
-          setFetchError(false)
-        })
-        .catch(function (err: Error) {
-          if (err.name === 'AbortError') return
-          setFetchError(true)
-        })
-
-      timer = window.setTimeout(tick, POLL_INTERVAL_MS)
-    }
-
-    tick()
-
-    return function () {
-      abort.abort()
-      if (timer) window.clearTimeout(timer)
-    }
-  }, [])
-
-  // Click-outside detection
+  // Click-outside detection: closing on a press outside the sheet.
   useEffect(function () {
     if (!open) return
     function onDown(e: MouseEvent) {
@@ -279,15 +239,9 @@ export function MemoryButton(props: MemoryButtonProps) {
     return function () { document.removeEventListener('mousedown', onDown) }
   }, [open])
 
-  return h(Fragment, null,
-    h('button', {
-      ref,
-      className: 'dsh-memory-trigger',
-      'data-wide': wide ? 'row' : 'rail',
-      'data-open': open ? 'true' : 'false',
-      title: hasUpdate ? 'Update available — Unified Memory' : 'Unified Memory status',
-      onClick: function () { setOpen(!open) },
-    }, h(MemoryGlyph, { size: wide ? 14 : 16, hasUpdate })),
-    open ? h(MemorySheet, { data, fetchError }) : null,
-  )
+  if (!open) return null
+  return h('div', { className: 'dsh-memory-layer', ref }, h(MemorySheet, null))
 }
+
+/** Kept as the default export name for the footer seat registration. */
+export { MemoryTrigger as MemoryButton }

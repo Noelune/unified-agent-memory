@@ -18,7 +18,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import { MemoryButton } from './Panel.tsx'
+import { MemoryOverlay, MemoryTrigger } from './Panel.tsx'
 
 export const name = 'dsh-unified-agent-memory'
 
@@ -31,18 +31,35 @@ export const name = 'dsh-unified-agent-memory'
  */
 export const inject: readonly string[] = ['slots']
 
-/** Additive action seat beside Settings in the sidebar foot. */
-const SLOT = 'sidebar.footer.action'
+/**
+ * Small inline action beside Settings. Per the DSH plugin contract this seat
+ * is only for a compact entry point, which is exactly what the trigger is.
+ */
+const TRIGGER_SLOT = 'sidebar.footer.action'
 
-/** Registrant id within the slot; keeps the seat stable across reloads. */
+/**
+ * Frame-wide floating layer, above every column and outside their scroll
+ * containers. A `list` slot with `replaceRisk: none`, so a fresh id is added
+ * beside the shipped entries. This — not the inline action seat — is where a
+ * 380px floating sheet belongs.
+ */
+const OVERLAY_SLOT = 'shell.overlay'
+
+/** Registrant id within the footer slot; keeps the seat stable across reloads. */
 const SEAT_ID = 'dsh-unified-agent-memory'
+
+/** Distinct cell key in the overlay; a fresh id never replaces a shipped entry. */
+const OVERLAY_ID = 'dsh-unified-agent-memory-sheet'
 
 /** Minimal shape of the client `slots` service used here. */
 interface SlotsService {
   /** Defer registration until the slot exists, disposing it with the plugin. */
   inject(name: string, callback: () => void | (() => void)): unknown
   /** Occupy a seat with a component; returns the disposer. */
-  register(entry: { name: string; id: string }, component: unknown): () => void
+  register(
+    entry: { name: string; id: string; order?: number },
+    component: unknown,
+  ): () => void
 }
 
 // ── Plugin entry ────────────────────────────────────────────────────
@@ -53,8 +70,13 @@ export function apply(ctx: Context): void {
   // the plugin still loads, it just contributes no client UI.
   if (!slots) return
 
-  slots.inject(SLOT, () => slots.register(
-    { name: SLOT, id: SEAT_ID },
-    MemoryButton,
+  slots.inject(TRIGGER_SLOT, () => slots.register(
+    { name: TRIGGER_SLOT, id: SEAT_ID },
+    MemoryTrigger,
+  ))
+
+  slots.inject(OVERLAY_SLOT, () => slots.register(
+    { name: OVERLAY_SLOT, id: OVERLAY_ID },
+    MemoryOverlay,
   ))
 }
