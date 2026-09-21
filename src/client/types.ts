@@ -27,3 +27,33 @@ export interface StatusPayload {
   index?: { ok: boolean } | null
   stats?: { memories: number; vectors: number; pending: number } | null
 }
+
+/**
+ * One search hit, as the panel renders it.
+ *
+ * `title` is usually the note stem and `snippet` the matched line, but both come
+ * from a corpus written by other agents: the panel must render them as text.
+ */
+export interface SearchHit {
+  doc: string
+  title: string
+  snippet: string
+}
+
+/** One row of a governance view. */
+export interface PreviewItem {
+  name: string
+  path: string
+  mtime: number
+}
+
+/** A governance view's payload. `status` distinguishes unsupported from empty. */
+export interface PreviewData {
+  view: string
+  status: string
+  count: number
+  items: PreviewItem[]
+}
+
+/** The four views the core exposes. */
+export type PreviewView = 'pending' | 'recent' | 'forgetting' | 'conflicts'

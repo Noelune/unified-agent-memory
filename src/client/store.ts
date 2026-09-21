@@ -12,11 +12,19 @@
  * @module src/client/store
  */
 
-import { useEffect, useState } from '../deps.ts'
-import type { StatusPayload } from './types.ts'
+import { useCallback, useEffect, useRef, useState } from '../deps.ts'
+import type { PreviewData, PreviewView, SearchHit, StatusPayload } from './types.ts'
 
 export const STATUS_URL = '/api/dsh-unified-agent-memory/status'
 export const POLL_INTERVAL_MS = 10000
+
+export const BASE_URL = '/api/dsh-unified-agent-memory'
+export const SEARCH_URL = `${BASE_URL}/search`
+export const PREVIEW_URL = `${BASE_URL}/preview`
+export const DISMISS_URL = `${BASE_URL}/dismiss`
+
+/** Default cap on a preview list, matching the host route. */
+export const PREVIEW_LIMIT = 20
 
 export interface MemoryState {
   /** Latest payload, or null before the first successful poll. */
@@ -115,4 +123,188 @@ export function useMemoryOpen(): boolean {
     return unsub
   }, [])
   return snap
+}
+
+// ── Search ─────────────────────────────────────────────────────────
+
+/**
+ * Run a search. Resolves to [] on any failure — the panel shows "none".
+ *
+ * A transport success is NOT a business success: the host answers 200 with
+ * `{ok:false}` when the core is unavailable, so the body gate runs too.
+ */
+export async function runSearch(query: string, hybrid: boolean): Promise<SearchHit[]> {
+  try {
+    const url = `${SEARCH_URL}?q=${encodeURIComponent(query)}${hybrid ? '&hybrid=1' : ''}`
+    const r = await fetch(url, { cache: 'no-store' })
+    if (!r.ok) return []
+    const body = (await r.json()) as { ok?: boolean; results?: SearchHit[] }
+    return body.ok === true && Array.isArray(body.results) ? body.results : []
+  } catch {
+    return []
+  }
+}
+
+/** A monotonic request counter; the newest token wins. */
+export interface SearchSeq { current: number }
+
+/** Claim the next token. Mirrors `++seq.current` inside the hook's `run`. */
+export function nextSeq(seq: SearchSeq): number {
+  seq.current += 1
+  return seq.current
+}
+
+/** True when `mine` has not been superseded by a newer `run`. */
+export function isCurrentSearch(seq: SearchSeq, mine: number): boolean {
+  return mine === seq.current
+}
+
+/**
+ * Race harness for the search guard.
+ *
+ * The hook cannot be mounted without a renderer, so its `run` delegates here:
+ * every query goes out immediately (`fire`, never awaited — exactly like the
+ * hook, which does not await `runSearch` either), and a settling response is
+ * dropped unless its token is still the newest. `newest()` exposes what the
+ * hook would have in state afterwards.
+ *
+ * Awaiting every request would deadlock this: the point of the scenario is that
+ * the OLDEST request settles LAST, so "all settled" never arrives.
+ */
+export function runSearchSequence(
+  queries: readonly (readonly [string, boolean])[],
+): {
+  settled: SearchHit[][]
+  newest: () => SearchHit[]
+  one: (i: number) => Promise<void>
+  all: () => Promise<void>
+} {
+  const seq: SearchSeq = { current: 0 }
+  const settled: SearchHit[][] = []
+  let live: SearchHit[] = []
+  const pending = queries.map(async function (q, i) {
+    const mine = nextSeq(seq)
+    const hits = await runSearch(q[0], q[1])
+    if (!isCurrentSearch(seq, mine)) return
+    live = hits
+    settled[i] = hits
+  })
+  return {
+    settled,
+    newest: function () { return live },
+    one: function (i) { return pending[i].then(function () {}) },
+    all: function () { return Promise.all(pending).then(function () {}) },
+  }
+}
+
+/** Search state for the panel's first tab. Runs on demand, never polls. */
+export function useSearch(): {
+  results: SearchHit[]
+  busy: boolean
+  error: boolean
+  run: (q: string, hybrid: boolean) => void
+} {
+  const [results, setResults] = useState<SearchHit[]>([])
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(false)
+  const seq = useRef<SearchSeq>({ current: 0 })
+
+  const run = useCallback(function (q: string, hybrid: boolean) {
+    const mine = nextSeq(seq.current)
+    setBusy(true)
+    setError(false)
+    runSearch(q, hybrid)
+      .then(function (hits) {
+        // A slower earlier request must not overwrite a newer one's results.
+        if (!isCurrentSearch(seq.current, mine)) return
+        setResults(hits)
+      })
+      .catch(function () { if (isCurrentSearch(seq.current, mine)) setError(true) })
+      .finally(function () { if (isCurrentSearch(seq.current, mine)) setBusy(false) })
+  }, [])
+
+  return { results, busy, error, run }
+}
+
+// ── Preview ────────────────────────────────────────────────────────
+
+/**
+ * Load one governance view. Returns null when the host cannot answer.
+ *
+ * A view that is not implemented yet still answers `ok:true` with
+ * `status:"unsupported"` — that travels through untouched, because the panel
+ * must render it differently from a view that is implemented and empty.
+ */
+export async function loadPreview(
+  view: PreviewView, limit: number = PREVIEW_LIMIT,
+): Promise<PreviewData | null> {
+  try {
+    const url = `${PREVIEW_URL}?view=${encodeURIComponent(view)}&limit=${limit}`
+    const r = await fetch(url, { cache: 'no-store' })
+    if (!r.ok) return null
+    const body = (await r.json()) as Partial<PreviewData> & { ok?: boolean }
+    if (body.ok !== true) return null
+    return {
+      view: String(body.view ?? view),
+      status: String(body.status ?? 'ok'),
+      count: Number(body.count ?? 0),
+      items: Array.isArray(body.items) ? body.items : [],
+    }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Preview state for a tab. Loads once on activation; `reload` re-reads.
+ *
+ * `busy` starts true because the effect's first act is to load, so the tab
+ * renders its spinner on mount instead of a flash of "nothing here".
+ */
+export function usePreview(view: PreviewView): {
+  data: PreviewData | null
+  busy: boolean
+  reload: () => void
+} {
+  const [data, setData] = useState<PreviewData | null>(null)
+  const [busy, setBusy] = useState(true)
+  const [nonce, setNonce] = useState(0)
+
+  useEffect(function () {
+    // Guards the unmount: a late response must not setState on a dead component.
+    let alive = true
+    setBusy(true)
+    loadPreview(view)
+      .then(function (d) { if (alive) setData(d) })
+      .catch(function () { if (alive) setData(null) })
+      .finally(function () { if (alive) setBusy(false) })
+    return function () { alive = false }
+  }, [view, nonce])
+
+  return { data, busy, reload: function () { setNonce(function (n) { return n + 1 }) } }
+}
+
+// ── Dismiss ────────────────────────────────────────────────────────
+
+/**
+ * Retire one inbox item. True only when the host confirms the move.
+ *
+ * The route answers 200 *or* 409 and either can carry `ok:false`, so the HTTP
+ * status is not the verdict — `body.ok === true` is. A 200 with `ok:false` is a
+ * refusal (e.g. `outside-inbox`), not a success.
+ */
+export async function dismissItem(name: string): Promise<boolean> {
+  try {
+    const r = await fetch(DISMISS_URL, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name }),
+    })
+    if (!r.ok) return false
+    const body = (await r.json()) as { ok?: boolean }
+    return body.ok === true
+  } catch {
+    return false
+  }
 }

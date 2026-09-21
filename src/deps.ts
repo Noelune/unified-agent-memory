@@ -7,6 +7,7 @@
 export {
   createElement as h,
   Fragment,
+  useCallback,
   useState,
   useEffect,
   useRef,
