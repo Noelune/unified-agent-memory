@@ -139,6 +139,18 @@ if (existsSync(pluginManifest)) {
   } else {
     error(`dsh.plugin.json name mismatch: "${manifest.name}"`)
   }
+
+  // Version single-source-of-truth: package.json is the source, the build
+  // backfills dsh.plugin.json. A mismatch here is a release-blocking drift.
+  const pkgPath = resolve(ROOT, 'package.json')
+  if (existsSync(pkgPath)) {
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'))
+    if (manifest.version === pkg.version) {
+      ok(`dsh.plugin.json version (${manifest.version}) matches package.json`)
+    } else {
+      error(`dsh.plugin.json version ${manifest.version} != package.json ${pkg.version} — run build (backfills) or fix manually`)
+    }
+  }
 }
 
 // ── Summary ─────────────────────────────────────────────────────────

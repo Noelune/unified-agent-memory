@@ -12,7 +12,9 @@
   },
   "entry": {
     "name": "dsh-unified-agent-memory",
-    "inject": ["tools"]
+    "inject": [
+      "tools"
+    ]
   },
   "client": {
     "platform": "web",
