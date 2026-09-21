@@ -82,8 +82,14 @@ export const PANEL_CSS = `
 
 /* ── Four-tab console ───────────────────────────────────────────────
    Shapes are the ones locked in docs/superpowers/specs/t8-preview-v3.html.
-   Every colour is a --dsw-alias-* token so dark/light follow the host theme;
-   the preview borrows opacity via color-mix on those same tokens. */
+   Every colour is a --dsw-alias-* token so dark/light follow the host theme.
+   The tokens below are the ones the HOST ACTUALLY DECLARES — a var() pointing
+   at an undeclared property is invalid at computed-value time and renders
+   colourless, with every static "no hardcoded colour" check still green.
+   The console test file diffs this sheet against the host theme to keep that
+   true. Semantics: brand-primary for the accent, state-*-primary for the
+   signal colours, and the one translucent danger surface the host ships for
+   the error banner fill. */
 .dsh-memory-console {
   display: flex; flex-direction: column;
   padding: 0;
@@ -114,8 +120,8 @@ export const PANEL_CSS = `
 .dsh-memory-tab[data-active='true']::after {
   content: ''; position: absolute; left: 7px; right: 7px; bottom: -1px;
   height: 2px; border-radius: 2px;
-  background: var(--dsw-alias-accent);
-  box-shadow: 0 0 10px var(--dsw-alias-accent);
+  background: var(--dsw-alias-brand-primary);
+  box-shadow: 0 0 10px var(--dsw-alias-brand-primary);
 }
 .dsh-memory-tab-dot {
   width: 5px; height: 5px; border-radius: 50%; opacity: .5;
@@ -123,7 +129,11 @@ export const PANEL_CSS = `
 }
 .dsh-memory-tab[data-active='true'] .dsh-memory-tab-dot { opacity: .85; }
 .dsh-memory-pill {
-  background: var(--dsw-alias-warn);
+  /* Pending-count badge. The host's soft amber is state-warn-secondary; the
+     deep bg-layer-1 ink on it measures 8.2:1 (dark theme). The primary amber
+     would work too, but the brief asks soft surfaces to come from the
+     secondary ramp. */
+  background: var(--dsw-alias-state-warn-secondary);
   color: var(--dsw-alias-bg-layer-1);
   border-radius: 999px; font-size: 9.5px; font-weight: 700;
   padding: 1.5px 6px; letter-spacing: .02em; line-height: 1.35;
@@ -138,7 +148,7 @@ export const PANEL_CSS = `
   transition: border-color .16s, box-shadow .16s;
 }
 .dsh-memory-search:focus-within {
-  border-color: var(--dsw-alias-accent);
+  border-color: var(--dsw-alias-brand-primary);
   box-shadow: 0 0 0 3px var(--dsw-alias-interactive-bg-active);
 }
 .dsh-memory-search-glyph {
@@ -160,7 +170,7 @@ export const PANEL_CSS = `
   padding-left: 9px; margin-left: 2px; height: 15px;
   font-family: inherit;
 }
-.dsh-memory-toggle[data-on='true'] { color: var(--dsw-alias-accent); }
+.dsh-memory-toggle[data-on='true'] { color: var(--dsw-alias-brand-primary); }
 .dsh-memory-card {
   /* The card fill sits only 1.16:1 above the dark page, so fill alone cannot
      draw the boundary — a 1px l2 stroke plus an lv2 shadow does (measured
@@ -211,9 +221,9 @@ export const PANEL_CSS = `
   width: 2.5px; height: 15px; border-radius: 2px; flex: none;
   background: var(--dsw-alias-label-tertiary); opacity: .45;
 }
-.dsh-memory-bar-doc { background: var(--dsw-alias-accent); opacity: .75; }
-.dsh-memory-bar-ok { background: var(--dsw-alias-ok); opacity: .7; }
-.dsh-memory-bar-warn { background: var(--dsw-alias-warn); opacity: .7; }
+.dsh-memory-bar-doc { background: var(--dsw-alias-brand-primary); opacity: .75; }
+.dsh-memory-bar-ok { background: var(--dsw-alias-state-success-primary); opacity: .7; }
+.dsh-memory-bar-warn { background: var(--dsw-alias-state-warn-primary); opacity: .7; }
 .dsh-memory-rowname {
   flex: 1; min-width: 0; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap;
@@ -221,7 +231,7 @@ export const PANEL_CSS = `
 }
 .dsh-memory-rowname mark {
   background: var(--dsw-alias-interactive-bg-active);
-  color: var(--dsw-alias-accent);
+  color: var(--dsw-alias-brand-primary);
   border-radius: 3px; padding: 0 2px; font-weight: 600;
 }
 .dsh-memory-rowmeta {
@@ -237,8 +247,8 @@ export const PANEL_CSS = `
   transition: opacity .14s, color .14s, border-color .14s;
 }
 .dsh-memory-row:hover .dsh-memory-action {
-  opacity: 1; color: var(--dsw-alias-accent);
-  border-color: var(--dsw-alias-accent);
+  opacity: 1; color: var(--dsw-alias-brand-primary);
+  border-color: var(--dsw-alias-brand-primary);
 }
 .dsh-memory-stats { display: flex; gap: 8px; }
 .dsh-memory-stat {
@@ -277,16 +287,23 @@ export const PANEL_CSS = `
 .dsh-memory-skeleton-row:nth-child(3) { width: 64%; animation-delay: .36s; }
 @keyframes dsh-memory-pulse { 0%,100% { opacity: .45 } 50% { opacity: .9 } }
 .dsh-memory-failure {
+  /* The host declares no *-bg alias; the one semantic error SURFACE it ships is
+     the translucent interactive-bg-hover-danger, which composes over whatever
+     layer the banner lands on (and flips value with the theme). The stroke and
+     the text share state-error-primary. Measured: error text on that filled
+     surface is 3.96:1 dark / 4.14:1 light — under AA 4.5:1 for body text, which
+     is why the 1px error stroke carries the banner's boundary and the message is
+     never colour-only. See the report's err-bg section for the full comparison. */
   display: flex; align-items: center; gap: 9px;
   padding: 8px 10px; border-radius: 9px; margin-bottom: 8px;
-  background: var(--dsw-alias-err-bg);
-  border: 1px solid var(--dsw-alias-err);
-  color: var(--dsw-alias-err); font-size: 11.5px;
+  background: var(--dsw-alias-interactive-bg-hover-danger);
+  border: 1px solid var(--dsw-alias-state-error-primary);
+  color: var(--dsw-alias-state-error-primary); font-size: 11.5px;
 }
 .dsh-memory-failure-text { flex: 1; }
 .dsh-memory-failure .dsh-memory-action {
-  opacity: 1; color: var(--dsw-alias-err);
-  border-color: var(--dsw-alias-err);
+  opacity: 1; color: var(--dsw-alias-state-error-primary);
+  border-color: var(--dsw-alias-state-error-primary);
 }
 `
 

@@ -25,7 +25,10 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { readFileSync, existsSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { dirname, join } from 'node:path'
+import { execSync } from 'node:child_process'
 
 import {
   CONSOLE_TABS,
@@ -303,6 +306,137 @@ describe('console styles', () => {
   })
 })
 
+// ── Host token existence ───────────────────────────────────────────
+//
+// This is the escape Task 7 kept getting caught by, one level down: the
+// "no hardcoded colours" guard above only checks that a colour is written as
+// `var(--dsw-…)`. It says nothing about whether the host theme DECLARES that
+// property. A `var()` pointing at an undeclared property is invalid at
+// computed-value time, so the declaration falls back to `inherit`/initial —
+// the element renders colourless, and every static check still passes. Five
+// such phantom tokens shipped: `--dsw-alias-accent`, `-err`, `-err-bg`, `-ok`
+// and `-warn`.
+//
+// So this block resolves the host theme module and diffs its declared custom
+// properties against every token `styles.ts` references. The failure it must
+// catch is "a token that looks plausible and is not declared".
+
+/**
+ * Locate the host theme bundle without pinning a machine path.
+ *
+ * The host ships the theme as a nested dependency of `@deepseek-ai/dsh`, which
+ * itself lives in the global npm root — NOT on the `node_modules` chain that
+ * `require.resolve` walks up from this repository. So a plain `require.resolve`
+ * of the theme package fails even though the package is installed. The
+ * strategies below cover each layout, and every path is derived at runtime
+ * (resolution roots, `npm`-provided prefixes) so nothing user-specific gets
+ * committed.
+ */
+function findHostTheme(): string | null {
+  const THEME_REL = join('@deepseek-ai', 'dsh-client-ui-theme', 'lib', 'client.js')
+  const candidates: string[] = []
+  const push = function (p: string | null | undefined) { if (p) candidates.push(p) }
+  const safe = function <T>(fn: () => T): T | null {
+    try { return fn() } catch { return null }
+  }
+
+  const req = createRequire(new URL('../src/client/styles.ts', import.meta.url))
+
+  // 1. The theme package as a resolvable dependency of this package.
+  push(safe(() => req.resolve('@deepseek-ai/dsh-client-ui-theme/lib/client.js')))
+
+  // 2. The host package resolves — look inside its own node_modules, which is
+  //    where it nests the theme.
+  const dshManifest = safe(() => req.resolve('@deepseek-ai/dsh/package.json'))
+  if (dshManifest) {
+    push(join(dirname(dshManifest), 'node_modules', THEME_REL))
+  }
+
+  // 3. Global npm roots: the host is installed globally on this machine, which
+  //    is exactly the case `require.resolve` cannot reach from here.
+  const roots: string[] = []
+  pushRoot(process.env.npm_config_prefix)
+  pushRoot(process.env.NPM_CONFIG_PREFIX)
+  pushRoot(process.env.PREFIX)
+  const npmRoot = safe(function () {
+    return execSync('npm root -g', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+  })
+  if (npmRoot) roots.push(npmRoot)
+  function pushRoot(prefix: string | undefined) {
+    if (prefix) roots.push(join(prefix, 'node_modules'))
+  }
+  for (const root of new Set(roots)) {
+    // the observed layout: <root>/@deepseek-ai/dsh/node_modules/@deepseek-ai/…
+    push(join(root, '@deepseek-ai', 'dsh', 'node_modules', THEME_REL))
+    // and the flat layout, in case the theme is hoisted to the root
+    push(join(root, THEME_REL))
+  }
+
+  for (const c of candidates) {
+    if (existsSync(c)) return c
+  }
+  return null
+}
+
+/** Every custom property the host theme declares, as a set of names. */
+function declaredHostTokens(file: string): Set<string> {
+  const src = readFileSync(file, 'utf8')
+  const names = new Set<string>()
+  // A declaration is `--name:` at statement position. Matching the colon keeps
+  // us from counting a mere mention inside a comment or a string.
+  for (const m of src.matchAll(/(--dsw-[a-z0-9-]+)\s*:/g)) names.add(m[1])
+  return names
+}
+
+const HOST_THEME = findHostTheme()
+
+describe('styles tokens exist in the host theme', () => {
+  it('locates the host theme bundle, or says why it cannot', () => {
+    // Skipping is allowed; passing vacuously is not. If the theme cannot be
+    // found the suite reports the reason rather than going quietly green.
+    if (!HOST_THEME) {
+      console.warn(
+        '[client-console] host theme bundle not found via require.resolve or the ' +
+        'DSH checkout; token-existence assertions SKIPPED. Install ' +
+        '@deepseek-ai/dsh-client-ui-theme or run inside the DSH checkout to enable.',
+      )
+    }
+    expect(HOST_THEME === null || existsSync(HOST_THEME)).toBe(true)
+  })
+
+  it('references only custom properties the host actually declares', () => {
+    // The core assertion. Each token in styles.ts must appear in the host
+    // theme's declaration set; a `var()` to an undeclared property is the
+    // colourless-at-runtime bug this test exists to prevent.
+    if (!HOST_THEME) {
+      console.warn(
+        '[client-console] host theme bundle not found; ' +
+        'cannot verify token existence — skipping (see previous test).',
+      )
+      return
+    }
+
+    const declared = declaredHostTokens(HOST_THEME)
+    // Guard the guard: an empty or truncated host read would make the diff
+    // below pass on anything.
+    expect(declared.size, 'host theme declaration set looks empty').toBeGreaterThan(100)
+
+    const refs = Array.from(STYLES.matchAll(/var\((--dsw-[a-z0-9-]+)\)/g))
+      .map(function (m) { return m[1] })
+    expect(refs.length, 'styles.ts references no tokens at all').toBeGreaterThan(0)
+
+    const phantom = Array.from(new Set(refs))
+      .filter(function (t) { return !declared.has(t) })
+      .sort()
+
+    expect(
+      phantom,
+      'styles.ts references tokens the host theme never declares ' +
+      '(var() to these renders colourless): ' + phantom.join(', '),
+    ).toEqual([])
+  })
+})
+
 // ── Contrast ───────────────────────────────────────────────────────
 //
 // The console renders inside a `shell.overlay` sheet whose card surface is
@@ -314,8 +448,8 @@ describe('console styles', () => {
 // The token graph is asserted structurally rather than by parsing var() at
 // runtime: `styles.ts` names the alias, and this block holds the alias →
 // static → hex chain plus the arithmetic. Both links are needed, because the
-// failure mode is a plausible-looking alias whose literal is too dark (that is
-// exactly how `--dsw-alias-label-caption` gets in).
+// failure mode is a plausible-looking alias whose literal is too dark — see the
+// light-theme caption value pinned inside.
 
 /** WCAG 2.x relative luminance from an sRGB hex string. */
 function luminance(hex: string): number {
@@ -341,6 +475,21 @@ function contrast(a: string, b: string): number {
  * `--dsw-static-neutral-bluish-*` values are the palette those aliases point
  * at. Kept here so the arithmetic below runs on real numbers instead of a
  * `var()` string no test runner can resolve.
+ *
+ * Values verified against `@deepseek-ai/dsh-client-ui-theme`'s `lib/client.js`
+ * (the same file the token-existence block reads). That bundle carries BOTH
+ * theme blocks, light first then dark, so a `--dsw-alias-label-*` value picked
+ * from the wrong block reads as light-theme colour under a dark-theme label —
+ * which is what happened to the `caption` row below (it held `#81858c`, the
+ * LIGHT value; dark resolves `caption` to `#adb2b8`, same as `tertiary`).
+ *
+ * CEILING: this is still a hand-maintained snapshot of the dark theme only. It
+ * is not re-derived at runtime, so a host upgrade that changes a palette value
+ * will not refresh it. The token-existence block DOES re-read the host, so a
+ * renamed/removed token still fails; only a changed *value* can pass silently.
+ * `--dsw-alias-label-tertiary` in the LIGHT theme is `#81858c`, which is 3.71:1
+ * on a white card — below AA. The console ships dark-first and this table does
+ * not assert the light theme at all.
  */
 const DARK_THEME = {
   '--dsw-alias-bg-base': '#151517',        // bluish-950
@@ -350,8 +499,8 @@ const DARK_THEME = {
   '--dsw-alias-label-primary': '#f9fafb',  // bluish-50
   '--dsw-alias-label-secondary': '#cfd3d6', // bluish-300
   '--dsw-alias-label-tertiary': '#adb2b8', // bluish-400
-  '--dsw-alias-label-caption': '#81858c',  // bluish-600  ← 3.90:1 on the card
-  '--dsw-alias-label-dimmed': '#43454a',   // bluish-750
+  '--dsw-alias-label-caption': '#adb2b8',  // bluish-400 — SAME as tertiary in dark
+  '--dsw-alias-label-dimmed': '#43454a',   // bluish-750 — 1.64:1 on the card
 } as const
 
 const CARD = DARK_THEME['--dsw-alias-bg-layer-1']
@@ -366,12 +515,24 @@ describe('contrast: minor text clears WCAG AA against the card', () => {
     expect(contrast('#232324', '#232324')).toBeCloseTo(1, 5)
   })
 
-  it('shows why the caption token was the trap, not the tertiary one', () => {
-    // Both are "grey", one passes and one does not. This is the distinction an
-    // eyeball (or an approximate tool) cannot make, and the reason the console
-    // must not reach for `--dsw-alias-label-caption`.
+  it('shows the caption trap is real — in the light theme, not the dark one', () => {
+    // An earlier revision of this table gave `caption` the hex `#81858c` and
+    // called it the near-miss grey. That was the LIGHT-theme value; in the dark
+    // theme `caption` and `tertiary` resolve to the SAME token (`bluish-400`),
+    // so no dark-theme caption trap exists and the old assertion was asserting
+    // a light value under a dark label.
+    //
+    // The trap is real, it is just theme-local: light `tertiary`/`caption` is
+    // `#81858c`, which is 3.71:1 on a white card — below AA. Pinned here so the
+    // distinction lives in the suite rather than in a review comment.
+    const LIGHT_CARD = '#ffffff'
+    const LIGHT_TERIARY = '#81858c'
     expect(contrast(DARK_THEME['--dsw-alias-label-tertiary'], CARD)).toBeGreaterThanOrEqual(4.5)
-    expect(contrast(DARK_THEME['--dsw-alias-label-caption'], CARD)).toBeLessThan(4.5)
+    expect(contrast(LIGHT_TERIARY, LIGHT_CARD)).toBeLessThan(4.5)
+    // And in the dark theme the two "grey" aliases are the same colour, which is
+    // why the dark table cannot tell them apart.
+    expect(DARK_THEME['--dsw-alias-label-caption'])
+      .toBe(DARK_THEME['--dsw-alias-label-tertiary'])
   })
 
   it('uses only text tokens that clear 4.5:1 against the card surface', () => {

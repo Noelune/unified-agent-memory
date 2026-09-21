@@ -2,7 +2,11 @@
 <title>记忆控制台 · Task 8 修复后复核</title><style>
 /* Token values copied from the live DSH dark theme
    (dsh-client-ui-theme/lib/client.js), so this preview is not a re-invention:
-   --dsw-alias-bg-layer-1 -> --dsw-static-neutral-bluish-875 = #232324, etc. */
+   --dsw-alias-bg-layer-1 -> --dsw-static-neutral-bluish-875 = #232324, etc.
+   Token NAMES are the ones the host really declares. An earlier revision of
+   this file invented --dsw-alias-accent/-ok/-warn/-err, which made the preview
+   look coloured while production (referring to the same invented names) was
+   colourless. That is the bug this revision fixes. */
 :root{
   --dsw-alias-bg-base:#151517;
   --dsw-alias-bg-layer-1:#232324;
@@ -16,10 +20,13 @@
   --dsw-alias-label-tertiary:#adb2b8;
   --dsw-alias-interactive-bg-hover:rgba(255,255,255,.078);
   --dsw-alias-interactive-bg-active:rgba(255,255,255,.141);
-  --dsw-alias-accent:#679efe;
-  --dsw-alias-ok:#22c55e;
-  --dsw-alias-warn:#f59e0b;
-  --dsw-alias-err:#f25a5a;
+  /* real host names, dark-theme resolution */
+  --dsw-alias-brand-primary:#f9fafb;
+  --dsw-alias-state-success-primary:#22c55e;
+  --dsw-alias-state-warn-primary:#f59e0b;
+  --dsw-alias-state-warn-secondary:#f7ad31;
+  --dsw-alias-state-error-primary:#f25a5a;
+  --dsw-alias-interactive-bg-hover-danger:rgba(242,90,90,.149);
   --dsw-shadow-lv2:0 4px 12px 0 #00000005, 0 2px 8px 0 #0000000a;
   --dsw-shadow-lv3:0 0 1px 0 #0003, 0 0 4px 0 #00000005, 0 12px 32px 0 #00000014;
   --mono:ui-monospace,"SF Mono","JetBrains Mono",Consolas,monospace;
@@ -48,11 +55,11 @@ body{margin:0;padding:26px 22px;background:var(--dsw-alias-bg-base);
 .tab.on{color:var(--dsw-alias-label-primary);font-weight:600;transform:translateY(-1px);
   background:var(--dsw-alias-bg-layer-3)}
 .tab.on::after{content:"";position:absolute;left:7px;right:7px;bottom:-1px;height:2px;
-  border-radius:2px;background:var(--dsw-alias-accent);
-  box-shadow:0 0 10px var(--dsw-alias-accent)}
+  border-radius:2px;background:var(--dsw-alias-brand-primary);
+  box-shadow:0 0 10px var(--dsw-alias-brand-primary)}
 .tab .ic{width:5px;height:5px;border-radius:50%;background:currentColor;opacity:.5}
 .tab.on .ic{opacity:.85}
-.pill{background:var(--dsw-alias-warn);color:var(--dsw-alias-bg-layer-1);
+.pill{background:var(--dsw-alias-state-warn-secondary);color:var(--dsw-alias-bg-layer-1);
   border-radius:999px;font:700 9.5px/1.35 var(--mono);padding:1.5px 6px}
 .body{padding:12px;display:flex;flex-direction:column;gap:10px}
 .search{display:flex;align-items:center;gap:9px;padding:10px 12px;
@@ -63,7 +70,7 @@ body{margin:0;padding:26px 22px;background:var(--dsw-alias-bg-base);
 .tog{display:flex;align-items:center;gap:5px;font-size:10px;font-weight:600;
   letter-spacing:.04em;text-transform:uppercase;color:var(--dsw-alias-label-tertiary);
   border-left:1px solid var(--dsw-alias-border-l1);padding-left:9px;height:15px}
-.tog.on{color:var(--dsw-alias-accent)}
+.tog.on{color:var(--dsw-alias-brand-primary)}
 /* The two fixes under review: card = l2 stroke + lv2 shadow; lead card = l3 +
    lv3. Minor text stays on label-tertiary (7.36:1), never label-caption. */
 .card{display:flex;flex-direction:column;background:var(--dsw-alias-bg-layer-1);
@@ -85,14 +92,14 @@ body{margin:0;padding:26px 22px;background:var(--dsw-alias-bg-base);
   background:var(--dsw-alias-border-l1)}
 .bar{width:2.5px;height:15px;border-radius:2px;flex:none;
   background:var(--dsw-alias-label-tertiary);opacity:.45}
-.bar.doc{background:var(--dsw-alias-accent);opacity:.75}
-.bar.ok{background:var(--dsw-alias-ok);opacity:.7}
+.bar.doc{background:var(--dsw-alias-brand-primary);opacity:.75}
+.bar.ok{background:var(--dsw-alias-state-success-primary);opacity:.7}
 .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
   color:var(--dsw-alias-label-primary);font-size:13px}
 .tm{flex:none;font:10.5px var(--mono);color:var(--dsw-alias-label-tertiary);
   line-height:1;letter-spacing:.02em}
 mark{background:var(--dsw-alias-interactive-bg-active);
-  color:var(--dsw-alias-accent);border-radius:3px;padding:0 2px;font-weight:600}
+  color:var(--dsw-alias-brand-primary);border-radius:3px;padding:0 2px;font-weight:600}
 .stats{display:flex;gap:8px}
 .stat{flex:1;display:flex;flex-direction:column;gap:1px;padding:9px 10px 8px;
   border-radius:9px;background:var(--dsw-alias-bg-layer-2);
@@ -115,9 +122,9 @@ mark{background:var(--dsw-alias-interactive-bg-active);
 .sk i:nth-child(2){width:82%}
 .sk i:nth-child(3){width:64%}
 .err{display:flex;align-items:center;gap:9px;padding:9px 11px;border-radius:9px;
-  background:color-mix(in srgb, var(--dsw-alias-err) 12%, transparent);
-  border:1px solid var(--dsw-alias-err);color:var(--dsw-alias-err);font-size:11.5px}
-.err .bt{opacity:1;color:var(--dsw-alias-err);border-color:var(--dsw-alias-err);
+  background:var(--dsw-alias-interactive-bg-hover-danger);
+  border:1px solid var(--dsw-alias-state-error-primary);color:var(--dsw-alias-state-error-primary);font-size:11.5px}
+.err .bt{opacity:1;color:var(--dsw-alias-state-error-primary);border-color:var(--dsw-alias-state-error-primary);
   margin-left:auto}
 </style></head><body>
 

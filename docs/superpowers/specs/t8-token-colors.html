@@ -1,0 +1,52 @@
+<!doctype html><html lang="zh"><head><meta charset="utf-8">
+<title>Token resolution check</title>
+<style>
+:root{
+  --dsw-alias-bg-base:#151517;
+  --dsw-alias-bg-layer-1:#232324;
+  --dsw-alias-bg-layer-3:#353638;
+  --dsw-alias-label-primary:#f9fafb;
+  --dsw-alias-brand-primary:#f9fafb;
+  --dsw-alias-state-success-primary:#22c55e;
+  --dsw-alias-state-warn-secondary:#f7ad31;
+  --dsw-alias-state-error-primary:#f25a5a;
+  --dsw-alias-interactive-bg-hover-danger:rgba(242,90,90,.149);
+}
+*{box-sizing:border-box}
+body{margin:0;padding:20px;background:#151517;color:#f9fafb;
+  font:14px/1.6 ui-monospace,Consolas,monospace}
+.swatch{display:inline-block;width:180px;height:56px;border-radius:8px;
+  border:1px solid #ffffff22;vertical-align:middle;margin-right:12px}
+.row{display:flex;align-items:center;margin:0 0 14px}
+code{color:#adb2b8}
+/* the four production rules under test */
+.bar-doc{background:var(--dsw-alias-brand-primary);opacity:.75;width:40px;height:15px;display:inline-block;border-radius:2px}
+.bar-ok{background:var(--dsw-alias-state-success-primary);opacity:.7;width:40px;height:15px;display:inline-block;border-radius:2px}
+.tab-underline{background:var(--dsw-alias-brand-primary);width:120px;height:3px;display:inline-block;border-radius:2px}
+.pill{background:var(--dsw-alias-state-warn-secondary);color:var(--dsw-alias-bg-layer-1);
+  border-radius:999px;font:700 12px/1.35 monospace;padding:4px 12px;display:inline-block}
+.err{background:var(--dsw-alias-interactive-bg-hover-danger);
+  border:1px solid var(--dsw-alias-state-error-primary);color:var(--dsw-alias-state-error-primary);
+  padding:8px 12px;border-radius:8px;font-size:13px;display:inline-block}
+</style></head><body>
+<h2>Resolved token colours (computed by the browser)</h2>
+<div class="row"><span class="swatch" style="background:var(--dsw-alias-brand-primary)"></span>
+  <code>brand-primary</code> = the resolved blue/white accent for tab underline + mark</div>
+<div class="row"><span class="swatch" style="background:var(--dsw-alias-state-success-primary)"></span>
+  <code>state-success-primary</code> = green status bar</div>
+<div class="row"><span class="swatch" style="background:var(--dsw-alias-state-warn-secondary)"></span>
+  <code>state-warn-secondary</code> = amber pending pill</div>
+<div class="row"><span class="swatch" style="background:var(--dsw-alias-state-error-primary)"></span>
+  <code>state-error-primary</code> = error text/stroke</div>
+<div class="row"><span class="swatch" style="background:var(--dsw-alias-interactive-bg-hover-danger)"></span>
+  <code>interactive-bg-hover-danger</code> = translucent error fill</div>
+<div class="row"><span class="swatch" style="background:var(--dsw-alias-bg-layer-1)"></span>
+  <code>bg-layer-1</code> = card surface</div>
+
+<h3>The four production elements</h3>
+<div class="row"><span class="bar-doc"></span>&nbsp;<code>.dsh-memory-bar-doc</code> (brand-primary)</div>
+<div class="row"><span class="bar-ok"></span>&nbsp;<code>.dsh-memory-bar-ok</code> (state-success-primary)</div>
+<div class="row"><span class="tab-underline"></span>&nbsp;<code>.dsh-memory-tab[data-active]::after</code> (brand-primary)</div>
+<div class="row"><span class="pill">1</span>&nbsp;<code>.dsh-memory-pill</code> (state-warn-secondary on bg-layer-1 ink)</div>
+<div class="row"><span class="err">搜索暂不可用，请稍后重试</span>&nbsp;<code>.dsh-memory-failure</code></div>
+</body></html>
