@@ -1,0 +1,345 @@
+<!doctype html><html lang="zh"><head><meta charset="utf-8">
+<title>记忆控制台 · 视觉稿 v3</title><style>
+/* 令牌映射：真实插件里 --dsw-* 由 DSH 主题注入；预览给等价取值。
+   形状/层级/间距/类名可 1:1 迁移到 styles.ts。 */
+:root{
+  --dsw-alias-bg-layer-1:#1b1e24;
+  --dsw-alias-bg-layer-2:#22262d;
+  --dsw-alias-bg-layer-3:#2b3038;
+  --dsw-alias-border-l1:rgba(255,255,255,.075);
+  --dsw-alias-border-l2:rgba(255,255,255,.14);
+  --dsw-alias-label-primary:#f0f3f8;
+  --dsw-alias-label-secondary:#bcc5d2;
+  --dsw-alias-label-tertiary:#929caa;
+  --dsw-alias-interactive-bg-hover:rgba(255,255,255,.06);
+  --dsw-alias-interactive-bg-active:rgba(150,170,255,.16);
+  --dsw-alias-accent:#93a9ff;
+  --dsw-alias-ok:#6bd08a;
+  --dsw-alias-warn:#e0b054;
+  --dsw-alias-err:#ff8f86;
+  --dsw-shadow-lv2:0 1px 2px rgba(0,0,0,.4), 0 12px 34px rgba(0,0,0,.46), 0 34px 78px rgba(0,0,0,.34);
+  /* 卡片自有的深度阴影：卡片与页面底色太近（实测 #1E2127 vs #15181C），
+     靠阴影而非色差把卡片托起来。 */
+  --card-shadow:0 1px 2px rgba(0,0,0,.34), 0 4px 12px rgba(0,0,0,.22);
+  --card-shadow-lead:0 2px 4px rgba(0,0,0,.34), 0 8px 22px rgba(0,0,0,.26);
+  --page:#131519;
+  --mono:ui-monospace,"SF Mono","JetBrains Mono",Consolas,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;padding:30px 26px;background:
+  radial-gradient(1000px 400px at 14% -10%, rgba(130,150,255,.085), transparent 60%),
+  radial-gradient(880px 360px at 92% 112%, rgba(255,150,190,.04), transparent 58%),
+  var(--page);
+  color:var(--dsw-alias-label-primary);
+  font:13.5px/1.5 ui-sans-serif,system-ui,"Segoe UI","Microsoft YaHei",sans-serif;
+  -webkit-font-smoothing:antialiased}
+.hdr{display:flex;align-items:baseline;gap:10px;margin:0 0 18px}
+.hdr h2{font-size:15px;font-weight:600;margin:0;letter-spacing:-.012em}
+.hdr p{margin:0;font-size:11.5px;color:var(--dsw-alias-label-tertiary)}
+.stage{display:flex;gap:22px;flex-wrap:wrap;align-items:flex-start}
+
+/* ── 浅色主题：证明形状层可随 app 主题切换，不依赖自造色 ── */
+body.light{
+  --dsw-alias-bg-layer-1:#ffffff;
+  --dsw-alias-bg-layer-2:#f4f6fa;
+  --dsw-alias-bg-layer-3:#e9edf5;
+  --dsw-alias-border-l1:rgba(16,20,30,.10);
+  --dsw-alias-border-l2:rgba(16,20,30,.17);
+  --dsw-alias-label-primary:#141922;
+  --dsw-alias-label-secondary:#495266;
+  --dsw-alias-label-tertiary:#6b7488;
+  --dsw-alias-interactive-bg-hover:rgba(16,20,30,.045);
+  --dsw-alias-accent:#4a63d8;
+  --dsw-alias-ok:#1f8a48;
+  --dsw-alias-warn:#8a5f08;
+  --dsw-alias-err:#b3261e;
+  --card-shadow:0 1px 2px rgba(16,20,30,.07), 0 4px 12px rgba(16,20,30,.06);
+  --card-shadow-lead:0 2px 4px rgba(16,20,30,.07), 0 8px 22px rgba(16,20,30,.07);
+  --page:#eef1f6;
+  background:
+    radial-gradient(1000px 400px at 14% -10%, rgba(90,115,220,.10), transparent 60%),
+    radial-gradient(880px 360px at 92% 112%, rgba(200,110,160,.06), transparent 58%),
+    var(--page);
+}
+body.light .sheet{box-shadow:0 1px 2px rgba(16,20,30,.07), 0 12px 34px rgba(16,20,30,.11), 0 34px 78px rgba(16,20,30,.07)}
+body.light .pill{color:#fff}
+body.light .search{box-shadow:0 1px 2px rgba(16,20,30,.05) inset}
+body.light .sheet::before{background:linear-gradient(180deg, rgba(255,255,255,.6), transparent 30%)}
+body.light .trig{box-shadow:0 2px 7px rgba(16,20,30,.13), 0 0 0 1px rgba(255,255,255,.7) inset}
+.col{display:flex;flex-direction:column}
+.lbl{font-size:10px;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--dsw-alias-label-tertiary);margin:0 0 8px;font-weight:600}
+
+/* ── 面板：玻璃 + 三层环境遮蔽阴影 + 顶部内光晕 ── */
+.sheet{width:388px;position:relative;
+  background:linear-gradient(170deg,
+     color-mix(in srgb, var(--dsw-alias-bg-layer-2) 90%, transparent),
+     color-mix(in srgb, var(--dsw-alias-bg-layer-1) 97%, transparent));
+  backdrop-filter:blur(24px) saturate(1.3);
+  border:1px solid var(--dsw-alias-border-l2);
+  border-radius:14px;overflow:hidden;
+  box-shadow:var(--dsw-shadow-lv2)}
+.sheet::before{content:"";position:absolute;inset:0;pointer-events:none;border-radius:14px;z-index:3;
+  background:linear-gradient(180deg, rgba(255,255,255,.05), transparent 30%)}
+
+/* ── Tab：激活态 = 微亮底 + 强调色发光下划线 + 上浮 ── */
+.tabs{display:flex;padding:8px 8px 0;gap:1px;position:relative;
+  border-bottom:1px solid var(--dsw-alias-border-l1);
+  background:color-mix(in srgb, var(--dsw-alias-bg-layer-1) 50%, transparent)}
+.tab{position:relative;padding:9px 12px 10px;font-size:12.5px;color:var(--dsw-alias-label-tertiary);
+  display:flex;align-items:center;gap:6px;border-radius:8px 8px 0 0;
+  transition:color .16s, transform .16s, background-color .16s}
+.tab:hover{color:var(--dsw-alias-label-secondary);
+  background:var(--dsw-alias-interactive-bg-hover)}
+.tab.on{color:var(--dsw-alias-label-primary);font-weight:600;transform:translateY(-1px);
+  background:color-mix(in srgb, var(--dsw-alias-bg-layer-3) 46%, transparent)}
+.tab.on::after{content:"";position:absolute;left:7px;right:7px;bottom:-1px;height:2px;
+  border-radius:2px;background:linear-gradient(90deg,
+     transparent, var(--dsw-alias-accent) 20%, var(--dsw-alias-accent) 80%, transparent);
+  box-shadow:0 0 10px color-mix(in srgb, var(--dsw-alias-accent) 70%, transparent)}
+.tab .ic{font-size:9px;opacity:.5;line-height:1}
+.tab.on .ic{opacity:.85}
+.pill{background:var(--dsw-alias-warn);color:#1a1405;border-radius:999px;font:700 9.5px/1.35 var(--mono);
+  padding:1.5px 6px;letter-spacing:.02em}
+
+.body{padding:12px;display:flex;flex-direction:column;gap:10px}
+
+/* ── 搜索框：focus-within 强调环 + 内嵌 hybrid 开关 ── */
+.search{display:flex;align-items:center;gap:9px;padding:10px 12px;
+  background:color-mix(in srgb, var(--dsw-alias-bg-layer-1) 86%, transparent);
+  border:1px solid var(--dsw-alias-border-l1);border-radius:11px;
+  box-shadow:0 1px 0 rgba(255,255,255,.04) inset, 0 1px 3px rgba(0,0,0,.18) inset;
+  transition:border-color .16s, box-shadow .16s}
+.search:focus-within{border-color:color-mix(in srgb, var(--dsw-alias-accent) 55%, transparent);
+  box-shadow:0 0 0 3px color-mix(in srgb, var(--dsw-alias-accent) 14%, transparent)}
+.search .ic{color:var(--dsw-alias-label-tertiary);font-size:11px;opacity:.6}
+.search .q{flex:1;color:var(--dsw-alias-label-primary)}
+.search .q.ph{color:var(--dsw-alias-label-tertiary);opacity:.75}
+.tog{display:flex;align-items:center;gap:5px;font-size:10px;
+  color:var(--dsw-alias-label-tertiary);
+  border-left:1px solid var(--dsw-alias-border-l1);
+  padding-left:9px;margin-left:2px;height:15px;
+  letter-spacing:.04em;text-transform:uppercase;font-weight:600}
+.tog::before{content:"";width:6px;height:6px;border-radius:50%;
+  background:var(--dsw-alias-label-tertiary);opacity:.45}
+.tog.on{color:var(--dsw-alias-accent)}
+.tog.on::before{background:var(--dsw-alias-accent);opacity:1;
+  box-shadow:0 0 7px color-mix(in srgb, var(--dsw-alias-accent) 75%, transparent)}
+
+/* ── 卡片 ── */
+.card{background:color-mix(in srgb, var(--dsw-alias-bg-layer-1) 90%, transparent);
+  border:1px solid var(--dsw-alias-border-l1);border-radius:11px;padding:11px 12px;
+  box-shadow:var(--card-shadow)}
+.card.lead{background:linear-gradient(158deg,
+   color-mix(in srgb, var(--dsw-alias-bg-layer-3) 76%, transparent),
+   color-mix(in srgb, var(--dsw-alias-bg-layer-1) 95%, transparent));
+  border-color:var(--dsw-alias-border-l2);
+  box-shadow:var(--card-shadow-lead)}
+.ct{display:flex;align-items:center;gap:7px;font-size:10px;font-weight:700;
+  letter-spacing:.09em;text-transform:uppercase;color:var(--dsw-alias-label-tertiary);
+  margin:0 0 8px;line-height:1}
+.ct b{color:var(--dsw-alias-label-secondary);font-weight:700;letter-spacing:.06em;
+  border:1px solid var(--dsw-alias-border-l1);border-radius:5px;padding:1.5px 5px;
+  font-size:9px;letter-spacing:.05em}
+.ct .n{margin-left:auto;font:600 10px var(--mono);letter-spacing:.02em;
+  color:var(--dsw-alias-label-tertiary);text-transform:none}
+
+/* ── 列表行：类型色条 + hover 位移 + 缩进分割线 ── */
+.rows{display:flex;flex-direction:column}
+.row{display:flex;align-items:center;gap:9px;padding:8px 8px 8px 6px;
+  border-radius:8px;position:relative;transition:background .13s, transform .13s}
+.row + .row::before{content:"";position:absolute;top:0;left:12px;right:8px;height:1px;
+  background:var(--dsw-alias-border-l1)}
+.row:hover{background:var(--dsw-alias-interactive-bg-hover);transform:translateX(1.5px)}
+.bar{width:2.5px;height:15px;border-radius:2px;flex:none;
+  background:var(--dsw-alias-label-tertiary);opacity:.45}
+.bar.doc{background:var(--dsw-alias-accent);opacity:.75}
+.bar.file{background:var(--dsw-alias-ok);opacity:.7}
+.nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  color:var(--dsw-alias-label-primary);font-size:13px}
+.nm .sub{color:var(--dsw-alias-label-tertiary)}
+.row.pend .nm{color:var(--dsw-alias-label-secondary)}
+.tm{flex:none;font:10.5px var(--mono);color:var(--dsw-alias-label-tertiary);
+  line-height:1;letter-spacing:.02em}
+mark{background:color-mix(in srgb, var(--dsw-alias-accent) 20%, transparent);
+  color:var(--dsw-alias-accent);border-radius:3px;padding:0 2px;font-weight:600}
+
+/* ── 统计：等宽数字 + 紧贴单位 ── */
+.stats{display:flex;gap:8px}
+.stat{flex:1;display:flex;flex-direction:column;gap:1px;padding:9px 10px 8px;
+  border-radius:9px;
+  background:color-mix(in srgb, var(--dsw-alias-bg-layer-2) 58%, transparent);
+  border:1px solid var(--dsw-alias-border-l1)}
+.stat b{font:600 21px/1.05 var(--mono);letter-spacing:-.02em;
+  font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-primary)}
+.stat span{font-size:9px;letter-spacing:.07em;color:var(--dsw-alias-label-tertiary);
+  font-weight:700;text-transform:uppercase}
+
+.bt{flex:none;font-size:10.5px;color:var(--dsw-alias-label-tertiary);
+  border:1px solid var(--dsw-alias-border-l1);border-radius:7px;padding:3px 8px;
+  opacity:.65;transition:opacity .14s,color .14s,border-color .14s}
+.row:hover .bt{opacity:1;color:var(--dsw-alias-accent);
+  border-color:color-mix(in srgb, var(--dsw-alias-accent) 42%, transparent)}
+
+/* ── 空状态 ── */
+.empty{display:flex;flex-direction:column;align-items:center;gap:6px;padding:22px 14px;
+  color:var(--dsw-alias-label-tertiary)}
+.empty .g{font-size:21px;opacity:.3;line-height:1}
+.empty .t{font-size:12.5px;color:var(--dsw-alias-label-secondary)}
+.empty em{font-size:11px;font-style:normal;color:var(--dsw-alias-label-tertiary);opacity:.82;
+  text-align:center;line-height:1.45}
+
+/* ── 骨架屏 ── */
+.sk{display:flex;flex-direction:column;gap:7px}
+.sk i{height:13px;border-radius:6px;display:block;
+  background:color-mix(in srgb, var(--dsw-alias-bg-layer-3) 70%, transparent);
+  animation:pl 1.4s ease-in-out infinite}
+.sk i:nth-child(2){width:82%;animation-delay:.18s}
+.sk i:nth-child(3){width:64%;animation-delay:.36s}
+@keyframes pl{0%,100%{opacity:.45}50%{opacity:.9}}
+
+/* ── 错误态 ── */
+.err{display:flex;align-items:center;gap:9px;padding:9px 11px;border-radius:9px;
+  background:color-mix(in srgb, var(--dsw-alias-err) 12%, transparent);
+  border:1px solid color-mix(in srgb, var(--dsw-alias-err) 34%, transparent);
+  color:var(--dsw-alias-err);font-size:11.5px}
+.err .bt{opacity:1;color:var(--dsw-alias-err);
+  border-color:color-mix(in srgb, var(--dsw-alias-err) 40%, transparent)}
+
+/* ── 侧栏入口 ── */
+.trig{width:37px;height:37px;border-radius:19px;position:relative;
+  display:flex;align-items:center;justify-content:center;font-size:15px;
+  background:linear-gradient(160deg,
+    color-mix(in srgb, var(--dsw-alias-bg-layer-3) 90%, transparent),
+    color-mix(in srgb, var(--dsw-alias-bg-layer-1) 96%, transparent));
+  border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);
+  box-shadow:0 2px 7px rgba(0,0,0,.34), 0 0 0 1px rgba(255,255,255,.04) inset}
+.trig .pill{position:absolute;top:-5px;right:-5px;
+  box-shadow:0 0 0 2.5px var(--page)}
+</style></head><body>
+
+<div class="hdr"><h2>记忆控制台</h2><p>v3 · 真实数据 · 令牌化 · 含空/错/载三态</p></div>
+<div class="stage">
+
+  <div class="col">
+    <div class="lbl">入口</div>
+    <div class="trig">◈<span class="pill">1</span></div>
+  </div>
+
+  <div class="col">
+    <div class="lbl">Tab 1 · 搜索</div>
+    <div class="sheet">
+      <div class="tabs">
+        <div class="tab on"><span class="ic">◇</span>搜索</div>
+        <div class="tab"><span class="ic">◇</span>待处理<span class="pill">1</span></div>
+        <div class="tab"><span class="ic">◇</span>库全貌</div>
+        <div class="tab"><span class="ic">◇</span>系统</div>
+      </div>
+      <div class="body">
+        <div class="search"><span class="ic">◇</span><span class="q">记忆</span>
+          <span class="tog on">hybrid</span></div>
+        <div class="card lead">
+          <div class="ct">结果 <b>local</b><span class="n">2 hits</span></div>
+          <div class="rows">
+            <div class="row"><i class="bar doc"></i><span class="nm"><mark>记忆</mark> · README.md</span><span class="tm">README</span></div>
+            <div class="row"><i class="bar doc"></i><span class="nm"><mark>记忆</mark> · 上下文索引.md</span><span class="tm">索引</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="lbl">Tab 2 · 待处理</div>
+    <div class="sheet">
+      <div class="tabs">
+        <div class="tab"><span class="ic">◇</span>搜索</div>
+        <div class="tab on"><span class="ic">◇</span>待处理<span class="pill">1</span></div>
+        <div class="tab"><span class="ic">◇</span>库全貌</div>
+        <div class="tab"><span class="ic">◇</span>系统</div>
+      </div>
+      <div class="body">
+        <div class="card lead">
+          <div class="ct">提交区 · 等待晋升<span class="n">1 items</span></div>
+          <div class="rows">
+            <div class="row pend"><i class="bar doc"></i><span class="nm">README.md</span><span class="bt">已处理</span></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="ct">最近更新<span class="n">top 6</span></div>
+          <div class="rows">
+            <div class="row"><i class="bar doc"></i><span class="nm">常用路径与环境.md</span><span class="tm">md</span></div>
+            <div class="row"><i class="bar doc"></i><span class="nm">工具可用性检查.md</span><span class="tm">md</span></div>
+            <div class="row"><i class="bar doc"></i><span class="nm">Codex-Claude-Hermes协作规则.md</span><span class="tm">md</span></div>
+            <div class="row"><i class="bar doc"></i><span class="nm">UI审美准则.md</span><span class="tm">md</span></div>
+            <div class="row"><i class="bar doc"></i><span class="nm">上下文索引.md</span><span class="tm">md</span></div>
+            <div class="row"><i class="bar doc"></i><span class="nm">工程执行规则.md</span><span class="tm">md</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="lbl">Tab 3 · 库全貌</div>
+    <div class="sheet">
+      <div class="tabs">
+        <div class="tab"><span class="ic">◇</span>搜索</div>
+        <div class="tab"><span class="ic">◇</span>待处理</div>
+        <div class="tab on"><span class="ic">◇</span>库全貌</div>
+        <div class="tab"><span class="ic">◇</span>系统</div>
+      </div>
+      <div class="body">
+        <div class="card lead">
+          <div class="ct">规模</div>
+          <div class="stats">
+            <div class="stat"><b>21</b><span>memories</span></div>
+            <div class="stat"><b>0</b><span>vectors</span></div>
+            <div class="stat"><b>1</b><span>pending</span></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="ct">连接</div>
+          <div class="rows">
+            <div class="row"><i class="bar file"></i><span class="nm">vault connected</span><span class="tm">ok</span></div>
+            <div class="row"><i class="bar"></i><span class="nm">version</span><span class="tm">0.5.2</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="lbl">Tab 4 · 系统</div>
+    <div class="sheet">
+      <div class="tabs">
+        <div class="tab"><span class="ic">◇</span>搜索</div>
+        <div class="tab"><span class="ic">◇</span>待处理</div>
+        <div class="tab"><span class="ic">◇</span>库全貌</div>
+        <div class="tab on"><span class="ic">◇</span>系统</div>
+      </div>
+      <div class="body">
+        <div class="card lead">
+          <div class="ct">系统</div>
+          <div class="rows">
+            <div class="row"><i class="bar file"></i><span class="nm">vault connected</span><span class="tm">ok</span></div>
+            <div class="row"><i class="bar"></i><span class="nm">version</span><span class="tm">0.5.2</span></div>
+            <div class="row"><i class="bar"></i><span class="nm">core path</span><span class="tm">core/</span></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="ct">空态 / 错误态 / 加载态</div>
+          <div class="rows">
+            <div class="row"><i class="bar doc"></i><span class="nm">暂无内容</span><span class="tm">ok+[]</span></div>
+            <div class="row"><i class="bar"></i><span class="nm">该视图暂不支持</span><span class="tm">unsup</span></div>
+            <div class="row"><i class="bar"></i><span class="nm">条目不存在</span><span class="tm">reason</span></div>
+          </div>
+          <div class="sk" style="margin-top:9px"><i></i><i></i><i></i></div>
+          <div class="err" style="margin-top:9px">◇ 搜索服务暂不可用<span class="bt" style="margin-left:auto">重试</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</body></html>
