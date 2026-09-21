@@ -45,6 +45,8 @@ import { resolveConfig, runCore } from './utils.ts'
 import { registerAll } from './tools.ts'
 import { checkForUpdate, getUpdateInfo } from './updater.ts'
 import { buildStatusPayload } from './status-payload.ts'
+import { guard, sendJson } from './routes.ts'
+import type { RouteReq, RouteRes } from './routes.ts'
 import type { PluginConfig } from './types.ts'
 import type { StatusStats } from './status-payload.ts'
 export const name = 'dsh-unified-agent-memory'
@@ -66,17 +68,17 @@ export const name = 'dsh-unified-agent-memory'
  */
 export const inject: readonly string[] = ['tools', 'webServer']
 
-/** Shape of the webServer route registration used for the status endpoint. */
+/**
+ * Shape of the webServer route registration used for the status endpoint.
+ *
+ * Request and response types come from `./routes.ts` — that guard is the single
+ * source of truth for the HTTP surface. This local interface only pins the
+ * registration shape (kind/path/handler) the host expects.
+ */
 interface StatusRoute {
   kind: string
   path: string
-  handler: (
-    req: { socket?: { remoteAddress?: string }; method?: string },
-    res: {
-      writeHead: (code: number, headers: Record<string, string>) => void
-      end: (body: string) => void
-    },
-  ) => void | Promise<void>
+  handler: (req: RouteReq, res: RouteRes) => void | Promise<void>
 }
 
 // ── Read-only stats ─────────────────────────────────────────────────
@@ -149,46 +151,23 @@ export function apply(ctx: Context, config: Record<string, unknown> = {}): void 
     kind: 'exact',
     path: '/api/dsh-unified-agent-memory/status',
     handler(req, res) {
-      // Loopback-only: the payload carries local filesystem paths and this
-      // harness may sit behind a reverse proxy.
-      const remote = String(req.socket?.remoteAddress ?? '')
-      if (remote && remote !== '127.0.0.1' && remote !== '::1' && remote !== '::ffff:127.0.0.1') {
-        res.writeHead(403, {
-          'content-type': 'application/json; charset=utf-8',
-          'cache-control': 'no-store',
-        })
-        res.end('{"ok":false,"error":"forbidden: loopback-only"}')
-        return
-      }
-      if (req.method && req.method !== 'GET' && req.method !== 'HEAD') {
-        res.writeHead(405, {
-          'content-type': 'application/json; charset=utf-8',
-          'cache-control': 'no-store',
-        })
-        res.end('{"ok":false,"error":"method not allowed"}')
-        return
-      }
+      // Shared baseline: loopback-only, GET/HEAD, no-store on every answer.
+      // A rejected request is already answered, so return without writing more.
+      if (!guard(req, res, ['GET', 'HEAD'])) return
       // The stats read is async, so the 200 path resolves a tick later; return
-      // the promise so callers can observe completion. The 403/405 guards above
-      // still answer synchronously.
+      // the promise so callers can observe completion.
       return (async () => {
         try {
           const ui = getUpdateInfo()
           // Read-only core call; null on any failure. Never throws.
           const stats = await readStats(cfg)
-          const body = JSON.stringify(buildStatusPayload(cfg, ui, stats))
-          res.writeHead(200, {
-            'content-type': 'application/json; charset=utf-8',
-            'cache-control': 'no-store',
-          })
-          res.end(body)
+          sendJson(res, 200, buildStatusPayload(cfg, ui, stats))
         } catch {
           // Serialization failure — respond with 500 so the client
           // doesn't hang. This guard exists because JSON.stringify
           // can throw on circular references (unlikely here but
           // a defensive principle).
-          res.writeHead(500, { 'content-type': 'application/json' })
-          res.end('{"ok":false,"error":"internal error"}')
+          sendJson(res, 500, { ok: false, error: 'internal error' })
         }
       })()
     },
