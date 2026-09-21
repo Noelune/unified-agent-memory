@@ -390,6 +390,107 @@ function declaredHostTokens(file: string): Set<string> {
 
 const HOST_THEME = findHostTheme()
 
+// ── Theme resolution: read the real values out of the host bundle ──
+//
+// The `DARK_THEME` table further down is a hand-maintained snapshot and can rot
+// when the host palette moves. The two blocks below need the values for BOTH
+// themes, so instead of adding a second hand-typed table they RESOLVE the
+// alias → static → hex chain straight out of the host bundle at test time.
+// If the host cannot be found they skip loudly, same contract as the token
+// block: skipping is allowed, passing vacuously is not.
+
+/** One parsed theme block: alias and static custom properties → raw value. */
+type ThemeVars = {
+  alias: Map<string, string>
+  static: Map<string, string>
+}
+
+/**
+ * Parse BOTH theme blocks out of the host bundle.
+ *
+ * The bundle emits the same custom property name once per theme, in document
+ * order: the light block first, the dark block second (verified against
+ * `lib/client.js`). So the first declaration of a name is light and the last
+ * is dark. Parsing positionally instead of by selector keeps this working
+ * even though the bundle is minified and the selector names are generated.
+ */
+function parseTheme(file: string): { light: ThemeVars; dark: ThemeVars } {
+  const src = readFileSync(file, 'utf8')
+  const collect = function (re: RegExp): Map<string, string[]> {
+    const out = new Map<string, string[]>()
+    for (const m of src.matchAll(re)) {
+      const name = m[1]
+      if (!out.has(name)) out.set(name, [])
+      out.get(name)!.push(m[2].trim())
+    }
+    return out
+  }
+  const aliases = collect(/(--dsw-alias-[a-z0-9-]+)\s*:\s*([^;{}]+);/g)
+  const statics = collect(/(--dsw-static-[a-z0-9-]+)\s*:\s*([^;{}]+);/g)
+
+  const side = function (which: 'light' | 'dark'): ThemeVars {
+    const pick = function (m: Map<string, string[]>): Map<string, string> {
+      const out = new Map<string, string>()
+      for (const [k, v] of m) out.set(k, which === 'light' ? v[0] : v[v.length - 1])
+      return out
+    }
+    return { alias: pick(aliases), static: pick(statics) }
+  }
+  return { light: side('light'), dark: side('dark') }
+}
+
+/**
+ * Resolve a `var(--token)` reference through a theme's own declarations.
+ *
+ * The chain in this theme is at most `alias → static → hex`, but the resolver
+ * loops rather than unrolling two hops, so a future `alias → alias → static`
+ * still lands. An unresolvable reference becomes the literal string `''`; the
+ * caller asserts on that, which is why a rename fails instead of silently
+ * comparing `NaN`.
+ */
+function resolveVar(value: string, vars: ThemeVars, depth = 0): string {
+  if (depth > 8) return ''
+  const m = value.match(/^var\((--dsw-[a-z0-9-]+)\)$/)
+  if (!m) return value
+  const next = vars.alias.get(m[1]) ?? vars.static.get(m[1])
+  if (next === undefined) return ''
+  return resolveVar(next, vars, depth + 1)
+}
+
+/** `#fff` → `#ffffff`, so the luminance helper only ever sees six digits. */
+function expandHex(hex: string): string {
+  const h = hex.replace('#', '').trim()
+  if (h.length === 3) return '#' + h.split('').map(function (c) { return c + c }).join('')
+  return '#' + h.slice(0, 6)
+}
+
+/**
+ * Resolve a token to an sRGB hex, COMPOSITING any alpha it carries over a
+ * backdrop.
+ *
+ * The host ships its surface tints as 8-digit `#rrggbbaa` literals (e.g.
+ * `interactive-bg-hover-danger`), and an alpha colour has no luminance of its
+ * own — it takes the luminance of whatever it is painted on. Skipping this
+ * step is exactly how "error text on the tinted banner" got reported at
+ * 3.96:1 using the tint's RGB and the wrong assumption about its alpha.
+ */
+function tokenHex(token: string, vars: ThemeVars, backdrop: string): string {
+  const raw = vars.alias.get(token) ?? vars.static.get(token)
+  if (raw === undefined) return ''
+  const resolved = resolveVar(raw, vars)
+  if (resolved === '') return ''
+  const h = resolved.replace('#', '').trim()
+  if (h.length === 8) {
+    const a = parseInt(h.slice(6, 8), 16) / 255
+    const fg = [0, 2, 4].map(function (i) { return parseInt(h.slice(i, i + 2), 16) })
+    const bg = [0, 2, 4].map(function (i) { return parseInt(expandHex(backdrop).slice(i + 1, i + 3), 16) })
+    const mixed = fg.map(function (c, i) { return Math.round(c * a + bg[i] * (1 - a)) })
+    return '#' + mixed.map(function (c) { return c.toString(16).padStart(2, '0') }).join('')
+  }
+  return expandHex(resolved)
+}
+
+
 describe('styles tokens exist in the host theme', () => {
   it('locates the host theme bundle, or says why it cannot', () => {
     // Skipping is allowed; passing vacuously is not. If the theme cannot be
@@ -795,3 +896,194 @@ describe('mutation: highlightParts', () => {
     expect(function () { assert(mutant) }).toThrow()
   })
 })
+
+// ── Error banner: body text must clear AA on whatever it is painted on ──
+//
+// Round 2 shipped the banner as `interactive-bg-hover-danger` fill with
+// `state-error-primary` text and defended the resulting 3.96:1 (dark) /
+// 4.14:1 (light) as the ceiling of a host that ships no error *surface* token.
+// The review rejected that, correctly: a banner is the primary carrier of
+// information precisely when the user most needs to read it, so sub-AA body
+// text is not defensible there. And the absence of a soft error fill is itself
+// the host telling us something — it does not want coloured body text on a
+// coloured fill.
+//
+// So the banner is now NEUTRAL: a layered surface for the fill, an error
+// stroke + error glyph for the semantics, and `label-primary` for the words.
+// Three carriers of "this is an error" (colour, stroke, icon) and no contrast
+// debt. These tests are what make that a contract instead of a hope:
+//
+//   * the body-vs-fill ratio must clear 4.5:1 in BOTH themes;
+//   * the semantics must still be visibly error-coloured, i.e. the stroke and
+//     glyph must resolve to the error family — "we fixed contrast by deleting
+//     the red" is caught here;
+//   * values are resolved from the host bundle, so a host palette move cannot
+//     silently invalidate the arithmetic.
+
+/** The banner's three colour roles, read out of the stylesheet source. */
+function bannerRoles(css: string): { fill: string; ink: string; stroke: string; glyph: string } | null {
+  // Read only the live console rule, not the leftover pre-console
+  // `.dsh-memory-card`. The failure rule is unique, so a plain slice is safe.
+  const at = css.indexOf('.dsh-memory-failure {')
+  if (at < 0) return null
+  const rule = css.slice(at, css.indexOf('}', at))
+  const bg = rule.match(/background:\s*var\((--dsw-[a-z0-9-]+)\)/)
+  const color = rule.match(/[^-]color:\s*var\((--dsw-[a-z0-9-]+)\)/)
+  const border = rule.match(/border:\s*1px solid var\((--dsw-[a-z0-9-]+)\)/)
+  // The glyph is its own rule; the semantics must be carried by an element that
+  // actually renders the error colour, not just by the word "error" in a name.
+  const glyphAt = css.indexOf('.dsh-memory-failure-glyph')
+  const glyphRule = glyphAt < 0 ? '' : css.slice(glyphAt, css.indexOf('}', glyphAt))
+  const glyph = glyphRule.match(/color:\s*var\((--dsw-[a-z0-9-]+)\)/)
+  if (!bg || !color || !border || !glyph) return null
+  return { fill: bg[1], ink: color[1], stroke: border[1], glyph: glyph[1] }
+}
+
+const THEMES = HOST_THEME ? parseTheme(HOST_THEME) : null
+const ROLES = bannerRoles(STYLES)
+
+describe('contrast: the error banner body text clears AA on its own fill', () => {
+  it('locates the host theme, or says why it cannot', () => {
+    if (!THEMES) {
+      console.warn(
+        '[client-console] host theme bundle not found; error-banner contrast ' +
+        'assertions SKIPPED (same contract as the token-existence block).',
+      )
+    }
+    expect(THEMES === null || HOST_THEME !== null).toBe(true)
+  })
+
+  it('resolves the three banner roles out of the stylesheet', () => {
+    // Guard the guard: if the rule stops matching, the ratio test below would
+    // compare empty strings and could pass. Fail loudly instead.
+    expect(ROLES, 'could not parse .dsh-memory-failure { … }').not.toBeNull()
+    expect(ROLES!.fill.length).toBeGreaterThan(0)
+    expect(ROLES!.ink.length).toBeGreaterThan(0)
+  })
+
+  it('reports the body-vs-fill ratio for BOTH themes', () => {
+    if (!THEMES) return
+    // The sheet lives on the console pane, which sits on the sheet's layer-2.
+    const report: Record<string, number> = {}
+    for (const which of ['dark', 'light'] as const) {
+      const vars = THEMES[which]
+      const pane = tokenHex('--dsw-alias-bg-layer-2', vars, '#ffffff')
+      const fill = tokenHex(ROLES!.fill, vars, pane)
+      const ink = tokenHex(ROLES!.ink, vars, fill)
+      expect(fill, `${which}: fill did not resolve`).toMatch(/^#[0-9a-f]{6}$/)
+      expect(ink, `${which}: ink did not resolve (renamed token?)`).toMatch(/^#[0-9a-f]{6}$/)
+      report[which] = Number(contrast(ink, fill).toFixed(2))
+    }
+    // Attached to the run output so the report can quote the real numbers.
+    console.log('[error-banner] ink-on-fill contrast:', JSON.stringify(report))
+    expect(report.dark).toBeGreaterThanOrEqual(4.5)
+    expect(report.light).toBeGreaterThanOrEqual(4.5)
+  })
+
+  it('keeps the error semantics — stroke and glyph stay in the error family', () => {
+    if (!THEMES) return
+    // The mutation this catches: "fix contrast by dropping the red". A banner
+    // whose stroke and glyph use neutral tokens has no colour carrier left and
+    // is not an error banner, AA or not.
+    for (const t of [ROLES!.stroke, ROLES!.glyph]) {
+      expect(t, `${t} is not an error-family token`).toMatch(/state-error/)
+    }
+    // And the error colour must still be distinguishable from the neutral fill
+    // it sits on — WCAG's 3:1 non-text floor, checked per theme.
+    for (const which of ['dark', 'light'] as const) {
+      const vars = THEMES[which]
+      const pane = tokenHex('--dsw-alias-bg-layer-2', vars, '#ffffff')
+      const fill = tokenHex(ROLES!.fill, vars, pane)
+      const stroke = tokenHex(ROLES!.stroke, vars, fill)
+      expect(
+        contrast(stroke, fill),
+        `${which}: error stroke is not distinguishable from the banner fill`,
+      ).toBeGreaterThanOrEqual(3)
+    }
+  })
+
+  it('does not put coloured body text back on a coloured fill', () => {
+    // The original defect, restated as a structural rule: the banner's ink must
+    // be the neutral body token. This is the assertion that goes red if someone
+    // "simplifies" the banner back to a red fill with red text.
+    expect(ROLES!.ink).toBe('--dsw-alias-label-primary')
+    expect(ROLES!.fill).not.toMatch(/danger|error/)
+  })
+})
+
+// ── Light theme: the two round-2 leftovers, now asserted ──
+//
+// Round 2's concerns said the light theme was never asserted, and flagged two
+// values that fail under it. These tests close that gap — and they are written
+// against the RESOLVED light palette, so they describe what the host actually
+// renders rather than a remembered hex.
+
+/** Every `color:`/`background:` pair the console ships, per theme. */
+describe('contrast: light theme is covered, not just dark', () => {
+  it('the host light tertiary really is below AA — the fact being fixed', () => {
+    if (!THEMES) return
+    const vars = THEMES.light
+    const tertiary = tokenHex('--dsw-alias-label-tertiary', vars, '#ffffff')
+    // Documented so the fix below has a baseline to move away from: this is a
+    // host fact, not our arithmetic. If the host ever lifts this value, the
+    // test still passes (the assertion is on OUR sheet, next) but the comment
+    // and the `lessThan` guard below should be re-read.
+    expect(tertiary).toBe('#81858c')
+    expect(contrast(tertiary, '#ffffff')).toBeLessThan(4.5)
+  })
+
+  it('the console sheet does not paint caption greys with light-unsafe tertiary', () => {
+    if (!THEMES) return
+    // The real contract on OUR side: wherever the console asks for a small,
+    // de-emphasised grey that lands on a card, it must be a token that clears
+    // AA in the light theme too. `tertiary` is 3.71:1 there, so the sheet's
+    // sheet-level caption greys (version, note, card-count) use `secondary`.
+    //
+    // Scoped to the rules that paint on a light card: `.dsh-memory-ver`,
+    // `.dsh-memory-note`, `.dsh-memory-cardcount`, and `.dsh-memory-empty-title`
+    // are the caption-sized greys inside the sheet. Each must resolve to
+    // something ≥4.5:1 on the light card.
+    const lightCard = tokenHex('--dsw-alias-bg-layer-2', THEMES.light, '#ffffff')
+    const captionClasses = [
+      '.dsh-memory-ver', '.dsh-memory-note',
+      '.dsh-memory-cardcount', '.dsh-memory-empty-title',
+    ]
+    for (const cls of captionClasses) {
+      const at = STYLES.indexOf(cls + ' {')
+      expect(at, `${cls} rule missing`).toBeGreaterThanOrEqual(0)
+      const rule = STYLES.slice(at, STYLES.indexOf('}', at))
+      const ink = rule.match(/color:\s*var\((--dsw-[a-z0-9-]+)\)/)
+      expect(ink, `${cls} declares no colour`).not.toBeNull()
+      const hex = tokenHex(ink![1], THEMES.light, lightCard)
+      expect(hex, `${cls}: ${ink![1]} did not resolve`).toMatch(/^#[0-9a-f]{6}$/)
+      expect(
+        contrast(hex, lightCard),
+        `${cls} paints ${ink![1]} on a light card at ` +
+        `${contrast(hex, lightCard).toFixed(2)}:1 — below AA`,
+      ).toBeGreaterThanOrEqual(4.5)
+    }
+  })
+
+  it('the pending pill stays legible in the light theme', () => {
+    if (!THEMES) return
+    // Round 2's pill used `bg-layer-1` as ink: #232324 on dark (fine), but
+    // #ffffff on light, i.e. white-on-amber ≈ 1.9:1. The ink must be a FIXED
+    // deep neutral that does not flip with the theme.
+    const pillAt = STYLES.indexOf('.dsh-memory-pill {')
+    const rule = STYLES.slice(pillAt, STYLES.indexOf('}', pillAt))
+    const ink = rule.match(/[^-]color:\s*var\((--dsw-[a-z0-9-]+)\)/)![1]
+    expect(ink, 'pill ink must not be a theme-flipping layer token').not.toMatch(/bg-layer/)
+
+    for (const which of ['dark', 'light'] as const) {
+      const vars = THEMES[which]
+      const fill = tokenHex('--dsw-alias-state-warn-secondary', vars, '#ffffff')
+      const text = tokenHex(ink, vars, fill)
+      expect(text, `${which}: pill ink did not resolve`).toMatch(/^#[0-9a-f]{6}$/)
+      expect(
+        contrast(text, fill),
+        `${which}: pill text on amber is ${contrast(text, fill).toFixed(2)}:1 — below AA`,
+      ).toBeGreaterThanOrEqual(4.5)
+    }
+  })
+})
+

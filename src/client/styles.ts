@@ -57,7 +57,7 @@ export const PANEL_CSS = `
   padding-bottom: 2px;
 }
 .dsh-memory-title { margin: 0; font-size: 14px; font-weight: 600; letter-spacing: .01em; }
-.dsh-memory-ver { font-size: 11px; color: var(--dsw-alias-label-tertiary); }
+.dsh-memory-ver { font-size: 11px; color: var(--dsw-alias-label-secondary); }
 .dsh-memory-card {
   display: flex; flex-direction: column; gap: 6px;
   padding: 10px 11px;
@@ -76,7 +76,10 @@ export const PANEL_CSS = `
 }
 .dsh-memory-stat .l { font-size: 10px; color: var(--dsw-alias-label-tertiary); }
 .dsh-memory-note {
-  font-size: 11px; color: var(--dsw-alias-label-tertiary);
+  /* secondary, not tertiary: on a light-theme card the tertiary token resolves
+     to a value that is 3.71:1 here — below AA. secondary clears it (5.80:1).
+     See the light-theme contrast block in test/client-console. */
+  font-size: 11px; color: var(--dsw-alias-label-secondary);
   line-height: 1.4;
 }
 
@@ -129,12 +132,14 @@ export const PANEL_CSS = `
 }
 .dsh-memory-tab[data-active='true'] .dsh-memory-tab-dot { opacity: .85; }
 .dsh-memory-pill {
-  /* Pending-count badge. The host's soft amber is state-warn-secondary; the
-     deep bg-layer-1 ink on it measures 8.2:1 (dark theme). The primary amber
-     would work too, but the brief asks soft surfaces to come from the
-     secondary ramp. */
+  /* Pending-count badge. The host's soft amber is state-warn-secondary (the
+     same value in both themes). The ink must be a FIXED deep neutral: round 2
+     used bg-layer-1, which is near-black in dark (8.21:1, fine) but the light
+     card colour in light — giving an approximately 1.9:1 amber pair, below AA.
+     The bluish-1000 static is the palette's deepest neutral and does not flip,
+     so it clears AA in both themes (9.88:1). test/client-console asserts both. */
   background: var(--dsw-alias-state-warn-secondary);
-  color: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-static-neutral-bluish-1000);
   border-radius: 999px; font-size: 9.5px; font-weight: 700;
   padding: 1.5px 6px; letter-spacing: .02em; line-height: 1.35;
 }
@@ -201,7 +206,9 @@ export const PANEL_CSS = `
 .dsh-memory-cardcount {
   margin-left: auto; font-size: 10px; font-weight: 600;
   letter-spacing: .02em; text-transform: none;
-  color: var(--dsw-alias-label-tertiary);
+  /* secondary for the same reason as .dsh-memory-note: tertiary is below AA
+     on the light card. */
+  color: var(--dsw-alias-label-secondary);
 }
 .dsh-memory-rows { display: flex; flex-direction: column; }
 .dsh-memory-row {
@@ -287,18 +294,30 @@ export const PANEL_CSS = `
 .dsh-memory-skeleton-row:nth-child(3) { width: 64%; animation-delay: .36s; }
 @keyframes dsh-memory-pulse { 0%,100% { opacity: .45 } 50% { opacity: .9 } }
 .dsh-memory-failure {
-  /* The host declares no *-bg alias; the one semantic error SURFACE it ships is
-     the translucent interactive-bg-hover-danger, which composes over whatever
-     layer the banner lands on (and flips value with the theme). The stroke and
-     the text share state-error-primary. Measured: error text on that filled
-     surface is 3.96:1 dark / 4.14:1 light — under AA 4.5:1 for body text, which
-     is why the 1px error stroke carries the banner's boundary and the message is
-     never colour-only. See the report's err-bg section for the full comparison. */
+  /* NEUTRAL fill, error semantics carried by stroke + glyph + label.
+     Round 2 filled this banner with the host's translucent
+     interactive-bg-hover-danger and painted state-error-primary text on it:
+     3.96:1 dark / 4.14:1 light, both under AA body text. A banner is the
+     primary information carrier exactly when the user most needs to read it,
+     so sub-AA body text is not defensible. The host ships no soft error
+     surface token, and that absence is itself the signal — it does not want
+     coloured body text on a coloured fill.
+     So: bg-layer-3 for the fill, state-error-primary for the 1px stroke and
+     the glyph, label-primary for the words. Three carriers of "error"
+     (colour, stroke, icon) and a body ratio of 11.57:1 dark / 18.90:1 light
+     against the fill. See the error-banner contrast block in
+     test/client-console, which resolves these values from the host bundle. */
   display: flex; align-items: center; gap: 9px;
   padding: 8px 10px; border-radius: 9px; margin-bottom: 8px;
-  background: var(--dsw-alias-interactive-bg-hover-danger);
+  background: var(--dsw-alias-bg-layer-3);
   border: 1px solid var(--dsw-alias-state-error-primary);
-  color: var(--dsw-alias-state-error-primary); font-size: 11.5px;
+  color: var(--dsw-alias-label-primary); font-size: 11.5px;
+}
+.dsh-memory-failure-glyph {
+  /* The colour carrier that lets the body text stay neutral. Not decorative:
+     remove it and the "error" signal drops to the stroke alone. */
+  flex: none; font-size: 11px; line-height: 1;
+  color: var(--dsw-alias-state-error-primary);
 }
 .dsh-memory-failure-text { flex: 1; }
 .dsh-memory-failure .dsh-memory-action {

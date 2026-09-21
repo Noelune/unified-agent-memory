@@ -113,9 +113,14 @@ function Skeleton(): Child {
     }))
 }
 
-/** An inline failure with an optional retry affordance. */
+/** An inline failure with an optional retry affordance.
+ *
+ *  The banner is NEUTRAL-filled with a red stroke and this red glyph; the body
+ *  text is `label-primary`. Three carriers of "error" and no contrast debt —
+ *  a coloured fill behind coloured text could not clear AA body text. */
 function Failure(props: { text: string; onRetry?: () => void }): Child {
   return h('div', { className: 'dsh-memory-failure' },
+    h('span', { className: 'dsh-memory-failure-glyph', 'aria-hidden': 'true' }, '⚠'),
     h('span', { className: 'dsh-memory-failure-text' }, props.text),
     props.onRetry
       ? h('button', {

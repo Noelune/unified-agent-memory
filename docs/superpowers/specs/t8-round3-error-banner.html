@@ -1,0 +1,178 @@
+<!doctype html>
+<!--
+  Task 8 round 3 — error-banner contrast verification.
+
+  Renders the REAL .dsh-memory-failure / .dsh-memory-pill markup against the
+  host theme token values, resolved from
+  @deepseek-ai/dsh-client-ui-theme/lib/client.js (both blocks), so the two
+  panels below are what the console actually paints in each theme.
+
+  Not a spec or a design doc: a throwaway verification surface.
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>任务 8 第三轮 · 错误横幅对比度验证</title>
+<style>
+  :root { font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
+
+  /* Dark theme tokens (host second block). */
+  .theme-dark {
+    --dsw-alias-bg-base: #151517;
+    --dsw-alias-bg-layer-1: #232324;
+    --dsw-alias-bg-layer-2: #2c2c2e;
+    --dsw-alias-bg-layer-3: #353638;
+    --dsw-alias-label-primary: #f9fafb;
+    --dsw-alias-label-secondary: #cfd3d6;
+    --dsw-alias-label-tertiary: #adb2b8;
+    --dsw-alias-state-error-primary: #f25a5a;
+    --dsw-alias-state-warn-secondary: #f7ad31;
+    --dsw-static-neutral-bluish-1000: #0f1115;
+    --dsw-alias-border-l2: #ffffff1f;
+  }
+
+  /* Light theme tokens (host first block). */
+  .theme-light {
+    --dsw-alias-bg-base: #fff;
+    --dsw-alias-bg-layer-1: #fff;
+    --dsw-alias-bg-layer-2: #fff;
+    --dsw-alias-bg-layer-3: #fff;
+    --dsw-alias-label-primary: #0f1115;
+    --dsw-alias-label-secondary: #61666b;
+    --dsw-alias-label-tertiary: #81858c;
+    --dsw-alias-state-error-primary: #ec1313;
+    --dsw-alias-state-warn-secondary: #f7ad31;
+    --dsw-static-neutral-bluish-1000: #0f1115;
+    --dsw-alias-border-l2: #0000001a;
+  }
+
+  body { margin: 0; display: flex; gap: 18px; padding: 18px; background: #0b0c0e; }
+
+  .theme-dark, .theme-light {
+    width: 340px; border-radius: 14px; padding: 14px;
+    background: var(--dsw-alias-bg-base);
+    border: 1px solid var(--dsw-alias-border-l2);
+    color: var(--dsw-alias-label-primary);
+    display: flex; flex-direction: column; gap: 10px;
+    font-size: 13px;
+  }
+  .theme-label {
+    font-size: 10px; font-weight: 700; letter-spacing: .09em;
+    text-transform: uppercase; color: var(--dsw-alias-label-tertiary);
+  }
+
+  /* The console pane sits on the sheet's layer-2 surface. */
+  .dsh-memory-pane {
+    padding: 12px; display: flex; flex-direction: column; gap: 10px;
+    background: var(--dsw-alias-bg-layer-2);
+    border-radius: 11px;
+  }
+
+  /* ── verbatim from src/client/styles.ts ── */
+  .dsh-memory-failure {
+    display: flex; align-items: center; gap: 9px;
+    padding: 8px 10px; border-radius: 9px; margin-bottom: 8px;
+    background: var(--dsw-alias-bg-layer-3);
+    border: 1px solid var(--dsw-alias-state-error-primary);
+    color: var(--dsw-alias-label-primary); font-size: 11.5px;
+  }
+  .dsh-memory-failure-glyph {
+    flex: none; font-size: 11px; line-height: 1;
+    color: var(--dsw-alias-state-error-primary);
+  }
+  .dsh-memory-failure-text { flex: 1; }
+  .dsh-memory-failure .dsh-memory-action {
+    flex: none; font-size: 10.5px;
+    color: var(--dsw-alias-state-error-primary);
+    background: none; cursor: pointer; font-family: inherit;
+    border: 1px solid var(--dsw-alias-state-error-primary);
+    border-radius: 7px; padding: 3px 8px;
+  }
+  .dsh-memory-pill {
+    background: var(--dsw-alias-state-warn-secondary);
+    color: var(--dsw-static-neutral-bluish-1000);
+    border-radius: 999px; font-size: 9.5px; font-weight: 700;
+    padding: 1.5px 6px; letter-spacing: .02em; line-height: 1.35;
+    display: inline-block;
+  }
+  .dsh-memory-ver { font-size: 11px; color: var(--dsw-alias-label-secondary); }
+  .dsh-memory-head { display: flex; align-items: baseline; gap: 8px; }
+  .dsh-memory-title { font-size: 14px; font-weight: 600; }
+  .dsh-memory-card {
+    display: flex; flex-direction: column; gap: 6px;
+    background: var(--dsw-alias-bg-layer-1);
+    border: 1px solid var(--dsw-alias-border-l2);
+    border-radius: 11px; padding: 11px 12px;
+  }
+  .dsh-memory-cardcount {
+    margin-left: auto; font-size: 10px; font-weight: 600;
+    color: var(--dsw-alias-label-secondary);
+  }
+  .dsh-memory-cardhead {
+    display: flex; align-items: center; gap: 7px;
+    font-size: 10px; font-weight: 700; letter-spacing: .09em;
+    text-transform: uppercase; color: var(--dsw-alias-label-secondary);
+  }
+  .dsh-memory-row { display: flex; align-items: center; gap: 9px; padding: 6px 0; }
+  .dsh-memory-rowname { flex: 1; color: var(--dsw-alias-label-primary); font-size: 13px; }
+  .dsh-memory-rowmeta { font-size: 10.5px; color: var(--dsw-alias-label-tertiary); }
+</style>
+</head>
+<body>
+
+<div class="theme-dark" data-theme="dark">
+  <div class="theme-label">Dark · err 11.57:1</div>
+  <div class="dsh-memory-head">
+    <h3 class="dsh-memory-title">记忆</h3>
+    <span class="dsh-memory-ver">v0.5.2</span>
+    <span class="dsh-memory-pill" style="margin-left:auto">3</span>
+  </div>
+  <div class="dsh-memory-pane">
+    <div class="dsh-memory-failure">
+      <span class="dsh-memory-failure-glyph" aria-hidden="true">⚠</span>
+      <span class="dsh-memory-failure-text">搜索失败，请稍后重试</span>
+      <button type="button" class="dsh-memory-action">重试</button>
+    </div>
+    <div class="dsh-memory-card">
+      <div class="dsh-memory-cardhead">入库 <span class="dsh-memory-cardcount">2 条</span></div>
+      <div class="dsh-memory-row">
+        <span class="dsh-memory-rowname">共享记忆库的入口</span>
+        <span class="dsh-memory-rowmeta">今天</span>
+      </div>
+      <div class="dsh-memory-row">
+        <span class="dsh-memory-rowname">代理环境与校园网约束</span>
+        <span class="dsh-memory-rowmeta">昨天</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="theme-light" data-theme="light">
+  <div class="theme-label">Light · err 18.90:1</div>
+  <div class="dsh-memory-head">
+    <h3 class="dsh-memory-title">记忆</h3>
+    <span class="dsh-memory-ver">v0.5.2</span>
+    <span class="dsh-memory-pill" style="margin-left:auto">3</span>
+  </div>
+  <div class="dsh-memory-pane">
+    <div class="dsh-memory-failure">
+      <span class="dsh-memory-failure-glyph" aria-hidden="true">⚠</span>
+      <span class="dsh-memory-failure-text">搜索失败，请稍后重试</span>
+      <button type="button" class="dsh-memory-action">重试</button>
+    </div>
+    <div class="dsh-memory-card">
+      <div class="dsh-memory-cardhead">入库 <span class="dsh-memory-cardcount">2 条</span></div>
+      <div class="dsh-memory-row">
+        <span class="dsh-memory-rowname">共享记忆库的入口</span>
+        <span class="dsh-memory-rowmeta">今天</span>
+      </div>
+      <div class="dsh-memory-row">
+        <span class="dsh-memory-rowname">代理环境与校园网约束</span>
+        <span class="dsh-memory-rowmeta">昨天</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
