@@ -185,7 +185,7 @@ describe('host plugin contract', () => {
     expect(host.name).toBe('dsh-unified-agent-memory')
   })
 
-  it('registers the five tools and the status route without tripping the guard', () => {
+  it('registers the five tools and every route without tripping the guard', () => {
     const { ctx, tools, routes } = makeCtx()
 
     expect(() => host.apply(ctx as never, { vaultPath: 'C:/tmp/vault' })).not.toThrow()
@@ -197,11 +197,14 @@ describe('host plugin contract', () => {
       'memory_status',
       'memory_submit',
     ])
-    expect(routes).toHaveLength(2)
-    expect(routes[0].path).toBe('/api/dsh-unified-agent-memory/status')
-    expect(routes[0].kind).toBe('exact')
-    expect(routes[1].path).toBe('/api/dsh-unified-agent-memory/search')
-    expect(routes[1].kind).toBe('exact')
+    // Looked up by path, not by index: appending a route must not silently
+    // re-point an assertion at a different endpoint.
+    expect(routes).toHaveLength(4)
+    const byPath = new Map(routes.map((r) => [r.path, r.kind]))
+    expect(byPath.get('/api/dsh-unified-agent-memory/status')).toBe('exact')
+    expect(byPath.get('/api/dsh-unified-agent-memory/search')).toBe('exact')
+    expect(byPath.get('/api/dsh-unified-agent-memory/preview')).toBe('exact')
+    expect(byPath.get('/api/dsh-unified-agent-memory/note')).toBe('exact')
   })
 
   it('answers a loopback GET with the status payload', async () => {

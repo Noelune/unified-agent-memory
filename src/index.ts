@@ -48,6 +48,9 @@ import { buildStatusPayload } from './status-payload.ts'
 import { guard, queryParam, sendJson } from './routes.ts'
 import type { RouteReq, RouteRes } from './routes.ts'
 import { SEARCH_PATH, handleSearch } from './route-search.ts'
+import {
+  NOTE_PATH, PREVIEW_PATH, clampPreviewLimit, handleNote, handlePreview,
+} from './route-preview.ts'
 import type { PluginConfig } from './types.ts'
 import type { StatusStats } from './status-payload.ts'
 export const name = 'dsh-unified-agent-memory'
@@ -190,6 +193,42 @@ export function apply(ctx: Context, config: Record<string, unknown> = {}): void 
         }
         const hybrid = queryParam(req.url, 'hybrid') === '1'
         sendJson(res, 200, await handleSearch(cfg, query, hybrid))
+      })()
+    },
+  })
+
+  // ---- HTTP preview route: read-only governance views ----
+  // `view` travels to the core verbatim (an unknown view is the core's problem,
+  // not ours) but `limit` is clamped here: a non-numeric or non-positive value
+  // would make argparse exit non-zero and render an available view as an error.
+  ws.webServer.register({
+    kind: 'exact',
+    path: PREVIEW_PATH,
+    handler(req, res) {
+      if (!guard(req, res, ['GET', 'HEAD'])) return
+      return (async () => {
+        const view = queryParam(req.url, 'view') ?? 'pending'
+        const limit = clampPreviewLimit(queryParam(req.url, 'limit'))
+        sendJson(res, 200, await handlePreview(cfg, view, limit))
+      })()
+    },
+  })
+
+  // ---- HTTP note route: one submission's body, by name ----
+  ws.webServer.register({
+    kind: 'exact',
+    path: NOTE_PATH,
+    handler(req, res) {
+      if (!guard(req, res, ['GET', 'HEAD'])) return
+      return (async () => {
+        const name = queryParam(req.url, 'name')
+        // An absent name is a malformed request, not a missing item — the core
+        // would answer `invalid-name` for "", which reads like a vault fact.
+        if (!name) {
+          sendJson(res, 400, { ok: false, error: 'missing name' })
+          return
+        }
+        sendJson(res, 200, await handleNote(cfg, name))
       })()
     },
   })

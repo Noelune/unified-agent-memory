@@ -1,5 +1,11 @@
-import { describe, expect, it } from 'vitest'
-import { SEARCH_PATH, buildSearchArgs, shapeSearchResult } from '../src/route-search.ts'
+import { describe, expect, it, vi } from 'vitest'
+
+// Stub the core runner so the degradation branch is exercised without spawning
+// Python. `/status` has the same need; see the stub-core note in plugin.test.ts.
+vi.mock('../src/utils.ts', () => ({ runCore: vi.fn() }))
+
+import { SEARCH_PATH, buildSearchArgs, handleSearch, shapeSearchResult } from '../src/route-search.ts'
+import { runCore } from '../src/utils.ts'
 
 describe('buildSearchArgs', () => {
   it('passes the query and asks for JSON', () => {
@@ -36,6 +42,25 @@ describe('shapeSearchResult', () => {
     const got = shapeSearchResult(JSON.stringify({ ok: false, error: 'nope' }))
     expect(got.ok).toBe(false)
     expect(got.results).toEqual([])
+  })
+})
+
+describe('handleSearch', () => {
+  const cfg = {
+    vaultPath: 'C:/tmp/vault', pythonPath: 'python',
+    corePath: 'C:/tmp/core', remoteEnabled: false,
+  }
+
+  it('degrades to an empty result when the core call fails', async () => {
+    // Mutation-proof: flipping `if (!r.ok)` to return `ok: true` must break
+    // this test, not stay green.
+    vi.mocked(runCore).mockResolvedValue({ ok: false, output: '', kind: 'crash', error: 'boom' })
+
+    const got = await handleSearch(cfg, '记忆', false)
+
+    expect(got.ok).toBe(false)
+    expect(got.results).toEqual([])
+    expect(got.count).toBe(0)
   })
 })
 
