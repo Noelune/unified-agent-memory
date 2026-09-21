@@ -1,7 +1,10 @@
 /**
  * dsh-unified-agent-memory — browser half styles (CSS-in-JS).
  *
- * Defined as a simple string — imported and injected by the panel component.
+ * Every custom property is a DSH alias token (--dsw-*) so the panel tracks
+ * the host theme instead of hard-coding colours. Each mount owns its own
+ * <style> tag, so the rail and the wide sidebar can render simultaneously
+ * without disposing each other's stylesheet.
  *
  * @module src/client/styles
  */
@@ -26,32 +29,69 @@ export const PANEL_CSS = `
   background: var(--dsw-alias-interactive-bg-active);
   color: var(--dsw-alias-label-primary);
 }
-.dsh-memory-panel {
-  position: fixed; z-index: 1000; width: 320px;
+.dsh-memory-sheet {
+  position: fixed; z-index: 1000; width: 380px; max-height: 70vh;
+  overflow-y: auto;
   background: var(--dsw-alias-bg-layer-2);
   border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 10px;
+  border-radius: 14px;
   box-shadow: var(--dsw-shadow-lv2);
-  padding: 12px; display: flex; flex-direction: column;
-  gap: 8px; font-size: 13px;
-  color: var(--dsw-alias-label-primary);
+  padding: 14px;
+  display: flex; flex-direction: column; gap: 10px;
+  font-size: 13px; color: var(--dsw-alias-label-primary);
 }
-.dsh-memory-panel h3 { margin: 0; font-size: 14px; font-weight: 600; }
-.dsh-memory-row { display: flex; justify-content: space-between; gap: 8px; }
-.dsh-memory-row .k { color: var(--dsw-alias-label-secondary); }
+.dsh-memory-head {
+  display: flex; align-items: baseline; gap: 8px;
+  padding-bottom: 2px;
+}
+.dsh-memory-title { margin: 0; font-size: 14px; font-weight: 600; letter-spacing: .01em; }
+.dsh-memory-ver { font-size: 11px; color: var(--dsw-alias-label-tertiary); }
+.dsh-memory-card {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 10px 11px;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 10px;
+}
+.dsh-memory-card-title {
+  font-size: 11px; font-weight: 600; letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-label-tertiary);
+}
+.dsh-memory-kv { display: flex; justify-content: space-between; gap: 10px; }
+.dsh-memory-kv .k { color: var(--dsw-alias-label-secondary); flex: none; }
+.dsh-memory-kv .v {
+  color: var(--dsw-alias-label-primary);
+  text-align: right; word-break: break-all;
+  font-variant-numeric: tabular-nums;
+}
+.dsh-memory-stats { display: flex; gap: 8px; }
+.dsh-memory-stat {
+  flex: 1; display: flex; flex-direction: column; gap: 2px;
+  align-items: flex-start;
+}
+.dsh-memory-stat .n {
+  font-size: 18px; font-weight: 600; line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.dsh-memory-stat .l { font-size: 10px; color: var(--dsw-alias-label-tertiary); }
+.dsh-memory-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 8px; border-radius: 7px; font-size: 12px;
+  background: var(--dsw-alias-err-bg); color: var(--dsw-alias-err);
+}
+.dsh-memory-dot {
+  width: 6px; height: 6px; border-radius: 50%; flex: none;
+  background: var(--dsw-alias-ok);
+}
+.dsh-memory-dot[data-state="warn"] { background: var(--dsw-alias-warn); }
+.dsh-memory-dot[data-state="err"] { background: var(--dsw-alias-err); }
 .dsh-memory-note {
-  color: var(--dsw-alias-label-secondary);
-  white-space: pre-wrap; word-break: break-all;
-}`
+  font-size: 11px; color: var(--dsw-alias-label-tertiary);
+  line-height: 1.4;
+}
+`
 
-/**
- * Inject styles into document head, scoped by attribute.
- * Returns a cleanup function for unmount.
- *
- * Each call owns its own <style> tag via a unique `data-dsh-memory` token, so
- * two mounted instances (e.g. the rail and the wide sidebar rendering at once)
- * cannot dispose each other's stylesheet.
- */
 let styleSeq = 0
 
 export function adoptStyles(): () => void {
