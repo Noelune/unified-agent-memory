@@ -72,12 +72,46 @@ describe('shapeDismissResult', () => {
     expect(got.reason).toBeNull()
   })
   it('surfaces the reason on refusal', () => {
+    // The core sets the OUTER `ok` from the same `result["ok"]` it puts inside
+    // `data` (core/unified_memory/memory.py: `{"ok": result["ok"], ...}`), so a
+    // business refusal — not-found / outside-inbox / io-error:* — carries
+    // `ok:false` at BOTH levels. Feeding `ok:true` here (as this test used to)
+    // is a fake that matches nothing the core emits, and it hid the bug below.
     const raw = JSON.stringify({ ok: true, command: 'dismiss',
       data: { ok: false, name: 'a.md', movedTo: null, reason: 'not-found' } })
     expect(shapeDismissResult(raw).reason).toBe('not-found')
   })
-  it('degrades on bad json', () => {
+
+  it('surfaces the reason when the core refusal also sets the outer ok false (real shape)', () => {
+    // Verbatim from the real core against a temp vault:
+    //   dismiss --json -- ghost.md
+    //   {"ok": false, "command": "dismiss", "data": {"ok": false,
+    //    "name": "ghost.md", "movedTo": null, "reason": "not-found"}}
+    // An outer-`ok` precondition would flatten this to 'unavailable', erasing
+    // the Task 1/2 failure taxonomy: the panel could no longer tell "the entry
+    // was already moved" from "the core is down".
+    const raw = JSON.stringify({ ok: false, command: 'dismiss',
+      data: { ok: false, name: 'ghost.md', movedTo: null, reason: 'not-found' } })
+    const got = shapeDismissResult(raw)
+    expect(got.ok).toBe(false)
+    expect(got.reason).toBe('not-found')
+    expect(got.name).toBe('ghost.md')
+    expect(got.reason).not.toBe('unavailable')
+  })
+
+  it('passes through an outside-inbox refusal from the real shape', () => {
+    const raw = JSON.stringify({ ok: false, command: 'dismiss',
+      data: { ok: false, name: 'a.md', movedTo: null, reason: 'outside-inbox' } })
+    expect(shapeDismissResult(raw).reason).toBe('outside-inbox')
+  })
+
+  it('degrades to unavailable only when the envelope itself is broken', () => {
+    // `data` missing is a genuinely malformed/non-JSON envelope — the one case
+    // that is NOT a business refusal and must stay labelled `unavailable`.
     expect(shapeDismissResult('x').ok).toBe(false)
+    expect(shapeDismissResult('x').reason).toBe('unavailable')
+    expect(shapeDismissResult('{"ok":false,"command":"dismiss"}').reason).toBe('unavailable')
+    expect(shapeDismissResult('{"ok":true}').reason).toBe('unavailable')
   })
 })
 
@@ -175,11 +209,33 @@ describe('handleDismiss', () => {
   })
 
   it('reports a refused move as not-ok with the reason from the core', async () => {
+    // Real core shape: a refusal sets the outer `ok` false too, because the
+    // core mirrors `result["ok"]` into the envelope. The old fake here carried
+    // `ok:true` and so exercised a shape the core never emits.
     vi.mocked(runCore).mockResolvedValue({ ok: true, output: JSON.stringify({
-      ok: true, command: 'dismiss',
+      ok: false, command: 'dismiss',
       data: { ok: false, name: 'a.md', movedTo: null, reason: 'outside-inbox' } }) })
     const got = await handleDismiss(cfg, 'a.md')
     expect(got.ok).toBe(false)
     expect(got.reason).toBe('outside-inbox')
+  })
+
+  it('keeps a business refusal distinct from a core outage', async () => {
+    // The whole point of the fix: 'the vault had nothing to move' and 'the core
+    // is broken' must not collapse into one label. Same `!r.ok`-ish call site,
+    // two different reasons.
+    vi.mocked(runCore).mockResolvedValue({ ok: true, output: JSON.stringify({
+      ok: false, command: 'dismiss',
+      data: { ok: false, name: 'ghost.md', movedTo: null, reason: 'not-found' } }) })
+    const refused = await handleDismiss(cfg, 'ghost.md')
+
+    vi.mocked(runCore).mockResolvedValue({
+      ok: false, output: '', kind: 'missing', error: 'python not found',
+    })
+    const outage = await handleDismiss(cfg, 'ghost.md')
+
+    expect(refused.reason).toBe('not-found')
+    expect(outage.reason).toBe('unavailable')
+    expect(refused.reason).not.toBe(outage.reason)
   })
 })

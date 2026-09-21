@@ -127,14 +127,37 @@ describe('POST /dismiss route', () => {
   })
 
   it('answers 409 — not 500 — when the core refuses the move', async () => {
+    // Real core refusal envelope: the outer `ok` is false as well (the core
+    // copies `result["ok"]` into both levels). The old `ok:true` fake made this
+    // route look correct while `shapeDismissResult` was flattening every real
+    // refusal to 'unavailable'.
     vi.mocked(runCore).mockResolvedValue({ ok: true, output: JSON.stringify({
-      ok: true, command: 'dismiss',
+      ok: false, command: 'dismiss',
       data: { ok: false, name: 'a.md', movedTo: null, reason: 'not-found' } }) })
 
     const out = await post('{"name":"a.md"}')
 
     expect(out.code).toBe(409)
     expect(JSON.parse(out.body)).toEqual({ ok: false, name: 'a.md', reason: 'not-found' })
+  })
+
+  it('carries the core reason through to the 409 body, distinct from an outage', async () => {
+    vi.mocked(runCore).mockResolvedValue({ ok: true, output: JSON.stringify({
+      ok: false, command: 'dismiss',
+      data: { ok: false, name: 'ghost.md', movedTo: null, reason: 'not-found' } }) })
+    const refused = await post('{"name":"ghost.md"}')
+
+    vi.mocked(runCore).mockResolvedValue({
+      ok: false, output: '', kind: 'missing', error: 'python not found',
+    })
+    const outage = await post('{"name":"ghost.md"}')
+
+    // Same status code, different reason: the client reads `reason`, and that
+    // distinction is exactly what the outer-`ok` precondition used to erase.
+    expect(refused.code).toBe(409)
+    expect(outage.code).toBe(409)
+    expect(JSON.parse(refused.body).reason).toBe('not-found')
+    expect(JSON.parse(outage.body).reason).toBe('unavailable')
   })
 
   it('answers 409 when the core call itself fails, without a 500', async () => {

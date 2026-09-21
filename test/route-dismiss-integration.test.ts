@@ -105,32 +105,37 @@ describe('POST /dismiss against the real Python core', () => {
   it.skipIf(!pythonPath)(
     'reports a genuinely absent entry as a core refusal, never as an argv error',
     async () => {
-      // Scope note: this pins ONLY that a well-formed argv reaches the command
-      // body instead of being rejected by argparse. Before the fix a legal argv
-      // exited 2 with an empty stdout (a bare `crash`); now the core starts,
-      // answers inside an envelope, and exits 0. The envelope happens to carry
-      // `ok:false` for a refusal, so `handleDismiss` surfaces `unavailable`
-      // rather than the core's own `not-found` — that lossy flattening is a
-      // SEPARATE, pre-existing defect in `shapeDismissResult` (it requires the
-      // outer `ok` to be true, but the real refusal envelope sets it false), it
-      // predates this fix, and it is deliberately NOT changed here because the
-      // 409 body contract is pinned by the existing mocked tests. Asserting on
-      // the raw envelope keeps this test honest about the argv without silently
-      // taking responsibility for that other bug.
+      // Two things are pinned here against the REAL core.
+      //
+      // 1. The argv reaches the command body. Before the argv fix a legal name
+      //    exited 2 with an empty stdout (a bare `crash`); now the core starts,
+      //    answers inside an envelope, and exits 0.
+      // 2. The refusal's OWN reason survives to the host. The real envelope for
+      //    a missing entry sets `ok:false` at BOTH levels (the core copies
+      //    `result["ok"]` into the outer key), and `shapeDismissResult` used to
+      //    require the outer `ok` to be true — flattening this `not-found` into
+      //    `unavailable`. That was a separate defect, fixed alongside this test:
+      //    the reason below is what an operator needs to tell "already moved"
+      //    from "core is down".
       const result = await runCore(cfg, buildDismissArgs('definitely-absent.md'))
 
       // Evidence, order matters: exit 0 + a real envelope === argparse accepted
       // the argv. The old shape failed both of these.
       expect(result.ok, `core failed: ${result.error ?? ''}`).toBe(true)
       const envelope = JSON.parse(result.output) as {
+        ok?: boolean
         command?: string
-        data?: { reason?: string }
+        data?: { ok?: boolean; reason?: string }
       }
       expect(envelope.command).toBe('dismiss')
       expect(envelope.data?.reason).toBe('not-found')
+      // The premise of the fix, pinned against the real core rather than a fake.
+      expect(envelope.ok).toBe(false)
+      expect(envelope.data?.ok).toBe(false)
 
-      // And it is not reported as an argv problem.
+      // And the host surfaces the core's reason instead of 'unavailable'.
       const moved = await handleDismiss(cfg, 'definitely-absent.md')
+      expect(moved.reason).toBe('not-found')
       expect(moved.reason).not.toBe('invalid-name')
     },
   )

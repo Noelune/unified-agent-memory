@@ -73,21 +73,32 @@ export function buildDismissArgs(name: string): string[] {
 /**
  * Unwrap a dismiss envelope.
  *
- * Two levels of `ok` live here and they mean different things. The outer one
- * (`parsed.ok`) is "the command ran"; the inner one (`parsed.data.ok`) is "the
- * entry moved". A refusal such as `not-found` or `outside-inbox` is still a
- * successful command, so it keeps `ok: true` at the envelope level while the
- * payload reports `ok: false` with the core's `reason` passed through verbatim.
- * Collapsing the two would make "the vault had nothing to move" look identical
- * to "the core is broken", which is exactly the distinction an operator needs.
+ * The core builds this envelope as `{"ok": result["ok"], "command": "dismiss",
+ * "data": result}` (core/unified_memory/memory.py), so the outer `ok` is *not*
+ * an independent "the command ran" flag — it is a copy of `data.ok`. A business
+ * refusal (`not-found` / `outside-inbox` / `io-error:*`, core/unified_memory/
+ * inbox.py) therefore arrives with `ok:false` at BOTH levels:
+ *
+ *   {"ok": false, "command": "dismiss",
+ *    "data": {"ok": false, "name": "ghost.md", "movedTo": null,
+ *             "reason": "not-found"}}
+ *
+ * So the outer `ok` cannot be a precondition. Gating on it (as this function
+ * first did, on a brief that assumed refusals kept `ok:true`) swallowed every
+ * refusal into `unavailable` and erased the failure taxonomy Task 1/2 built —
+ * a panel could no longer tell "the entry was already moved" from "the core is
+ * down". The envelope is treated as valid whenever `data` is present; only a
+ * missing `data` (malformed or non-JSON output) degrades to `unavailable`,
+ * which is the one case that really is not a business refusal.
  */
 export function shapeDismissResult(raw: string): DismissPayload {
   try {
     const parsed = JSON.parse(raw) as {
-      ok?: boolean
       data?: { ok?: boolean; name?: string; reason?: string | null }
     }
-    if (parsed.ok !== true || !parsed.data) {
+    // `data` present => a well-formed core envelope; read it, whatever the
+    // outer `ok` says. Absent => genuinely broken output.
+    if (!parsed.data) {
       return { ok: false, name: '', reason: 'unavailable' }
     }
     return {
