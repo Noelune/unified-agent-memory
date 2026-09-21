@@ -6,6 +6,16 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- 记忆控制台：浏览器面板从「系统状态窗」改为四 Tab 控制台（搜索 / 待处理 / 库全貌 / 系统），
+  全部数据来自真实 core 调用，命中词高亮，可切换 hybrid 混合检索，系统状态收进独立 Tab。
+- 记忆控制台：新增五条宿主 HTTP 路由。读路由 `GET /search`（`q` 必填、`hybrid=1` 可选）、
+  `GET /preview`（`view` ∈ pending/recent/forgetting/conflicts）、`GET /note`（`name` 为提交区内文件名），
+  写路由 `POST /dismiss`（仅将提交区条目移入 `已处理/`，不删除、不改写）。
+- 记忆控制台：core 新增 `note`（读单条提交正文）与 `dismiss`（唯一写命令，提交区条目移入 `已处理/`）
+  子命令，新增 `core/unified_memory/inbox.py`；两者沿用统一信封 `{ok, command, data}`，
+  并新增 `data.reason` 失败枚举（`invalid-name` / `not-found` / `outside-inbox` / `io-error:*`）。
+- 记忆控制台：抽出宿主共享 HTTP 工具 `src/routes.ts`（loopback 判定、方法白名单、`no-store` 头、
+  查询参数解码、带字节上限的请求体读取），五条路由复用同一基线。
 - P0(U-2): `memory_search` 工具支持 hybrid/format/budget 参数，消除 ARCHITECTURE 文档漂移。
 - Phase 1：`memory status/search/preview --json` 机器可读契约（统一信封 `{ok, command, data}`），
   JSON 模式下 vault 派生字段逐条打 `untrusted: true`，文本模式保留 `<memory-data>` 包裹。
@@ -20,9 +30,21 @@ All notable changes to this project are documented in this file.
 - P0(U-1): `dsh.plugin.json` 的 version/description 由 package.json 单一事实源回填（build 自动完成），drift-check 硬校验版本一致。
 - P0(S-1): CI 增加 Windows 测试 runner 与完整 JS 检查 job（typecheck/drift/sync/vitest/build/audit）。
 - Phase 1：记忆面板客户端重构为分组卡片（黑灰白/银系、卡片层次、无裸 JSON）。
+- 记忆控制台：`preview` 名字校验强化（提交区文件名白名单 + 解析后路径前缀双重校验），
+  读单条提交与移入 `已处理/` 共用同一套校验，避免符号链接把内容带出提交区。
 
 ### Fixed
 
+- 记忆控制台（安全加固）：`POST /dismiss` 的失败语义此前被压平成 `unavailable`——`shapeDismissResult`
+  以外层 `ok` 为先决条件，而 core 信封的外层 `ok` 是 `data.ok` 的**副本**（业务拒绝时两层同为 `false`），
+  于是「条目已被移走」与「core 不可用」在面板上不可区分。现改为：只要 `data` 存在就按其内容判定，
+  仅 `data` 缺失（畸形/非 JSON 输出）才降级为 `unavailable`，失败原因分类得以保留。
+- 记忆控制台（安全加固）：`POST /dismiss` 的 argv 曾把 `--json` 放在 `--` 终止符**之后**，
+  argparse 把它当作第二个位置参数并以 exit 2 空 stdout 退出，宿主会误判为名字非法而拒绝所有合法提交；
+  现改为 `dismiss --json -- <name>`，并保留 `--` 以阻止前导 `-` 的名字被当作 flag。
+- 记忆控制台（安全加固）：`POST /dismiss` 的请求体上限按**字节**而非 UTF-16 码元计数
+  （CJK 每字符最多 3 字节，用 `.length` 会放过 2–3 倍载荷），并拒绝前导 `-`/`~`、分隔符、`:`、NUL
+  及路径穿越形状的名字。
 - 修复 `audit-package.mjs` 在 Windows 上的 spawn 失败（经 `process.execPath` 调用 npm-cli.js，不依赖 shell），并豁免 vault-template 归档区 README 占位文档的违禁路径误报。
 - Phase 1：`/status` 的 `pending` 计数此前把非有限值悄悄折成 `0`，使「读取损坏」与「确实没有待办」
   不可区分；现与 `memories`/`vectors` 兄弟字段一致——任一计数非有限即整体 `stats` 降级为 `null`。

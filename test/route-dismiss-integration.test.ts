@@ -38,10 +38,15 @@ import type { PluginConfig } from '../src/types.ts'
 const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url))
 const CORE_PATH = join(REPO_ROOT, 'core')
 
-/** Candidate interpreters, most specific first; the first that answers wins. */
+/**
+ * Candidate interpreters, most specific first; the first that answers wins.
+ *
+ * `UNIFIED_MEMORY_PYTHON` is how a caller pins an exact interpreter, so no
+ * machine-specific path is baked in here: a hard-coded absolute path made this
+ * file unportable and leaked one developer's layout into the repo.
+ */
 const PYTHON_CANDIDATES = [
   process.env.UNIFIED_MEMORY_PYTHON,
-  'C:/Users/zhaowei/AppData/Local/Programs/Python/Python311/python.exe',
   'python3',
   'python',
 ].filter((p): p is string => Boolean(p))

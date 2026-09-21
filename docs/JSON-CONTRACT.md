@@ -10,10 +10,16 @@
 | `memory status --json` | 配置与索引健康度（§3） |
 | `memory search <query> --json` | 本地 FTS5 检索（plain，§4.1） |
 | `memory search <query> --hybrid --json` | 混合检索（BM25 + 向量 + 图 + trigram，§4.2） |
-| `memory search <query> --remote --json` | **例外：不产出信封**，见 §1.1 / §4.3 |
+| `memory search <query> --remote --json` | **例外：不产出信封**，见 §1.2 / §4.3 |
 | `memory preview <view> --json` | 只读治理视图（§5） |
+| `memory note <name> --json` | 读**一条**提交区条目的正文（§5.2） |
+| `memory dismiss <name> --json` | 把**一条**提交区条目移入 `已处理/`（§5.3；唯一写命令） |
 
-另附宿主路由 `buildStatusPayload` 的载荷契约（浏览器半边消费，§6）。
+另附宿主 HTTP 路由契约（浏览器半边消费）：`buildStatusPayload` 的载荷见 §6，
+`/search`、`/preview`、`/note`、`/dismiss` 五条路由见 §7。
+
+> **`note` / `dismiss` 的 `name` 来自信任边界之外**（浏览器按钮），因此两者都只接受
+> **提交区内的单个文件名**，不接受路径。`name` 派生的字段是数据，逐条带 `untrusted`。
 
 ---
 
@@ -25,16 +31,48 @@
 {"ok": true, "command": "<name>", "data": { ... }}
 ```
 
-- `ok`：布尔。成功恒为 `true`；失败时不打印信封，而是向 stderr 报错并以非零码退出。
-- `command`：命令名。取值 `"status"`、`"search"`、`"preview"`。
+- `ok`：布尔。**不是**「命令是否跑起来」的标志，而是 `data.ok` 的副本（见 §1.1）。
+  除 `dismiss` 外，各命令成功恒为 `true`；`dismiss` 在业务拒绝时**仍打印信封且 exit 0**，
+  此时外层 `ok` 与 `data.ok` **同为 `false`**（见 §1.1，这是最容易被误用的字段）。
+- `command`：命令名。取值 `"status"`、`"search"`、`"preview"`、`"note"`、`"dismiss"`。
 - `data`：命令自有载荷，见下。
 - 输出为**单行**紧凑 JSON，`ensure_ascii=False`（中文原样输出，不转义为 `\uXXXX`）。
   消费方必须按「读一整行 → 解析」处理，不可假设跨行美化格式。
 
 > 实现：`core/unified_memory/memory.py` 的 `emit_json()`；`preview` 走
-> `core/unified_memory/preview.py` 的 `envelope()`（同形信封）。
+> `core/unified_memory/preview.py` 的 `envelope()`（同形信封）；`note` / `dismiss`
+> 各自在 `cmd_note` / `cmd_dismiss` 内直接 `json.dumps`（同形信封）。
 
-### 1.1 例外：`search --remote` 不产出信封
+### 1.1 `dismiss`：失败**也打印信封且 exit 0**（区别于「非零退出」的失败）
+
+**这是本契约最容易被写错的一点，务必读完再写消费方代码。**
+
+`cmd_dismiss`（`memory.py` 约 407-417 行）的信封是：
+
+```python
+json.dumps({"ok": result["ok"], "command": "dismiss", "data": result})
+```
+
+外层 `ok` **不是**独立的「命令跑起来了」标志，而是 `result["ok"]`（即 `data.ok`）的**副本**。
+所以业务拒绝（`invalid-name` / `not-found` / `outside-inbox` / `io-error:*`）到达时，
+**外层 `ok` 与 `data.ok` 同时为 `false`**，而**退出码仍是 0**，信封照常打印：
+
+```json
+{"ok": false, "command": "dismiss", "data": {"ok": false, "name": "ghost.md", "movedTo": null, "reason": "not-found"}}
+```
+
+- **不要**把外层 `ok` 当作消费 `data` 的先决条件。曾有一个实现以 `ok` 为前置判断，
+  结果把每一次业务拒绝都压成 `unavailable`，抹掉了 `not-found` 与「core 不可用」的区别
+  （这正是 Task 6 第三轮修的缺陷）。
+- 正确读法：**只要 `data` 存在就按其内容判定**；`data.ok` 才是业务成败。
+- 仅当 `data` **缺失**（畸形或非 JSON 输出）时，才可视为「core 未给出业务答复」。
+- 其余命令（`status`/`search`/`preview`/`note`）失败时是往 stderr 报错并以非零码退出，
+  与 `dismiss` **不同**：它们没有「业务拒绝」这一档，`--json` 只在成功路径产出信封。
+
+> `preview` 的 `data.status == "unsupported"` 是**成功**信封（`ok: true`），
+> 不是失败——它表示「该视图结构上无法回答」，见 §5.1。
+
+### 1.2 例外：`search --remote` 不产出信封
 
 **`--remote` 与 `--json` 同时给出时，`--json` 被忽略，输出的是文本模式。**
 `cmd_search` 的 `--remote` 分支从不检查 `want_json`，直接走 `print_memory_data()`
@@ -66,8 +104,10 @@ doc: <笔记文件名>
 | `status --json` | JSON 信封 |
 | `search <q> --json` | JSON 信封（`mode: "local"`） |
 | `search <q> --hybrid --json` | JSON 信封（`mode: "hybrid"`） |
-| `search <q> --remote --json` | **`<memory-data>` 文本**（§1.1） |
+| `search <q> --remote --json` | **`<memory-data>` 文本**（§1.2） |
 | `preview <view> --json` | JSON 信封 |
+| `note <name> --json` | JSON 信封（恒 `ok: true`；读不到时 `body: null` + `reason`） |
+| `dismiss <name> --json` | JSON 信封（**业务拒绝时 `ok: false` 且 exit 0**，§1.1） |
 
 ---
 
@@ -224,7 +264,7 @@ else:
 ### 4.3 `--remote`（远端索引）——**没有 JSON 形态**
 
 `--remote` 分支从不检查 `want_json`（`memory.py` 263-281 行），因此本命令**不产出
-信封**：见 §1.1。其行为有两种子情况，**stdout 形态相同**：
+信封**：见 §1.2。其行为有两种子情况，**stdout 形态相同**：
 
 1. **远端可用**：`remote_search()` 向 `UNIFIED_MEMORY_REMOTE_URL` 指向的 URL
    **原样** POST（`url.rstrip("/") + "/search"`，即 URL 应写服务根地址），
@@ -311,6 +351,77 @@ else:
 > 待办：接线冲突检测器（`core/unified_memory/conflict.py`）后，该视图即可产
 > `status: "ok"` 的真实结果；届时移除 `unsupported` 分支。
 
+### 5.2 `memory note <name> --json`
+
+读**一条**提交区条目的正文。`name` 是 `Agent提交区/` 下的**文件名**，不是路径。
+
+```json
+{"ok": true, "command": "note", "data": {"name": "a-note.md", "body": "- 一条事实\n", "untrusted": true}}
+```
+
+读不到时（`cmd_note` 恒返回 `ok: true`，失败在 `data` 里表达）：
+
+```json
+{"ok": true, "command": "note", "data": {"name": "ghost.md", "body": null, "reason": "not-found", "untrusted": true}}
+```
+
+`data` 字段：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `name` | string | 回显请求的名字 |
+| `body` | string \| null | **`null` 表示读不到**，与 `""`（空文件）语义不同——「没有这条」和「这条是空的」是两件事 |
+| `reason` | string \| null | 仅失败时出现；成功时为 `null`。取值 `invalid-name` / `not-found`（见下） |
+| `untrusted` | `true` | 恒为 `true`：正文是用户可控的整份自由文本（§2 要求） |
+
+`reason` 枚举：
+
+| 值 | 含义 |
+|---|---|
+| `invalid-name` | 名字本身被拒（分隔符、`..`、`:`、NUL、`~` 开头，或解析后落在提交区之外） |
+| `not-found` | 名字合法但文件不存在或不可读（`OSError`） |
+
+> `reason` **不在此枚举**里的情形：`read_inbox_item()` 只产出上面两个值。
+> 名字校验与路径前缀校验都在 `preview.py` 的 `_safe_inbox_name()` / `read_inbox_item()`
+> 里，`note` 与 `dismiss` 共用。
+
+### 5.3 `memory dismiss <name> --json`
+
+把**一条**提交区条目移入 `已处理/`。**唯一会改动 vault 的命令**，但它**永不删除文件**。
+
+`cmd_dismiss` 的信封外层 `ok` 是 `data.ok` 的副本（§1.1），因此**业务拒绝时 `ok: false` 且 exit 0**。
+下面两种都是 **exit 0**：
+
+```json
+{"ok": true,  "command": "dismiss", "data": {"ok": true,  "name": "a-note.md", "movedTo": "已处理/a-note.md", "reason": null}}
+{"ok": false, "command": "dismiss", "data": {"ok": false, "name": "ghost.md",   "movedTo": null,            "reason": "not-found"}}
+```
+
+`data` 字段：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `ok` | boolean | **业务成败**（这才是该看的字段） |
+| `name` | string | 回显请求的名字 |
+| `movedTo` | string \| null | 成功时为目标路径，**相对提交区**（如 `已处理/a-note.md`）；失败时为 `null` |
+| `reason` | string \| null | 成功时为 `null`；失败时为下表枚举之一 |
+
+`reason` 枚举（全部来自 `core/unified_memory/inbox.py` 的 `process_inbox_item()`）：
+
+| 值 | 含义 |
+|---|---|
+| `invalid-name` | 文件名白名单拒（同 §5.2） |
+| `not-found` | 目标不是提交区内的普通文件 |
+| `outside-inbox` | 源或目标解析后落在提交区之外（含 `已处理/` 是符号链接的情形） |
+| `io-error: <detail>` | 建目录或移动失败；**前缀是 `io-error:`**，冒号后是 `OSError` 详情。匹配时用**前缀**，不要做等值比较 |
+
+**同名冲突不会丢数据**：`已处理/` 已有同名文件时，新条目会带上时间戳后缀，必要时再加序号
+（`name.20260922-043501.md`、`name.20260922-043501-2.md`），**两份都保留**。
+探测到 `_MAX_VARIANTS`（1000）次仍无空位才报 `io-error:`。
+
+> 实现：`core/unified_memory/inbox.py`（`process_inbox_item` / `_unique_target`），
+> 与 promoter 的 `archive_sources` 共用同一把 vault 锁，因此探测与移动对并发归档是原子的。
+
 ---
 
 ## 6. 宿主路由载荷：`buildStatusPayload`
@@ -351,7 +462,111 @@ else:
 
 ---
 
-## 7. 示例（通用占位路径）
+## 7. 宿主 HTTP 路由契约
+
+五条路由由插件宿主半边注册（`src/index.ts`，注册顺序 status → search → preview → note → dismiss）。
+**所有响应**（含 4xx/5xx）都带 `cache-control: no-store`。
+
+### 7.1 通用基线（`src/routes.ts` 的 `guard()`）
+
+| 约束 | 行为 |
+|---|---|
+| loopback-only | `req.socket.remoteAddress` 不在 `127.0.0.1` / `::1` / `::ffff:127.0.0.1` 内 → **403** `{"ok":false,"error":"forbidden: loopback-only"}`。**地址缺失视为非 loopback**（fail-closed） |
+| 方法白名单 | 读路由 `GET`/`HEAD`，`dismiss` **仅** `POST`；其余 → **405** `{"ok":false,"error":"method not allowed"}` |
+| `cache-control` | 恒为 `no-store` |
+| 失败降级 | core 不可用一律 `{ok:false}`，**不产生 500**；仅序列化失败（循环引用等）才 500 |
+
+### 7.2 路由总表
+
+| # | 方法 | 路径 | 参数 | 成功 | 失败语义 |
+|---|---|---|---|---|---|
+| 1 | GET/HEAD | `/api/dsh-unified-agent-memory/status` | — | 200（§6） | 非 loopback → 403；非 GET/HEAD → 405 |
+| 2 | GET/HEAD | `/api/dsh-unified-agent-memory/search` | `q`（**必填**）、`hybrid=1` | 200 `{ok,query,count,results}` | 缺 `q`/`q` 空 → **400**；core 不可用 → **200** `{ok:false,...}` |
+| 3 | GET/HEAD | `/api/dsh-unified-agent-memory/preview` | `view` ∈ `pending`\|`recent`\|`forgetting`\|`conflicts`（缺省 `pending`）、`limit` | 200 `{ok,view,status,count,items}` | 非法 `view` → **400**；core 不可用 → **200** `{ok:false,...}` |
+| 4 | GET/HEAD | `/api/dsh-unified-agent-memory/note` | `name`（**必填**，提交区内文件名） | 200 `{ok,name,body,reason}` | 缺 `name` → **400**；读不到 → **200** `{ok:true, body:null, reason}` |
+| 5 | **POST** | `/api/dsh-unified-agent-memory/dismiss` | body `{"name":"..."}` | 200 `{ok,name,reason}` | 本地校验拒 → **400**；体超 2048 字节 → **413**；业务拒绝 → **409**；core 不可用 → **409** |
+
+**关键区别——降级为 200 还是 4xx，看的是「谁的错」：**
+
+- 路由 **2/3/4** 在 core 不可用时刻意返回 **200 + `{ok:false}`**：对读路由来说「索引不可用」与
+  「没有结果」在面板上都是「没有东西可显示」，且读路由不该把「后端坏」报成「你请求错了」。
+- 路由 **5（dismiss）** 不同：请求本身**合式**但**执行不了** → **409**（不是 400、也不是 500）。
+  `core 不可用 → 409` 与「业务拒绝 → 409」在此**同码**，靠 body 里的 `reason` 区分
+  （见 §7.3）。
+
+### 7.3 `/search`、`/preview`、`/note` 的响应体
+
+三个读路由都**把 core 信封压平**：`data` 里的字段直接提到顶层。
+
+`/search`（`src/route-search.ts`）：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `ok` | boolean | 成功 `true`；任一步失败 `false` |
+| `query` | string | 回显；失败时 `""` |
+| `count` | number | 失败时 `0` |
+| `results` | array | core 的 `data.results` 原样透传；失败时 `[]`。**逐条仍带 `untrusted`**（§2） |
+
+`/preview`（`src/route-preview.ts`）：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `ok` | boolean | |
+| `view` | string | 回显 |
+| `status` | string | **core 的 `status` 原样透传**，可为 `"ok"` / `"unsupported"`（§5.1）；宿主自身失败时为 `"error"` |
+| `count` | number | |
+| `items` | array | 逐条带 `untrusted` |
+
+> `/preview` **必须**保留 `status`。宿主自身失败用 `status: "error"`，与 core 的
+> `"unsupported"`（视图结构上无答案）区分开——两者都不等于「没有」。
+
+`/note`：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `ok` | boolean | 读不到时仍为 `true`（core 的 `cmd_note` 恒成功） |
+| `name` | string | 回显 |
+| `body` | string \| null | `null` = 读不到，与 `""` 不同（§5.2） |
+| `reason` | string \| null | **宿主新增的透传字段**，见下 |
+
+> **`/note` 的 `reason` 是宿主新增（host-added）的透传字段，不是 core 原有的顶层字段。**
+> core 的 `note` 信封把 `reason` 放在 `data.reason` 里（§5.2），宿主把它连同 `name`/`body`
+> 一起提平到响应顶层，好让面板不拆信封就能区分「名字被拒」与「条目不在」。
+> 它**不**出现在 core 的 CLI 契约顶层，只出现在这条 HTTP 响应的顶层。
+
+### 7.4 `/dismiss` 的响应体与 `reason` 分类
+
+`/dismiss` **不**压平 core 信封的结构，但 `reason` 会被宿主重写为下面这组值
+（`src/route-dismiss.ts` 的 `shapeDismissResult` / `handleDismiss`）：
+
+| `reason` | 含义 | HTTP |
+|---|---|---|
+| `null` | 成功移入 `已处理/` | 200 |
+| `not-found` | 提交区内没有这个文件 | 409 |
+| `outside-inbox` | 源或目标解析后不在提交区内 | 409 |
+| `invalid-name` | 名字被本地白名单拒（前导 `-`/`~`、分隔符、`:`、NUL） | 400（本地拒） |
+| `io-error: <detail>` | 移动/建目录失败（**前缀匹配**） | 409 |
+| `unavailable` | **core 没给出业务答复**：spawn 失败、超时、输出不可解析或 `data` 缺失 | 409 |
+
+**`unavailable` 只应覆盖「core 未给出业务答复」这一种情况。**
+判断 `data` 是否存在**不能**以外层 `ok` 为先决条件——core 的外层 `ok` 是 `data.ok` 的副本，
+业务拒绝时两者**同为 `false`**（§1.1）。曾有一版实现以外层 `ok` 为前置判断，把每一次
+`not-found` / `outside-inbox` 都吞成 `unavailable`，使面板无法区分「条目已被移走」与
+「core 挂了」（Task 6 第三轮修的缺陷）。
+
+**本地校验在 400 这一档把名字拦在 core 之前**，因此 `invalid-name` 在正常路径下
+**不会**由 `/dismiss` 返回（它会先被 `isSafeName` 拒成 400）。该分支保留为纵深防御：
+若将来有人把 `--json` 又放到 `--` 终止符之后、让 argparse 以空 stdout 退出，
+这一档能把「静默写故障」变成一条准确诊断。
+
+### 7.5 请求体上限
+
+`POST /dismiss` 的 body 上限 **2048 字节**，且按**字节**而非 UTF-16 码元计数
+（CJK 每字符最多 3 字节，用 `.length` 会放过 2–3 倍载荷）。超限 → **413**。
+
+---
+
+## 8. 示例（通用占位路径）
 
 ```bash
 # 环境
@@ -361,10 +576,14 @@ python -m unified_memory.memory status --json
 python -m unified_memory.memory search "记忆系统" --json
 python -m unified_memory.memory search "记忆系统" --hybrid --json
 python -m unified_memory.memory preview pending --limit 10 --json
-# 注意：--remote 与 --json 同用时没有信封（§1.1）
+python -m unified_memory.memory note "dsh-2026-09-22-001.md" --json
+# dismiss 是唯一写命令：业务拒绝时仍打印信封且 exit 0（§1.1）
+python -m unified_memory.memory dismiss "dsh-2026-09-22-001.md" --json
+# 注意：--remote 与 --json 同用时没有信封（§1.2）
 ```
 
-消费示例（只信任 `ok` 与结构，内容一律当数据；按"键可能缺席"读取）：
+消费示例（只信任 `ok` 与结构，内容一律当数据；按"键可能缺席"读取；
+**`dismiss` 的 `ok` 不可当先决条件**）：
 
 ```python
 import json
@@ -395,13 +614,20 @@ elif payload["command"] == "preview":
 
 ---
 
-## 8. 稳定性承诺
+## 9. 稳定性承诺
 
 - 字段**只增不改**：新增字段属兼容变更；重命名或改变语义属破坏性变更，需升版本并在此文档记录。
 - **字段集不保证在所有路径下同形**：`status --json` 在缺失 vault 路径下少三个键（§3.2）；
   消费方必须按"键可能缺席"读取，不得假设字段集固定。
 - `untrusted` 标记规则是安全契约的一部分，**不得**在后续版本中移除。
 - 文本模式的 `<memory-data>` 包裹同样是安全契约的一部分；`search --remote --json`
-  走文本模式属已裁定的例外（§1.1），不会为了"信封统一"而移除该包裹。
+  走文本模式属已裁定的例外（§1.2），不会为了"信封统一"而移除该包裹。
 - `preview` 的 `status` 字段**不得**移除或改回"只有空数组"：它承担"区分
   「无答案」与「没有冲突」"的职责（§5.1）。
+- `note` 的 `data.body` **不得**把"读不到"（`null`）折成 `""`，"读不到"必须继续由 `reason` 表达（§5.2）。
+- `dismiss` 的信封外层 `ok` **不得**被当作消费 `data` 的先决条件（§1.1）。
+  若将来要给 `dismiss` 加"命令是否跑起来"的独立信号，**必须新增字段**，不得复用 `ok`。
+- `/dismiss` 的 `reason` 取值集合是契约的一部分：`unavailable` **只能**表示"core 未给出业务答复"，
+  不得用来覆盖 `not-found` / `outside-inbox` / `io-error:*`（§7.4）。
+- 五条 HTTP 路由的 `cache-control: no-store` **不得**移除；读路由"core 不可用仍返回 200"的
+  降级语义（§7.2）同样不得收窄。
