@@ -57,18 +57,29 @@ export function guard(req: RouteReq, res: RouteRes, allowed: readonly string[]):
   return true
 }
 
-/** Serialise and send. A circular payload degrades to a 500, never a hang. */
+/**
+ * Serialise and send. A payload that cannot serialise (circular reference,
+ * BigInt, a throwing `toJSON`) degrades to a 500, never a hang.
+ *
+ * Serialisation MUST happen before the first `writeHead`: once a status line is
+ * on the wire the headers are committed, so a late `writeHead(500)` in the
+ * catch block would throw `ERR_HTTP_HEADERS_SENT` and leave the client with no
+ * response at all — and a status already sent as 2xx cannot be taken back.
+ */
 export function sendJson(res: RouteRes, code: number, body: unknown): void {
+  let text: string
   try {
-    res.writeHead(code, JSON_HEADERS)
-    res.end(JSON.stringify(body))
+    text = JSON.stringify(body)
   } catch {
     res.writeHead(500, JSON_HEADERS)
     res.end('{"ok":false,"error":"internal error"}')
+    return
   }
+  res.writeHead(code, JSON_HEADERS)
+  res.end(text)
 }
 
-/** One decoded query parameter, or null when absent or empty. */
+/** One decoded query parameter, or null when absent, empty or undecodable. */
 export function queryParam(url: string | undefined, key: string): string | null {
   if (!url) return null
   const q = url.indexOf('?')
@@ -76,9 +87,15 @@ export function queryParam(url: string | undefined, key: string): string | null 
   for (const pair of url.slice(q + 1).split('&')) {
     const eq = pair.indexOf('=')
     if (eq < 0) continue
-    if (decodeURIComponent(pair.slice(0, eq)) !== key) continue
-    const value = decodeURIComponent(pair.slice(eq + 1))
-    return value === '' ? null : value
+    try {
+      if (decodeURIComponent(pair.slice(0, eq)) !== key) continue
+      const value = decodeURIComponent(pair.slice(eq + 1))
+      return value === '' ? null : value
+    } catch {
+      // A malformed escape (`?a=%`, `?a=%zz`) is caller-supplied garbage, not a
+      // server fault: treat it as absent instead of throwing into the handler.
+      continue
+    }
   }
   return null
 }
@@ -94,11 +111,24 @@ export function readBody(req: RouteReq, limit: number = MAX_BODY): Promise<strin
       return
     }
     let data = ''
+    let settled = false
     req.on('data', (chunk) => {
+      if (settled) return
       data += String(chunk ?? '')
-      if (data.length > limit) reject(new Error('body too large'))
+      if (data.length > limit) {
+        settled = true
+        reject(new Error('body too large'))
+      }
     })
-    req.on('end', () => resolve(data))
-    req.on('error', reject)
+    req.on('end', () => {
+      if (settled) return
+      settled = true
+      resolve(data)
+    })
+    req.on('error', (err) => {
+      if (settled) return
+      settled = true
+      reject(err)
+    })
   })
 }

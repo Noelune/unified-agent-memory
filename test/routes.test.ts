@@ -1,15 +1,41 @@
 import { describe, expect, it } from 'vitest'
-import { guard, isLoopback, queryParam, sendJson } from '../src/routes.ts'
+import { guard, isLoopback, queryParam, readBody, sendJson } from '../src/routes.ts'
 
 function fakeRes() {
   const calls: { code?: number; headers?: Record<string, string>; body?: string } = {}
+  let sent = false
   return {
     calls,
     writeHead: (code: number, headers: Record<string, string>) => {
+      // Real res.writeHead throws once the header was already written; mirror it
+      // so a late writeHead(500) in the catch path fails here instead of only in
+      // production. That is the trap that hid this defect.
+      if (sent) throw new Error('ERR_HTTP_HEADERS_SENT')
+      sent = true
       calls.code = code
       calls.headers = headers
     },
-    end: (body?: string) => { calls.body = body },
+    end: (body?: string) => {
+      sent = true
+      calls.body = body
+    },
+  }
+}
+
+/** A request stream that replays `chunks` to whoever subscribes. */
+function fakeReq(chunks: string[]) {
+  const listeners: Record<string, (chunk?: unknown) => void> = {}
+  const deliver = (ev: string, chunk?: unknown) => listeners[ev]?.(chunk)
+  return {
+    on: (ev: string, cb: (chunk?: unknown) => void) => { listeners[ev] = cb },
+    push: () => {
+      for (const chunk of chunks) deliver('data', chunk)
+      deliver('end')
+    },
+    /** Drive the stream's terminal event only, to prove it is ignored. */
+    finish: () => deliver('end'),
+    /** Drive an error after the promise already settled, to prove it is ignored. */
+    fail: (err: unknown) => deliver('error', err),
   }
 }
 
@@ -39,6 +65,7 @@ describe('guard', () => {
     const ok = guard({ socket: { remoteAddress: '127.0.0.1' }, method: 'POST' }, res, ['GET', 'HEAD'])
     expect(ok).toBe(false)
     expect(res.calls.code).toBe(405)
+    expect(res.calls.headers?.['cache-control']).toBe('no-store')
   })
 
   it('passes a loopback GET and always sets no-store', () => {
@@ -54,14 +81,30 @@ describe('guard', () => {
   })
 })
 
-describe('sendJson', () => {
-  it('writes serialised JSON with no-store', () => {
-    const res = fakeRes()
-    sendJson(res, 200, { ok: true })
-    expect(res.calls.code).toBe(200)
-    expect(res.calls.headers?.['cache-control']).toBe('no-store')
-    expect(res.calls.body).toBe('{"ok":true}')
-  })
+describe('sendJson serialisation failures', () => {
+  // One test per (failure mode x original status) pair: the fix must hold for a
+  // 200 payload and for the 5xx path alike, and it must answer, not hang.
+  const payloads = {
+    circular: () => {
+      const value: Record<string, unknown> = { ok: true }
+      value.self = value
+      return value
+    },
+    bigint: () => ({ n: 1n }),
+    toJSONThrows: () => ({ toJSON() { throw new Error('boom') } }),
+  }
+
+  for (const [name, make] of Object.entries(payloads)) {
+    for (const code of [200, 500]) {
+      it(`answers 500, not a hang, when ${name} cannot serialise (was ${code})`, () => {
+        const res = fakeRes()
+        sendJson(res, code, make())
+        expect(res.calls.code).toBe(500)
+        expect(res.calls.headers?.['cache-control']).toBe('no-store')
+        expect(res.calls.body).toBe('{"ok":false,"error":"internal error"}')
+      })
+    }
+  }
 })
 
 describe('queryParam', () => {
@@ -74,5 +117,36 @@ describe('queryParam', () => {
   })
   it('returns null for an empty value', () => {
     expect(queryParam('/x?a=', 'a')).toBeNull()
+  })
+  it('returns null for a malformed percent-escape instead of throwing', () => {
+    expect(queryParam('/x?a=%', 'a')).toBeNull()
+    expect(queryParam('/x?a=%zz', 'a')).toBeNull()
+  })
+})
+
+describe('readBody', () => {
+  it('resolves the body once the stream ends', async () => {
+    const req = fakeReq(['he', 'llo', ' world'])
+    const body = readBody(req, 100)
+    req.push()
+    await expect(body).resolves.toBe('hello world')
+  })
+
+  it('rejects an oversized body', async () => {
+    const req = fakeReq(['aaaa', 'bbbb', 'cccc'])
+    const body = readBody(req, 4)
+    req.push()
+    await expect(body).rejects.toThrow('body too large')
+  })
+
+  it('stays rejected when the stream errors after the size rejection', async () => {
+    // The settled guard: a later 'error' must not override the size rejection,
+    // which would otherwise let a caller mask an oversized body with a stream
+    // error and have the handler treat it as a transport failure.
+    const req = fakeReq(['aaaa', 'bbbb'])
+    const body = readBody(req, 4)
+    req.push()
+    req.fail(new Error('socket reset'))
+    await expect(body).rejects.toThrow('body too large')
   })
 })
