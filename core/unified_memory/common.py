@@ -18,6 +18,28 @@ _THREAD_LOCKS: dict[str, threading.Lock] = {}
 _THREAD_LOCKS_GUARD = threading.Lock()
 
 
+def ensure_utf8_console(stream=None) -> None:
+    """Make a text stream tolerate CJK output on non-UTF-8 consoles.
+
+    Windows gives Python a cp1252 stdout/stderr when it is not a real console
+    (CI runners, redirected pipes), and core prints CJK paths such as 记忆遗忘区.
+    Without this the encode raises UnicodeEncodeError and the command dies.
+    Every CLI module imports common, so the call at the bottom of this file
+    covers all of them. Safe on streams that cannot be reconfigured.
+    """
+    for target in (sys.stdout, sys.stderr) if stream is None else (stream,):
+        reconfigure = getattr(target, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError, AttributeError):
+            pass  # detached or already-closed stream: leave it as-is
+
+
+ensure_utf8_console()
+
+
 def _thread_lock_for(vault: Path) -> threading.Lock:
     key = str(vault.expanduser().resolve())
     with _THREAD_LOCKS_GUARD:

@@ -4,11 +4,13 @@
 The real ~/.unified-memory.yaml and index.db are NEVER touched: both the
 config path and the index path are redirected into the scratch dir.
 """
+import io
 import os
 import shutil
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -45,6 +47,47 @@ class RedactTest(unittest.TestCase):
     def test_redact_does_not_erase_plain_text(self):
         self.assertEqual(common.redact("the server runs on 127.0.0.1:8080"), "the server runs on 127.0.0.1:8080")
         self.assertNotIn("<REDACTED>", common.redact("api is a common word"))
+
+
+class ConsoleEncodingTest(unittest.TestCase):
+    """Non-UTF-8 consoles (Windows cp1252) must not crash the CLI on CJK output.
+
+    GitHub's windows-latest runner gives Python a cp1252 stdout, and core
+    prints CJK paths such as 记忆遗忘区. Without an explicit reconfigure the
+    encode throws UnicodeEncodeError and the command dies.
+    """
+
+    def test_ensure_utf8_console_switches_a_cp1252_stream(self):
+        raw = io.BytesIO()
+        stream = io.TextIOWrapper(raw, encoding="cp1252")
+        common.ensure_utf8_console(stream)
+        self.assertEqual(stream.encoding, "utf-8")
+
+    def test_ensure_utf8_console_is_idempotent_and_tolerates_plain_streams(self):
+        raw = io.BytesIO()
+        stream = io.TextIOWrapper(raw, encoding="cp1252")
+        common.ensure_utf8_console(stream)
+        common.ensure_utf8_console(stream)  # second call must not raise
+        self.assertEqual(stream.encoding, "utf-8")
+        # A stream without reconfigure (e.g. a test double) is left alone.
+        common.ensure_utf8_console(io.StringIO())
+
+    def test_cjk_output_survives_a_cp1252_console(self):
+        vault = make_scratch_vault()
+        try:
+            raw = io.BytesIO()
+            stream = io.TextIOWrapper(raw, encoding="cp1252")
+            common.ensure_utf8_console(stream)
+            with redirect_stdout(stream):
+                mem_mod.cmd_submit(
+                    type("A", (), {"agent": "dsh", "fact": "- the vault keeps CJK in 记忆遗忘区"})()
+                )
+            stream.flush()
+            # The submission path contains CJK (Agent提交区); it must reach the
+            # byte stream as UTF-8 instead of raising UnicodeEncodeError.
+            self.assertIn("Agent提交区".encode("utf-8"), raw.getvalue())
+        finally:
+            destroy_scratch(vault)
 
 
 if __name__ == "__main__":
