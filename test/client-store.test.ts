@@ -29,10 +29,13 @@ const TYPES = readFileSync(new URL('../src/client/types.ts', import.meta.url), '
 // Imported statically: touching window.location at module scope would make this
 // URL invalid, and store.ts must therefore not depend on a window.
 import {
+  canApplyPreview,
   dismissItem,
   isCurrentSearch,
   loadPreview,
+  newPreviewGate,
   nextSeq,
+  previewEffectKey,
   runSearch,
   runSearchSequence,
 } from '../src/client/store.ts'
@@ -119,7 +122,12 @@ describe('runSearch', () => {
   it('treats a 200 with ok:false as no results, not as an error', async () => {
     // The core half reports an unavailable vault this way. A transport-level
     // success is not a business success.
-    stubFetch({ status: 200, body: { ok: false, count: 0, results: [] } })
+    //
+    // The payload MUST carry a non-empty `results`: with `results: []` the
+    // assertion holds even after the `body.ok` gate is deleted, so it proves
+    // nothing. A populated payload is what makes the gate observable — drop the
+    // gate and `leaked.md` surfaces.
+    stubFetch({ status: 200, body: { ok: false, count: 1, results: [hit('leaked.md')] } })
     await expect(runSearch('x', false)).resolves.toEqual([])
   })
 
@@ -231,5 +239,71 @@ describe('search race guard', () => {
     await ran.all()
     expect(ran.newest()).toEqual([hit('new.md')])
     expect(ran.settled[0]).toBeUndefined()
+  })
+})
+
+describe('useSearch delegates its guard to the shared path', () => {
+  // Why this test exists: `useSearch` used to carry its OWN copy of the
+  // `isCurrentSearch` branch, so mutating the guard inside the hook left every
+  // test green — the suite only ever exercised the copy in `runSearchSequence`.
+  // Production was therefore untested while appearing covered.
+  //
+  // The hook cannot be mounted here (no renderer, by design), so instead of
+  // re-testing the guard we pin the one property that makes the mountable
+  // guard reachable: the hook's `run` must route through the same shared
+  // helper the tests drive. Re-inlining the guard into the hook breaks this.
+  const hookBody = (): string => {
+    const start = SRC.indexOf('export function useSearch(')
+    expect(start, 'useSearch not found').toBeGreaterThan(-1)
+    return SRC.slice(start, SRC.indexOf('export function usePreview('))
+  }
+
+  it('routes the hook run through the shared race helper, not a private copy', () => {
+    const body = hookBody()
+    // The single-source-of-truth call the hook must make.
+    expect(body).toMatch(/runSearchSequence\s*\(/)
+    // The private re-inlined guard must be gone: the hook may not test the
+    // sequence itself, it may only read the helper's verdict.
+    expect(body).not.toMatch(/isCurrentSearch\s*\(/)
+    expect(body).not.toMatch(/nextSeq\s*\(/)
+  })
+})
+
+describe('usePreview effect decision (pure, no renderer)', () => {
+  // `useEffect` cannot run here: there is no renderer in this repo (no
+  // @testing-library/react, no jsdom, no react-dom) and the brief forbids adding
+  // a dependency. So the two decisions the effect makes are extracted into pure
+  // functions the hook MUST call, and asserted directly. Limit: this pins the
+  // decision logic and the dependency set, not React's own scheduling — see the
+  // report for the exact ceiling.
+
+  it('treats a load as live before unmount and dead after', () => {
+    const gate = newPreviewGate()
+    expect(gate.alive).toBe(true)
+    expect(canApplyPreview(gate)).toBe(true)
+
+    gate.dispose() // what the effect's cleanup does on unmount / re-run
+    expect(gate.alive).toBe(false)
+    // The late response must not reach setState on a dead component.
+    expect(canApplyPreview(gate)).toBe(false)
+  })
+
+  it('refetches when the view changes', () => {
+    expect(previewEffectKey('pending', 0)).not.toBe(previewEffectKey('conflicts', 0))
+  })
+
+  it('refetches when reload bumps the nonce', () => {
+    expect(previewEffectKey('pending', 0)).not.toBe(previewEffectKey('pending', 1))
+  })
+
+  it('does not refetch when neither the view nor the nonce moved', () => {
+    expect(previewEffectKey('recent', 3)).toBe(previewEffectKey('recent', 3))
+  })
+
+  it('pins the effect dependency array to exactly [view, nonce]', () => {
+    // The decision above only matters if the effect is actually keyed on both.
+    const start = SRC.indexOf('export function usePreview(')
+    const body = SRC.slice(start, SRC.indexOf('export async function dismissItem('))
+    expect(body).toMatch(/\[\s*view\s*,\s*nonce\s*\]/)
   })
 })

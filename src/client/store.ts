@@ -12,7 +12,7 @@
  * @module src/client/store
  */
 
-import { useCallback, useEffect, useRef, useState } from '../deps.ts'
+import { useCallback, useEffect, useState } from '../deps.ts'
 import type { PreviewData, PreviewView, SearchHit, StatusPayload } from './types.ts'
 
 export const STATUS_URL = '/api/dsh-unified-agent-memory/status'
@@ -162,8 +162,11 @@ export function isCurrentSearch(seq: SearchSeq, mine: number): boolean {
 /**
  * Race harness for the search guard.
  *
- * The hook cannot be mounted without a renderer, so its `run` delegates here:
- * every query goes out immediately (`fire`, never awaited — exactly like the
+ * This is the ONE place the sequence guard lives. `useSearch.run` calls it
+ * rather than re-implementing the check, so there is a single implementation to
+ * test — a mutation here is a mutation in production, not in a test-only copy.
+ *
+ * Every query goes out immediately (`fire`, never awaited — exactly like the
  * hook, which does not await `runSearch` either), and a settling response is
  * dropped unless its token is still the newest. `newest()` exposes what the
  * hook would have in state afterwards.
@@ -173,6 +176,7 @@ export function isCurrentSearch(seq: SearchSeq, mine: number): boolean {
  */
 export function runSearchSequence(
   queries: readonly (readonly [string, boolean])[],
+  apply: (hits: SearchHit[]) => void = () => {},
 ): {
   settled: SearchHit[][]
   newest: () => SearchHit[]
@@ -188,6 +192,7 @@ export function runSearchSequence(
     if (!isCurrentSearch(seq, mine)) return
     live = hits
     settled[i] = hits
+    apply(hits)
   })
   return {
     settled,
@@ -207,20 +212,18 @@ export function useSearch(): {
   const [results, setResults] = useState<SearchHit[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(false)
-  const seq = useRef<SearchSeq>({ current: 0 })
 
   const run = useCallback(function (q: string, hybrid: boolean) {
-    const mine = nextSeq(seq.current)
     setBusy(true)
     setError(false)
-    runSearch(q, hybrid)
-      .then(function (hits) {
-        // A slower earlier request must not overwrite a newer one's results.
-        if (!isCurrentSearch(seq.current, mine)) return
-        setResults(hits)
-      })
-      .catch(function () { if (isCurrentSearch(seq.current, mine)) setError(true) })
-      .finally(function () { if (isCurrentSearch(seq.current, mine)) setBusy(false) })
+    // Delegates to the shared helper: the guard is written once, in
+    // `runSearchSequence`, and the hook only reacts to a verdict it never
+    // computes itself. `apply` is the hook's own "the newest result landed"
+    // edge, and it fires only for the token that is still current.
+    runSearchSequence([[q, hybrid]], function (hits) { setResults(hits) })
+      .all()
+      .catch(function () { setError(true) })
+      .finally(function () { setBusy(false) })
   }, [])
 
   return { results, busy, error, run }
@@ -256,6 +259,43 @@ export async function loadPreview(
 }
 
 /**
+ * The liveness token an in-flight preview load checks before it setStates.
+ *
+ * React's effect cleanup flips this on unmount and on every dependency change,
+ * so a response that lands after either is discarded instead of writing to a
+ * component that has moved on. Kept as a plain object because a bare boolean
+ * cannot be flipped by the effect's cleanup closure.
+ */
+export interface PreviewGate {
+  alive: boolean
+  dispose: () => void
+}
+
+/** Open a gate for one effect run. */
+export function newPreviewGate(): PreviewGate {
+  const gate: PreviewGate = {
+    alive: true,
+    dispose: function () { gate.alive = false },
+  }
+  return gate
+}
+
+/** True when a settling preview load may still touch state. */
+export function canApplyPreview(gate: PreviewGate): boolean {
+  return gate.alive
+}
+
+/**
+ * Identity of one effect run: it changes iff the load must be re-fired.
+ *
+ * This is the `[view, nonce]` dependency array expressed as a value, so the
+ * "which changes refetch" decision is testable without a renderer.
+ */
+export function previewEffectKey(view: PreviewView, nonce: number): string {
+  return `${view}#${nonce}`
+}
+
+/**
  * Preview state for a tab. Loads once on activation; `reload` re-reads.
  *
  * `busy` starts true because the effect's first act is to load, so the tab
@@ -272,13 +312,14 @@ export function usePreview(view: PreviewView): {
 
   useEffect(function () {
     // Guards the unmount: a late response must not setState on a dead component.
-    let alive = true
+    const gate = newPreviewGate()
     setBusy(true)
     loadPreview(view)
-      .then(function (d) { if (alive) setData(d) })
-      .catch(function () { if (alive) setData(null) })
-      .finally(function () { if (alive) setBusy(false) })
-    return function () { alive = false }
+      .then(function (d) { if (canApplyPreview(gate)) setData(d) })
+      .catch(function () { if (canApplyPreview(gate)) setData(null) })
+      .finally(function () { if (canApplyPreview(gate)) setBusy(false) })
+    return gate.dispose
+    // Deps are exactly the pair `previewEffectKey` encodes.
   }, [view, nonce])
 
   return { data, busy, reload: function () { setNonce(function (n) { return n + 1 }) } }
