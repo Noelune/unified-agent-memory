@@ -417,18 +417,40 @@ def bm25_memory_search(vault: Path, query: str, limit: int = 20) -> list[dict]:
 def trigram_memory_search(vault: Path, query: str, limit: int = 20) -> list[dict]:
     """CJK-friendly substring recall via the trigram FTS table.
 
+    The trigram tokenizer indexes 3-character windows, so a query shorter than
+    3 characters (most Chinese search terms: 记忆 / 路径 / 环境 …) can never
+    MATCH. When the FTS path yields no rows we fall back to a case-insensitive
+    substring scan, mirroring ``bm25_memory_search``.
+
     Returns an empty list when the tokenizer or table is unavailable — this
     stream is additive, so degrading to nothing is always correct.
     """
     conn = get_conn(vault)
     try:
-        rows = conn.execute(
-            "SELECT m.id, m.doc, m.line, m.type, m.importance, m.source_agent, "
-            "rank AS rnk FROM fts_mem_tri f JOIN memories m ON m.id = f.memory_id "
-            "WHERE fts_mem_tri MATCH ? AND m.status = 'active' ORDER BY rank LIMIT ?",
-            (query, limit),
-        ).fetchall()
-        return [dict(r) for r in rows]
+        try:
+            rows = conn.execute(
+                "SELECT m.id, m.doc, m.line, m.type, m.importance, m.source_agent, "
+                "rank AS rnk FROM fts_mem_tri f JOIN memories m ON m.id = f.memory_id "
+                "WHERE fts_mem_tri MATCH ? AND m.status = 'active' ORDER BY rank LIMIT ?",
+                (query, limit),
+            ).fetchall()
+            if rows:
+                return [dict(r) for r in rows]
+        except sqlite3.Error:
+            pass
+        # Fallback: substring match per whitespace-separated keyword.
+        keywords = [kw for kw in re.split(r"[\s,，]+", query) if kw]
+        if not keywords:
+            return []
+        results = []
+        for row in conn.execute(
+            "SELECT id, doc, line, type, importance, source_agent FROM memories WHERE status = 'active'"
+        ).fetchall():
+            if all(kw.lower() in row["line"].lower() for kw in keywords):
+                results.append(dict(row))
+                if len(results) >= limit:
+                    break
+        return results
     except sqlite3.Error:
         return []
     finally:

@@ -107,6 +107,21 @@ class TrigramSearchTest(unittest.TestCase):
         for key in ("id", "doc", "line", "type", "importance", "source_agent"):
             self.assertIn(key, hits[0])
 
+    def test_short_cjk_query_falls_back_to_a_substring_scan(self):
+        # FTS5's trigram tokenizer indexes 3-char windows, so a 2-char CJK
+        # query (记忆 — the common case for Chinese search terms) can never
+        # MATCH. The substring fallback must still find the line.
+        self._write_note("方案.md", "# 标题\n- 记忆系统升级方案已落地\n")
+        index.update_index(self.vault)
+        hits = index.trigram_memory_search(self.vault, "记忆")
+        lines = [h["line"] for h in hits]
+        self.assertIn("记忆系统升级方案已落地", lines)
+        for key in ("id", "doc", "line", "type", "importance", "source_agent"):
+            self.assertIn(key, hits[0])
+        # The fallback must not return everything: an absent 2-char phrase
+        # yields nothing.
+        self.assertEqual(index.trigram_memory_search(self.vault, "葡萄"), [])
+
     def test_trigram_search_returns_empty_when_table_missing(self):
         # Drop the table to simulate an older SQLite that never created it.
         conn = schema.get_conn(self.vault)
