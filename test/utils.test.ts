@@ -15,6 +15,7 @@ import {
   clampLimit,
   renderText,
   notConfigured,
+  buildSearchArgv,
   DEPLOY_TASKBOOK,
 } from '../src/utils.ts'
 
@@ -164,6 +165,46 @@ describe('clampLimit', () => {
 
   it('uses custom fallback', () => {
     expect(clampLimit(undefined, 15)).toBe(15)
+  })
+})
+
+// ── buildSearchArgv ─────────────────────────────────────────────────
+
+describe('buildSearchArgv', () => {
+  it('builds a basic search argv with default limit', () => {
+    expect(buildSearchArgv('staging server')).toEqual([
+      'search', 'staging server', '--limit', '8',
+    ])
+  })
+
+  it('honors an explicit limit', () => {
+    expect(buildSearchArgv('staging server', { limit: 3 })).toEqual([
+      'search', 'staging server', '--limit', '3',
+    ])
+  })
+
+  it('appends hybrid flag when enabled', () => {
+    expect(buildSearchArgv('staging', { hybrid: true })).toEqual([
+      'search', 'staging', '--limit', '8', '--hybrid',
+    ])
+  })
+
+  it('appends format and budget when provided', () => {
+    expect(buildSearchArgv('staging', { hybrid: true, format: 'compact', budget: 500 })).toEqual([
+      'search', 'staging', '--limit', '8', '--hybrid', '--format', 'compact', '--budget', '500',
+    ])
+  })
+
+  it('rejects unknown format values gracefully (no flag appended)', () => {
+    expect(buildSearchArgv('staging', { format: 'bogus' })).toEqual([
+      'search', 'staging', '--limit', '8',
+    ])
+  })
+
+  it('ignores non-positive budget', () => {
+    expect(buildSearchArgv('staging', { budget: 0 })).toEqual([
+      'search', 'staging', '--limit', '8',
+    ])
   })
 })
 

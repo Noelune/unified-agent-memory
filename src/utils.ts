@@ -100,6 +100,37 @@ export function clampLimit(raw: unknown, fallback = 8): number {
   return Math.min(Math.max(1, Number(raw ?? fallback)), 50)
 }
 
+// ── Search argv builder ──────────────────────────────────────────────
+
+export interface SearchOptions {
+  limit?: number
+  hybrid?: boolean
+  format?: string
+  budget?: number
+}
+
+/** Valid hybrid `--format` values (mirrors core search.py FORMATS). */
+const HYBRID_FORMATS = new Set(['full', 'compact', 'narrative'])
+
+/**
+ * Build the argv for `memory search` from structured options.
+ *
+ * Pure and side-effect free so the CLI contract is unit-testable without
+ * spawning the Python core. `--remote` is appended separately by the caller
+ * (it needs no validation here).
+ */
+export function buildSearchArgv(query: string, opts: SearchOptions = {}): string[] {
+  const argv = ['search', query, '--limit', String(clampLimit(opts.limit))]
+  if (opts.hybrid) argv.push('--hybrid')
+  if (opts.format && HYBRID_FORMATS.has(opts.format)) {
+    argv.push('--format', opts.format)
+  }
+  if (typeof opts.budget === 'number' && opts.budget > 0) {
+    argv.push('--budget', String(opts.budget))
+  }
+  return argv
+}
+
 // ── Core execution ───────────────────────────────────────────────────
 
 /**
