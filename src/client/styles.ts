@@ -30,7 +30,15 @@ export const PANEL_CSS = `
   color: var(--dsw-alias-label-primary);
 }
 .dsh-memory-sheet {
-  position: fixed; z-index: 1000; width: 380px; max-height: 70vh;
+  /* Frame-wide overlay, but mounted in the small sidebar.footer.action seat.
+     Without an explicit offset, a position:fixed box stays at its static
+     position (just above Settings) and grows downward out of the viewport, so
+     the body got clipped off-screen. Anchor it to the viewport instead — the
+     sheet opens upward from the bottom-left rail edge. */
+  position: fixed; z-index: 1000;
+  bottom: 12px; left: 12px;
+  width: min(380px, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
   overflow-y: auto;
   background: var(--dsw-alias-bg-layer-2);
   border: 1px solid var(--dsw-alias-border-l2);

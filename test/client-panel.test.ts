@@ -41,4 +41,19 @@ describe('client panel rebuild', () => {
     expect(tsx).toContain("from '../deps.ts'")
     expect(/from 'react'/.test(tsx)).toBe(false)
   })
+
+  // Regression: the sheet is a frame-wide overlay mounted inside the small
+  // `sidebar.footer.action` seat. With `position: fixed` but NO offset property
+  // it stays at its static position (just above Settings) and grows downward
+  // out of the viewport, so the panel body was clipped off-screen.
+  it('anchors the sheet to the viewport so it cannot overflow off-screen', () => {
+    const css = read('src/client/styles.ts')
+    const sheet = /\.dsh-memory-sheet\s*\{([^}]*)\}/.exec(css)?.[1] ?? ''
+    expect(sheet, '.dsh-memory-sheet rule must exist').not.toBe('')
+    expect(sheet).toMatch(/position:\s*fixed/)
+    // A fixed overlay is only anchored when at least one vertical and one
+    // horizontal offset is declared.
+    expect(sheet, 'sheet needs a vertical anchor').toMatch(/(top|bottom)\s*:/)
+    expect(sheet, 'sheet needs a horizontal anchor').toMatch(/(left|right)\s*:/)
+  })
 })
