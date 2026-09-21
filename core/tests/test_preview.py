@@ -112,14 +112,57 @@ class PreviewViewTest(unittest.TestCase):
         keys = [(i["accessCount"], i["importance"]) for i in data["items"]]
         self.assertEqual(keys, sorted(keys))
 
-    def test_conflicts_only_returns_rows_typed_conflict(self):
-        # No memory line is typed 'conflict' in a fresh vault, so the view is
-        # legitimately empty — and still a well-formed envelope.
+    def test_conflicts_is_reported_unsupported_not_as_an_empty_answer(self):
+        # No code path ever writes type='conflict': classify_type covers
+        # MEMORY_TYPES only and the column default is 'fact'. An empty list
+        # would therefore be indistinguishable from "there are no conflicts",
+        # which a governance read must never imply.
         data = preview.build(self.vault, "conflicts", 10)
 
         self.assertEqual(data["view"], "conflicts")
         self.assertEqual(data["count"], 0)
         self.assertEqual(data["items"], [])
+        self.assertEqual(data["status"], "unsupported")
+        self.assertIn("conflict", data["reason"])
+
+    def test_conflicts_unsupported_becomes_ok_once_a_row_is_typed_conflict(self):
+        rules = canonical_dir(self.vault) / "工程执行规则.md"
+        rules.write_text(
+            read_maybe(rules)
+            + "\n- 端口使用 8080（写入 2026-08-15｜来源：Agent提交区/codex-20260815-002-01.md）\n",
+            encoding="utf-8",
+        )
+        from unified_memory import index as index_mod
+
+        index_mod.update_index(self.vault)
+        conn = index_mod.get_conn(self.vault)
+        try:
+            row = conn.execute(
+                "SELECT id FROM memories WHERE doc = ? AND line LIKE '%8080%'", (str(rules),)
+            ).fetchone()
+        finally:
+            conn.close()
+        self.assertIsNotNone(row, "the promoted line must have been indexed")
+
+        # Relabel exactly the way the (not yet wired) conflict detector would.
+        conn = index_mod.get_conn(self.vault)
+        try:
+            conn.execute("UPDATE memories SET type = 'conflict' WHERE id = ?", (row["id"],))
+            conn.commit()
+        finally:
+            conn.close()
+
+        data = preview.build(self.vault, "conflicts", 10)
+
+        self.assertEqual(data["status"], "ok")
+        self.assertNotIn("reason", data)
+        self.assertEqual(data["count"], 1)
+        self.assertEqual(data["items"][0]["type"], "conflict")
+
+    def test_other_views_are_always_ok(self):
+        for view in ("pending", "forgetting", "recent"):
+            data = preview.build(self.vault, view, 10)
+            self.assertEqual(data["status"], "ok", view)
 
     def test_conflicting_rows_are_surfaced(self):
         rules = canonical_dir(self.vault) / "工程执行规则.md"

@@ -5,7 +5,8 @@ Four views, all strictly read-only (no writes, no index mutation beyond the
 self-healing update_index call every command performs):
 
   pending     inbox files awaiting promotion (Agent提交区)
-  conflicts   memories flagged as conflicting
+  conflicts   memories flagged as conflicting (unsupported until the detector
+              writes type='conflict' — see CONFLICTS_UNSUPPORTED_REASON)
   forgetting  low-salience active memories, decay-ordered
   recent      canonical notes by modification time
 
@@ -23,9 +24,24 @@ from .common import canonical_dir, redact
 
 VIEWS = ("pending", "conflicts", "forgetting", "recent")
 
+# Why the conflicts view cannot answer yet: no code path writes this type.
+# classify_type() covers MEMORY_TYPES only, and the column default is 'fact'.
+CONFLICTS_UNSUPPORTED_REASON = (
+    "no memory is ever typed 'conflict': classify_type() only emits index.py "
+    "MEMORY_TYPES and the column default is 'fact'. An empty list here means "
+    "'no rows carry that type', NOT 'there are no conflicts'. Only a "
+    "hand-written row with type='conflict' can surface. Wire the conflict "
+    "detector (core/unified_memory/conflict.py) to make this view meaningful."
+)
+
 
 def build(vault: Path, view: str, limit: int = 20) -> dict:
-    """Return one view as {"view", "count", "items"}. Read-only."""
+    """Return one view as {"view", "status", "count", "items"}. Read-only.
+
+    ``status`` is ``"ok"`` when the view can actually answer the question, or
+    ``"unsupported"`` when it structurally cannot — the latter carries a
+    ``reason`` so an empty list is never mistaken for a successful negative.
+    """
     if vault is None:
         raise SystemExit("preview needs a vault")
     if view not in VIEWS:
@@ -38,7 +54,13 @@ def build(vault: Path, view: str, limit: int = 20) -> dict:
         "recent": _recent,
     }
     items = builders[view](vault, limit)
-    return {"view": view, "count": len(items), "items": items}
+    data = {"view": view, "status": "ok", "count": len(items), "items": items}
+    if view == "conflicts" and not items:
+        # The type is unreachable from every writer, so an empty result is the
+        # absence of an answer, never a negative answer.
+        data["status"] = "unsupported"
+        data["reason"] = CONFLICTS_UNSUPPORTED_REASON
+    return data
 
 
 def envelope(view: str, data: dict) -> str:

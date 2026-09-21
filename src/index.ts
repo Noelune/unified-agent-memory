@@ -16,7 +16,9 @@
  *   memory_show    — print one canonical document
  *   memory_submit  — write facts into the submission inbox (only write path)
  *   memory_status  — configuration and index health
- *   memory_preview — read-only governance views (pending/conflicts/…)
+ *   memory_preview — read-only governance views (pending/conflicts/…; the
+ *                    conflicts view reports itself unsupported until the
+ *                    conflict detector writes type='conflict')
  *
  * An optional HTTP status endpoint is registered for the browser client half
  * via the webServer service (injected dynamically — the route only exists

@@ -369,7 +369,11 @@ def cmd_preview(args: argparse.Namespace) -> None:
         "\n"
     )
     if not data["items"]:
-        payload += f"no items in view {args.view!r}\n"
+        # An unsupported view must not read like a successful negative answer.
+        if data.get("status") == "unsupported":
+            payload += f"view {args.view!r} is unsupported: {data['reason']}\n"
+        else:
+            payload += f"no items in view {args.view!r}\n"
     for item in data["items"]:
         label = item.get("name") or item.get("doc") or item.get("id", "")
         payload += f"doc: {label}\n"
