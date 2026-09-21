@@ -131,6 +131,28 @@ export function buildSearchArgv(query: string, opts: SearchOptions = {}): string
   return argv
 }
 
+// ── Preview argv builder ─────────────────────────────────────────────
+
+/** Valid memory_preview views (mirrors core preview.py VIEWS). */
+const PREVIEW_VIEWS = new Set(['pending', 'conflicts', 'forgetting', 'recent'])
+
+/**
+ * Build the argv for `memory preview` from a view name.
+ *
+ * Pure and side-effect free, mirroring buildSearchArgv, so the CLI contract is
+ * unit-testable without spawning the Python core.
+ */
+export function buildPreviewArgv(view: string, opts: { limit?: number; json?: boolean } = {}): string[] {
+  if (!PREVIEW_VIEWS.has(view)) {
+    throw new Error(
+      `unknown view "${view}" — choose from ${[...PREVIEW_VIEWS].join(', ')}`,
+    )
+  }
+  const argv = ['preview', view, '--limit', String(opts.limit ?? 20)]
+  if (opts.json) argv.push('--json')
+  return argv
+}
+
 // ── Core execution ───────────────────────────────────────────────────
 
 /**

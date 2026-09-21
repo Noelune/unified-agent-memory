@@ -106,12 +106,13 @@ describe('host plugin contract', () => {
     expect(host.name).toBe('dsh-unified-agent-memory')
   })
 
-  it('registers the four tools and the status route without tripping the guard', () => {
+  it('registers the five tools and the status route without tripping the guard', () => {
     const { ctx, tools, routes } = makeCtx()
 
     expect(() => host.apply(ctx as never, { vaultPath: 'C:/tmp/vault' })).not.toThrow()
 
     expect(tools.sort()).toEqual([
+      'memory_preview',
       'memory_search',
       'memory_show',
       'memory_status',

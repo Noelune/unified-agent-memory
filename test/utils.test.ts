@@ -16,6 +16,7 @@ import {
   renderText,
   notConfigured,
   buildSearchArgv,
+  buildPreviewArgv,
   DEPLOY_TASKBOOK,
 } from '../src/utils.ts'
 
@@ -205,6 +206,30 @@ describe('buildSearchArgv', () => {
     expect(buildSearchArgv('staging', { budget: 0 })).toEqual([
       'search', 'staging', '--limit', '8',
     ])
+  })
+})
+
+// ── buildPreviewArgv ────────────────────────────────────────────────
+
+describe('buildPreviewArgv', () => {
+  it('builds a basic preview argv with the default limit', () => {
+    expect(buildPreviewArgv('pending')).toEqual(['preview', 'pending', '--limit', '20'])
+  })
+
+  it('honors an explicit limit', () => {
+    expect(buildPreviewArgv('conflicts', { limit: 5 })).toEqual([
+      'preview', 'conflicts', '--limit', '5',
+    ])
+  })
+
+  it('appends --json when requested', () => {
+    expect(buildPreviewArgv('recent', { json: true })).toEqual([
+      'preview', 'recent', '--limit', '20', '--json',
+    ])
+  })
+
+  it('rejects an unknown view', () => {
+    expect(() => buildPreviewArgv('nope')).toThrow(/unknown view/)
   })
 })
 
