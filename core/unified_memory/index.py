@@ -147,6 +147,64 @@ def _fts_supported(conn: sqlite3.Connection) -> bool:
         return False
 
 
+def _fts_mem_tri_delete(conn: sqlite3.Connection, memory_id: str) -> None:
+    """Drop one memory's trigram row. No-op when the table is absent (older
+    SQLite without the trigram tokenizer)."""
+    try:
+        conn.execute("DELETE FROM fts_mem_tri WHERE memory_id = ?", (memory_id,))
+    except sqlite3.Error:
+        pass
+
+
+def _fts_mem_tri_upsert(conn: sqlite3.Connection, memory_id: str, line: str) -> None:
+    """Mirror one memory line into the trigram table. No-op when absent."""
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO fts_mem_tri (memory_id, line) VALUES (?, ?)",
+            (memory_id, line),
+        )
+    except sqlite3.Error:
+        pass
+
+
+def _backfill_fts_mem_tri(conn: sqlite3.Connection) -> int:
+    """One-time fill of fts_mem_tri from the existing memories table.
+
+    update_memories is incremental by note digest, so on a database that was
+    already indexed before this table existed every note is skipped and the
+    trigram table would stay empty forever. Backfill once, recorded under its
+    own index_meta key so SCHEMA_VERSION is untouched (bumping it would trip
+    _migrate_schema's destructive row reset).
+
+    Returns the number of rows written (0 when the tokenizer/table is absent).
+    """
+    try:
+        done = conn.execute(
+            "SELECT value FROM index_meta WHERE key = 'trigram_backfill'"
+        ).fetchone()
+        # Trust the flag only while the table still reflects it: a dropped or
+        # emptied table with live memories must be refilled (self-healing).
+        if done is not None:
+            if conn.execute("SELECT COUNT(*) FROM fts_mem_tri").fetchone()[0]:
+                return 0
+            if not conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]:
+                return 0
+        rows = conn.execute("SELECT id, line FROM memories").fetchall()
+        # FTS5 INSERT OR REPLACE appends rather than replacing, so clear first:
+        # memories is the source of truth and we rewrite every row from it.
+        conn.execute("DELETE FROM fts_mem_tri")
+        conn.executemany(
+            "INSERT INTO fts_mem_tri (memory_id, line) VALUES (?, ?)",
+            [(r["id"], r["line"]) for r in rows],
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO index_meta (key, value) VALUES ('trigram_backfill', '1')"
+        )
+        return len(rows)
+    except sqlite3.Error:
+        return 0
+
+
 def _doc_lines(text: str) -> list[tuple[str, str, str]]:
     """Parse a canonical note into (status, bare_line, raw_line) tuples.
 
@@ -201,6 +259,7 @@ def update_memories(conn: sqlite3.Connection, vault: Path) -> int:
         old_ids = [r["id"] for r in conn.execute("SELECT id FROM memories WHERE doc = ?", (rel,)).fetchall()]
         for mid in old_ids:
             conn.execute("DELETE FROM fts_mem WHERE memory_id = ?", (mid,))
+            _fts_mem_tri_delete(conn, mid)
         conn.execute("DELETE FROM embeddings WHERE memory_id IN (SELECT id FROM memories WHERE doc = ?)", (rel,))
         conn.execute("DELETE FROM memories WHERE doc = ?", (rel,))
         now = time.strftime("%Y-%m-%dT%H:%M:%S")
@@ -220,6 +279,7 @@ def update_memories(conn: sqlite3.Connection, vault: Path) -> int:
                 "INSERT OR REPLACE INTO fts_mem (memory_id, line) VALUES (?, ?)",
                 (mid, bare),
             )
+            _fts_mem_tri_upsert(conn, mid, bare)
         changed += 1
     # Remove stale docs (deleted from the vault).
     stale = [
@@ -231,6 +291,7 @@ def update_memories(conn: sqlite3.Connection, vault: Path) -> int:
         old_mids = [r["id"] for r in conn.execute("SELECT id FROM memories WHERE doc = ?", (old,)).fetchall()]
         for mid in old_mids:
             conn.execute("DELETE FROM fts_mem WHERE memory_id = ?", (mid,))
+            _fts_mem_tri_delete(conn, mid)
         conn.execute("DELETE FROM docs WHERE path = ?", (old,))
         conn.execute("DELETE FROM fts WHERE path = ?", (old,))
         conn.execute("DELETE FROM embeddings WHERE memory_id IN (SELECT id FROM memories WHERE doc = ?)", (old,))
@@ -241,17 +302,21 @@ def update_memories(conn: sqlite3.Connection, vault: Path) -> int:
 def update_index(vault: Path, verbose: bool = False) -> dict:
     """Incrementally rebuild the memory database from the vault.
 
-    Returns {"changed_docs": int, "fts": bool}. Embeddings are enriched
+    Returns {"changed_docs": int, "fts": bool, "trigram_backfilled": int}.
+    Embeddings are enriched
     separately by `embed_missing` (Phase 2).
     """
     conn = get_conn(vault)
     try:
         fts_ok = _fts_supported(conn)
         changed = update_memories(conn, vault)
+        # Existing databases skip every unchanged note above, so fill the
+        # trigram table once from memories (no-op afterwards).
+        backed = _backfill_fts_mem_tri(conn)
         conn.commit()
         if verbose:
             print(f"index: {index_db_for(vault)} (docs changed {changed}, fts5={'yes' if fts_ok else 'no'})")
-        return {"changed_docs": changed, "fts": fts_ok}
+        return {"changed_docs": changed, "fts": fts_ok, "trigram_backfilled": backed}
     finally:
         conn.close()
 
@@ -336,6 +401,27 @@ def bm25_memory_search(vault: Path, query: str, limit: int = 20) -> list[dict]:
                 if len(results) >= limit:
                     break
         return results
+    finally:
+        conn.close()
+
+
+def trigram_memory_search(vault: Path, query: str, limit: int = 20) -> list[dict]:
+    """CJK-friendly substring recall via the trigram FTS table.
+
+    Returns an empty list when the tokenizer or table is unavailable — this
+    stream is additive, so degrading to nothing is always correct.
+    """
+    conn = get_conn(vault)
+    try:
+        rows = conn.execute(
+            "SELECT m.id, m.doc, m.line, m.type, m.importance, m.source_agent, "
+            "rank AS rnk FROM fts_mem_tri f JOIN memories m ON m.id = f.memory_id "
+            "WHERE fts_mem_tri MATCH ? AND m.status = 'active' ORDER BY rank LIMIT ?",
+            (query, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    except sqlite3.Error:
+        return []
     finally:
         conn.close()
 

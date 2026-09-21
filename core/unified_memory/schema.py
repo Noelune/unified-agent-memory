@@ -26,6 +26,21 @@ def index_db_for(vault: Path) -> Path:
     return memory.INDEX_DB.with_name(f"index-{key}.db")
 
 
+def probe_trigram(conn: sqlite3.Connection) -> bool:
+    """Return True when this SQLite build has the trigram FTS5 tokenizer.
+
+    Probed on a throwaway in-memory table so a failure never touches the real
+    index. Older builds raise ``no such tokenizer: trigram``; we turn that into
+    a plain False so callers can degrade instead of crashing.
+    """
+    try:
+        conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS _trigram_probe USING fts5(x, tokenize='trigram')")
+        conn.execute("DROP TABLE IF EXISTS _trigram_probe")
+        return True
+    except sqlite3.Error:
+        return False
+
+
 def _ensure_schema(conn: sqlite3.Connection) -> None:
     """Create every table (idempotent). docs/fts reuse the legacy layout so the
     existing CLI/tests and the remote index server keep working."""
@@ -47,6 +62,15 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         )
     except sqlite3.Error:
         pass
+    # Trigram FTS (CJK substring recall). Best-effort: when the tokenizer is
+    # unavailable the table is simply never created and trigram_memory_search
+    # returns an empty stream. NOTE: existing fts/fts_mem tables carry no
+    # tokenizer clause (FTS5 default); this is a NEW table so we can pin the
+    # tokenizer at CREATE time without rebuilding anything.
+    if probe_trigram(conn):
+        conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS fts_mem_tri USING fts5(memory_id UNINDEXED, line, tokenize='trigram')"
+        )
     conn.execute(
         """CREATE TABLE IF NOT EXISTS memories (
             id TEXT PRIMARY KEY,
