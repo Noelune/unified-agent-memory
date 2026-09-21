@@ -19,7 +19,7 @@ import { runCore, renderText, notConfigured, buildSearchArgv, buildPreviewArgv, 
 
 // ── Common output schema ────────────────────────────────────────────
 
-/** Schema reused by all four tools. */
+/** Schema reused by all five tools. */
 const TOOL_OUTPUT_SCHEMA = {
   type: 'object' as const,
   additionalProperties: true as const,

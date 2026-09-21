@@ -5,7 +5,7 @@
  * inside a nested `ctx.inject(['webServer'], ...)` callback. Cordis guards
  * service access against the plugin's own declared `inject`, so that read threw
  * `cannot get property "webServer" without inject`, the loader failed the entry,
- * and neither the four memory tools nor the status route ever registered —
+ * and neither the memory tools nor the status route ever registered —
  * while the harness still looked healthy.
  *
  * A plain `new Context()` does not reproduce it, so the fake context below
@@ -33,7 +33,7 @@ interface FakeRoute {
   handler: (
     req: { socket?: { remoteAddress?: string }; method?: string },
     res: { writeHead: (code: number, headers: Record<string, string>) => void; end: (body: string) => void },
-  ) => void
+  ) => void | Promise<void>
 }
 
 /** Build a cordis-like context that refuses services the plugin did not declare. */
@@ -123,18 +123,24 @@ describe('host plugin contract', () => {
     expect(routes[0].kind).toBe('exact')
   })
 
-  it('answers a loopback GET with the status payload', () => {
+  it('answers a loopback GET with the status payload', async () => {
     const { ctx, routes } = makeCtx()
     host.apply(ctx as never, { vaultPath: 'C:/tmp/vault', pythonPath: 'python' })
 
     const { res, out } = capture()
-    routes[0].handler({ socket: { remoteAddress: '127.0.0.1' }, method: 'GET' }, res)
+    // The handler now awaits a read-only core call, so completion is observed
+    // by awaiting it rather than by reading `out` synchronously.
+    await routes[0].handler({ socket: { remoteAddress: '127.0.0.1' }, method: 'GET' }, res)
 
     expect(out.code).toBe(200)
     const body = JSON.parse(out.body)
     expect(body.ok).toBe(true)
     expect(body.configured).toBe(true)
     expect(body.vaultPath).toBe('C:/tmp/vault')
+    // The route always advertises the new read-only keys; with no working core
+    // in this test they degrade to null rather than erroring.
+    expect(body).toHaveProperty('index')
+    expect(body).toHaveProperty('stats')
   })
 
   it('refuses non-loopback callers, since the payload carries local paths', () => {

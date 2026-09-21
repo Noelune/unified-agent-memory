@@ -24,6 +24,9 @@ const POLL_INTERVAL_MS = 10000
  * `latestVersion` / `updateAvailable` are null while the npm check is still in
  * flight or when it could not reach the registry, so both are modelled as
  * nullable rather than defaulted to false — "unknown" is not "no update".
+ *
+ * `index` / `stats` are null when the host could not read the core. They stay
+ * nullable all the way to the view: absent counts render as "—", never as 0.
  */
 interface StatusPayload {
   ok?: boolean
@@ -35,6 +38,8 @@ interface StatusPayload {
   version?: string
   latestVersion?: string | null
   updateAvailable?: boolean | null
+  index?: { ok: boolean } | null
+  stats?: { memories: number; vectors: number; pending: number } | null
 }
 
 // ── Icon glyph with optional update dot ─────────────────────────────
@@ -133,13 +138,24 @@ function MemorySheet({ data, fetchError }: { data: StatusPayload | null; fetchEr
   const updateAvail = data?.updateAvailable === true
   const latestVersion = show(data?.latestVersion)
 
-  // Index health: no payload yet → unknown; vault unset → warn; else ok.
+  // Live counts; null while polling, or when the host could not read the core.
+  const stats = data?.stats ?? null
+
+  // Index health: no payload yet → unknown; vault unset → warn; FTS5 reported
+  // down → warn; else ok. `index` itself may be null (core unreadable), which
+  // is not evidence of a broken index, so it stays "ok" on a configured vault.
   const health: 'ok' | 'warn' | 'err' =
-    fetchError ? 'err' : data === null ? 'warn' : configured ? 'ok' : 'warn'
+    fetchError ? 'err'
+      : data === null ? 'warn'
+        : !configured ? 'warn'
+          : data.index?.ok === false ? 'warn'
+            : 'ok'
   const healthLabel =
     health === 'ok' ? 'vault connected'
       : health === 'err' ? 'status route unreachable'
-        : data === null ? 'polling…' : 'vaultPath not set'
+        : data === null ? 'polling…'
+          : !configured ? 'vaultPath not set'
+            : 'index unavailable'
 
   return h('div', { className: 'dsh-memory-sheet' },
 
@@ -161,12 +177,14 @@ function MemorySheet({ data, fetchError }: { data: StatusPayload | null; fetchEr
     // Group 2 — 统计
     h(Card, { title: '统计' },
       h('div', { className: 'dsh-memory-stats' },
-        h(Stat, { n: data ? (configured ? '1' : '0') : '—', l: 'INDEXED' }),
-        h(Stat, { n: updateAvail ? '1' : '0', l: 'UPDATES' }),
-        h(Stat, { n: data ? '10' : '—', l: 'POLL /S' }),
+        h(Stat, { n: stats ? String(stats.memories) : '—', l: 'MEMORIES' }),
+        h(Stat, { n: stats ? String(stats.vectors) : '—', l: 'VECTORS' }),
+        h(Stat, { n: stats ? String(stats.pending) : '—', l: 'PENDING' }),
       ),
       h('div', { className: 'dsh-memory-note' },
-        'Counts are reported by the host status route.',
+        stats === null
+          ? 'Counts unavailable — the memory core did not answer.'
+          : 'Counts read from the memory core by the host status route.',
       ),
     ),
 
