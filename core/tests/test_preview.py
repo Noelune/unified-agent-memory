@@ -17,7 +17,7 @@ import tempfile
 
 from test_common import destroy_scratch, make_scratch_vault
 from unified_memory import memory, preview
-from unified_memory.common import canonical_dir, read_maybe
+from unified_memory.common import AGENT_CONTEXT, SUBMISSION_DIR, canonical_dir, read_maybe
 from unified_memory.preview import INBOX_REL
 
 
@@ -272,18 +272,82 @@ class ReadInboxItemTest(unittest.TestCase):
         self.assertIn("事实一", got["body"])
 
     def test_rejects_traversal(self):
+        # Each rejected name must report WHY it was rejected, so this test can
+        # tell "the whitelist refused the name" apart from "the file is
+        # missing". Without the reason the two collapse into body=None and
+        # deleting the whitelist would still leave the suite green.
         for bad in ("../secret.md", "..\\secret.md", "sub/dir.md", "", ".", "a\x00b"):
             with self.subTest(bad=bad):
                 got = preview.read_inbox_item(self.tmp, bad)
                 self.assertIsNone(got["body"])
+                self.assertEqual(got["reason"], "invalid-name")
 
     def test_missing_file_yields_none_body(self):
         got = preview.read_inbox_item(self.tmp, "nope.md")
         self.assertIsNone(got["body"])
+        self.assertEqual(got["reason"], "not-found")
 
     def test_cannot_escape_inbox_via_absolute_like_name(self):
         got = preview.read_inbox_item(self.tmp, "C:/Windows/win.ini")
         self.assertIsNone(got["body"])
+        self.assertEqual(got["reason"], "invalid-name")
+
+    def test_readable_item_carries_no_reason(self):
+        path = os.path.join(self.inbox, "ok.md")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("- ok\n")
+        got = preview.read_inbox_item(self.tmp, "ok.md")
+        self.assertNotIn("reason", got)
+
+    def test_inbox_rel_is_derived_from_common_not_redeclared(self):
+        # common.py already owns AGENT_CONTEXT / SUBMISSION_DIR; INBOX_REL must
+        # be their composition, never a hand-typed duplicate literal.
+        expected = os.path.join(AGENT_CONTEXT, SUBMISSION_DIR)
+        self.assertEqual(INBOX_REL, expected)
+
+    def test_inbox_item_body_is_marked_untrusted(self):
+        path = os.path.join(self.inbox, "u.md")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("- body\n")
+        got = preview.read_inbox_item(self.tmp, "u.md")
+        self.assertIs(got["untrusted"], True)
+
+
+class NoteJsonContractTest(unittest.TestCase):
+    """docs/JSON-CONTRACT.md §2: vault-derived records must carry `untrusted`.
+
+    The note body is the highest-risk derived value in the CLI — a whole
+    free-text file the user controls — so it needs the marker at least as much
+    as preview's filenames do.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        inbox = os.path.join(self.tmp, INBOX_REL)
+        os.makedirs(inbox, exist_ok=True)
+        with open(os.path.join(inbox, "n.md"), "w", encoding="utf-8") as fh:
+            fh.write("- 事实\n")
+
+    def test_cmd_note_json_marks_the_body_untrusted(self):
+        payload = json.loads(memory.cmd_note(self.tmp, "n.md", as_json=True))
+
+        self.assertIs(payload["ok"], True)
+        self.assertEqual(payload["command"], "note")
+        self.assertIs(payload["data"]["untrusted"], True)
+        self.assertIn("事实", payload["data"]["body"])
+
+    def test_cmd_note_json_marks_a_rejected_name_untrusted_too(self):
+        # A None body still rides the same record shape; the consumer must be
+        # told the record is derived data on every path, not just on success.
+        payload = json.loads(memory.cmd_note(self.tmp, "../x.md", as_json=True))
+
+        self.assertIsNone(payload["data"]["body"])
+        self.assertIs(payload["data"]["untrusted"], True)
+
+    def test_cmd_note_text_still_prints_the_bare_body(self):
+        # The human path must not regress into printing JSON.
+        self.assertEqual(memory.cmd_note(self.tmp, "n.md"), "- 事实\n")
 
 
 if __name__ == "__main__":

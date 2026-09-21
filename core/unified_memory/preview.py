@@ -21,13 +21,16 @@ import os
 from pathlib import Path
 
 from . import index as index_mod
-from .common import canonical_dir, redact
+from .common import AGENT_CONTEXT, SUBMISSION_DIR, canonical_dir, redact
 
 VIEWS = ("pending", "conflicts", "forgetting", "recent")
 
-# Inbox path relative to the vault root. Shared by build()'s pending view and
-# read_inbox_item() so the two can never drift apart.
-INBOX_REL = os.path.join("50-Agent-Context", "Agent提交区")
+# Inbox path relative to the vault root. Derived from common.py's own folder
+# names (never a second hand-typed literal) so the inbox can only ever be
+# named once. common.submission_dir(vault) returns the same directory as an
+# absolute helper; this constant is kept for callers that hold a vault string
+# rather than a Path, and for the CLI's read_inbox_item() join.
+INBOX_REL = os.path.join(AGENT_CONTEXT, SUBMISSION_DIR)
 
 # Why the conflicts view cannot answer yet: no code path writes this type.
 # classify_type() covers MEMORY_TYPES only, and the column default is 'fact'.
@@ -158,18 +161,36 @@ def read_inbox_item(vault: str, name: str) -> dict:
     """Read one submission's body. Returns body=None when unreadable.
 
     Body=None (not "") is deliberate: "no such item" and "empty item" are
-    different facts, and the UI shows different copy for each.
+    different facts, and the UI shows different copy for each. Failure records
+    also carry a ``reason`` ("invalid-name" | "not-found") so a caller can tell
+    a refused name from a missing file — the two are different problems and
+    only one of them is a user error.
+
+    The record carries ``untrusted: true`` because the body is a whole
+    free-text file the user controls, reached from the browser. Per
+    docs/JSON-CONTRACT.md §2 that marker is required on every vault-derived
+    record and is not removable.
     """
+    def _fail(reason: str) -> dict:
+        return {"name": name, "body": None, "reason": reason, "untrusted": True}
+
     if not _safe_inbox_name(name):
-        return {"name": name, "body": None}
+        return _fail("invalid-name")
     inbox = os.path.join(vault, INBOX_REL)
     target = os.path.join(inbox, name)
-    # Belt and braces: even with the name checked, confirm the resolved path
-    # is still inside the inbox (symlinks, platform quirks).
-    if os.path.realpath(os.path.dirname(target)) != os.path.realpath(inbox):
-        return {"name": name, "body": None}
+    # Belt and braces: even with the name checked, confirm the *resolved file*
+    # is still inside the resolved inbox. Checking realpath(target) rather than
+    # its dirname is what closes the hole: a symlink planted inside the inbox
+    # pointing outside it resolves to a path with the wrong prefix.
+    # ponytail: a symlinked inbox root itself is accepted (both sides resolve
+    # through it). Upgrade path if that ever matters: also require
+    # realpath(inbox) == abspath(inbox).
+    inbox_real = os.path.realpath(inbox)
+    target_real = os.path.realpath(target)
+    if os.path.dirname(target_real) != inbox_real:
+        return _fail("invalid-name")
     try:
-        with open(target, encoding="utf-8", errors="replace") as fh:
-            return {"name": name, "body": fh.read()}
+        with open(target_real, encoding="utf-8", errors="replace") as fh:
+            return {"name": name, "body": fh.read(), "untrusted": True}
     except OSError:
-        return {"name": name, "body": None}
+        return _fail("not-found")
