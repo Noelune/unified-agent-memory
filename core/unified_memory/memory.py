@@ -25,6 +25,7 @@ from pathlib import Path
 from . import digest as digest_mod
 from . import embed as embed_mod
 from . import graph as graph_mod
+from . import inbox as inbox_mod
 from . import index as index_mod
 from . import search as search_mod
 from .common import (
@@ -403,6 +404,26 @@ def cmd_note_cli(args: argparse.Namespace) -> None:
     print(cmd_note(vault=str(vault), name=args.name, as_json=args.json))
 
 
+def cmd_dismiss(vault: str, name: str, as_json: bool = False) -> str:
+    """Retire one inbox item. The only mutating command in the CLI."""
+    result = inbox_mod.process_inbox_item(vault, name)
+    if as_json:
+        return json.dumps(
+            {"ok": result["ok"], "command": "dismiss", "data": result},
+            ensure_ascii=False,
+        )
+    if result["ok"]:
+        return f"moved to {result['movedTo']}"
+    return f"error: {result['reason']}"
+
+
+def cmd_dismiss_cli(args: argparse.Namespace) -> None:
+    """CLI adapter for cmd_dismiss: resolves the vault and prints the result."""
+    vault = resolve_vault()
+    ensure_vault(vault)
+    print(cmd_dismiss(vault=str(vault), name=args.name, as_json=args.json))
+
+
 def cmd_graph(args: argparse.Namespace) -> None:
     vault = resolve_vault()
     ensure_vault(vault)
@@ -549,6 +570,11 @@ def main(argv: list[str] | None = None) -> None:
     p_note.add_argument("name")
     p_note.add_argument("--json", action="store_true", help="emit a machine-readable JSON envelope")
     p_note.set_defaults(fn=cmd_note_cli)
+
+    p_dismiss = sub.add_parser("dismiss", help="retire one inbox submission")
+    p_dismiss.add_argument("name")
+    p_dismiss.add_argument("--json", action="store_true", help="emit a machine-readable JSON envelope")
+    p_dismiss.set_defaults(fn=cmd_dismiss_cli)
 
     p_drift = sub.add_parser("drift", help="detect code-memory synchronization drift")
     p_drift.add_argument("--vault", "-v", help="path to the vault (default: UNIFIED_MEMORY_VAULT env)")
