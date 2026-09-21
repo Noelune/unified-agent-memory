@@ -186,12 +186,18 @@ def _backfill_fts_mem_tri(conn: sqlite3.Connection) -> int:
         # emptied table with live memories must be refilled (self-healing).
         if done is not None:
             if conn.execute("SELECT COUNT(*) FROM fts_mem_tri").fetchone()[0]:
+                # ponytail: non-empty is taken as fresh, so a partially-stale
+                # table (some notes never mirrored) never self-heals. Upgrade:
+                # compare COUNT(*) against active memories and refill on drift.
                 return 0
             if not conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]:
                 return 0
         rows = conn.execute("SELECT id, line FROM memories").fetchall()
         # FTS5 INSERT OR REPLACE appends rather than replacing, so clear first:
         # memories is the source of truth and we rewrite every row from it.
+        # ponytail: first run rewrites every row in one transaction — fine at
+        # current vault size, but it blocks readers on a large vault. Upgrade:
+        # chunk the rewrite behind a temp table + single atomic rename.
         conn.execute("DELETE FROM fts_mem_tri")
         conn.executemany(
             "INSERT INTO fts_mem_tri (memory_id, line) VALUES (?, ?)",
@@ -202,6 +208,9 @@ def _backfill_fts_mem_tri(conn: sqlite3.Connection) -> int:
         )
         return len(rows)
     except sqlite3.Error:
+        # ponytail: one catch covers both "no trigram tokenizer" (expected) and
+        # a real write failure (silently lost recall). Upgrade: probe the
+        # tokenizer once and re-raise anything else as a loud, non-fatal warn.
         return 0
 
 
