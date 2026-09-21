@@ -117,10 +117,12 @@ describe('POST /dismiss route', () => {
     expect(out.headers['cache-control']).toBe('no-store')
     expect(JSON.parse(out.body)).toEqual({ ok: true, name: 'a.md', reason: null })
     // The name reaches the core as argv, never through a shell, and sits behind
-    // the `--` option terminator so no name can ever be read as a flag.
+    // the `--` option terminator. The flag comes BEFORE the terminator — argparse
+    // treats everything after `--` as positional, so a trailing `--json` would be
+    // a stray positional and exit 2.
     expect(vi.mocked(runCore)).toHaveBeenCalledWith(
       expect.anything(),
-      ['dismiss', '--', 'a.md', '--json'],
+      ['dismiss', '--json', '--', 'a.md'],
     )
   })
 

@@ -51,14 +51,23 @@ export function parseDismissBody(raw: string): string | null {
 /**
  * argv for one dismissal.
  *
- * The `--` terminator is load-bearing: without it argparse reads any leading
- * `-` on the name as a flag and the following token slides into the `name`
- * position — `dismiss --json extra` really moves `extra`. With the argv pinned
- * at three tokens that is unreachable today, but it arms itself the moment
- * dismiss grows a flag (say `--force`), so the terminator is here now.
+ * Order matters, and getting it wrong is a silent outage rather than an error.
+ * argparse treats EVERY token after `--` as positional, so `['dismiss', '--',
+ * name, '--json']` hands it *two* positionals — `--json` stops being a flag and
+ * the parser exits 2 with an empty stdout. The host then sees a bare crash and
+ * blames the name, refusing every legal submission. Flags therefore go BEFORE
+ * the terminator: `dismiss --json -- <name>`.
+ *
+ * The terminator itself is still load-bearing: it stops a leading `-` on the
+ * name from being read as a flag and letting the next token slide into the
+ * `name` position. `isSafeName` already refuses a leading `-`, so this is
+ * belt-and-braces against a future flag (`--force`) arming the same hole.
+ *
+ * test/route-dismiss-integration.test.ts spawns the real core to keep this
+ * argv acceptable to the real parser; the mocked tests cannot see it.
  */
 export function buildDismissArgs(name: string): string[] {
-  return ['dismiss', '--', name, '--json']
+  return ['dismiss', '--json', '--', name]
 }
 
 /**
@@ -96,25 +105,29 @@ export function shapeDismissResult(raw: string): DismissPayload {
  *
  * A failed call is split two ways so the label tells the truth about what
  * broke. `runCore` sets `kind` only for a process-level failure (ENOENT →
- * `missing`, SIGTERM → `timeout`); anything else is a non-zero exit from the
- * command itself, and if that ran it would have printed a JSON envelope. So a
- * wait-status `crash` with *no* stdout is argparse rejecting the argv before
- * the command body ever ran — a request-shaped problem, reported as
- * `invalid-name`. A spawn failure, a timeout, or an exit that did print an
- * envelope is a genuine infrastructure fault and stays `unavailable`.
+ * `missing`, SIGTERM → `timeout`); a `crash` means the command exited non-zero,
+ * and if it had really run it would have printed a JSON envelope.
  *
- * This matters because the two send an operator to different places: a
- * flag-shaped name blamed on `unavailable` has them debugging a core that is
- * working fine. Note this branch is belt-and-braces only — `isSafeName` already
- * refuses a leading `-`, so no name reaching here should be able to trip
- * argparse.
+ * The `invalid-name` arm was written when `buildDismissArgs` emitted its `--json`
+ * *after* the terminator, which made argparse reject every legal name with exit 2
+ * and an empty stdout — a bare `crash` that this branch then blamed on the caller.
+ * That argv bug is fixed, and with the corrected argv the arm is now unreachable:
+ * a flag-shaped name is refused by `isSafeName` before any spawn, and a genuine
+ * name reaches the command body and answers inside an envelope (a missing entry
+ * comes back exit 0 as `reason: "not-found"` — verified against the real core in
+ * test/route-dismiss-integration.test.ts). It is kept as defence in depth, not as
+ * a description of a live failure mode: it now guards the one remaining way to
+ * reach it, a *future* edit that puts a token after `--` again (or drops the
+ * terminator) and re-arms argparse. In that case `invalid-name` is the accurate
+ * label — the argv was wrong — and this branch turns a silent write outage into
+ * a clear diagnostic instead of the misleading `unavailable`.
  */
 export async function handleDismiss(cfg: PluginConfig, name: string): Promise<DismissPayload> {
   try {
     const r = await runCore(cfg, buildDismissArgs(name))
     if (!r.ok) {
       // `missing`/`timeout` are process-level faults; a bare crash with no
-      // stdout is argparse refusing the argv before the command ran.
+      // stdout is argparse refusing the argv (see the doc comment above).
       const infra = r.kind === 'missing' || r.kind === 'timeout'
       const reason = !infra && r.output.trim() === '' ? 'invalid-name' : 'unavailable'
       return { ok: false, name, reason }

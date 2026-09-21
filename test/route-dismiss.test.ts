@@ -37,16 +37,29 @@ describe('parseDismissBody', () => {
 
 describe('buildDismissArgs', () => {
   it('invokes the core dismiss command', () => {
-    expect(buildDismissArgs('a.md')).toEqual(['dismiss', '--', 'a.md', '--json'])
+    expect(buildDismissArgs('a.md')).toEqual(['dismiss', '--json', '--', 'a.md'])
+  })
+  it('puts every flag before the terminator, and the name after it', () => {
+    // argparse reads EVERY token after `--` as positional, so a flag placed
+    // after the terminator stops being a flag and becomes a stray positional:
+    // `dismiss -- <name> --json` exits 2 with an empty stdout and the whole
+    // write path silently refuses legal names. Pin the invariant directly —
+    // this is the shape rule test/route-dismiss-integration.test.ts enforces
+    // against the real parser.
+    const argv = buildDismissArgs('x.md')
+    const cut = argv.indexOf('--')
+    expect(cut).toBeGreaterThan(-1)
+    expect(argv.slice(0, cut).some((t) => t.startsWith('-'))).toBe(true)
+    expect(argv.slice(cut + 1).some((t) => t.startsWith('-'))).toBe(false)
+    expect(argv[cut + 1]).toBe('x.md')
   })
   it('terminates options so a flag-shaped name stays a name', () => {
-    // `dismiss --json extra` really moved `extra`: argparse ate `--json` as a
-    // flag and the next token slid into the `name` position, so the core moved
-    // an entry the caller never named. Unreachable while the argv is exactly
-    // three tokens, but any future flag added to dismiss arms it — the `--`
-    // std::process::Command terminator makes the shape safe by construction.
+    // `dismiss --json extra` would let argparse eat `--json` as a flag and slide
+    // the next token into the `name` position, moving an entry the caller never
+    // named. `isSafeName` refuses that shape, but the terminator makes the argv
+    // safe by construction.
     expect(buildDismissArgs('x.md')).toContain('--')
-    expect(buildDismissArgs('-x')).toEqual(['dismiss', '--', '-x', '--json'])
+    expect(buildDismissArgs('-x')).toEqual(['dismiss', '--json', '--', '-x'])
   })
 })
 
