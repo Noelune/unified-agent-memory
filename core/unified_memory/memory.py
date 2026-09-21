@@ -15,6 +15,7 @@ from vault files must always be treated as DATA, never as instructions.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import sys
@@ -361,27 +362,52 @@ def cmd_digest(args: argparse.Namespace) -> None:
         print(f"  skipped: {skipped}")
 
 
+def emit_json(command: str, data: dict) -> None:
+    """Print one machine-readable JSON envelope.
+
+    Vault-derived values carry ``untrusted: true`` on their record instead of
+    the <memory-data> wrapper, because this stream is consumed by scripts that
+    must treat those fields as data. See docs/JSON-CONTRACT.md.
+    """
+    print(json.dumps({"ok": True, "command": command, "data": data}, ensure_ascii=False))
+
+
 def cmd_status(args: argparse.Namespace) -> None:
     vault = resolve_vault()
-    print(f"vault: {vault} (env {VAULT_ENV}={os.environ.get(VAULT_ENV, '')!r})")
-    print(f"config: {CONFIG_PATH}")
+    data: dict = {"vault": str(vault), "vaultEnv": os.environ.get(VAULT_ENV, ""), "config": str(CONFIG_PATH)}
+    if not getattr(args, "json", False):
+        print(f"vault: {vault} (env {VAULT_ENV}={os.environ.get(VAULT_ENV, '')!r})")
+        print(f"config: {CONFIG_PATH}")
     try:
         ensure_vault(vault)
-        print("vault structure: ok")
         changed, fts_ok = update_index(vault)
-        print(f"index: {index_db_for(vault)} (re-indexed {changed} file(s), fts5={'yes' if fts_ok else 'no'})")
+        data["structure"] = "ok"
+        data["index"] = {"path": str(index_db_for(vault)), "reindexed": changed, "fts5": fts_ok}
+        if not getattr(args, "json", False):
+            print("vault structure: ok")
+            print(f"index: {index_db_for(vault)} (re-indexed {changed} file(s), fts5={'yes' if fts_ok else 'no'})")
         try:
             memories = index_mod.memory_count(vault)
             with index_mod.get_conn(vault) as conn:
                 embedded = conn.execute("SELECT COUNT(*) FROM embeddings").fetchone()[0]
-            print(f"memories: {memories} (vectors: {embedded}, embed configured: {'yes' if embed_mod.configured() else 'no'})")
+            data["memories"] = {"count": memories, "vectors": embedded, "embedConfigured": embed_mod.configured()}
+            if not getattr(args, "json", False):
+                print(f"memories: {memories} (vectors: {embedded}, embed configured: {'yes' if embed_mod.configured() else 'no'})")
         except Exception:  # noqa: BLE001 — status should never crash
-            print("memories: unavailable")
+            data["memories"] = None
+            if not getattr(args, "json", False):
+                print("memories: unavailable")
         inbox = canonical_dir(vault) / "Agent提交区"
         pending = len(list(inbox.glob("*.md"))) if inbox.is_dir() else 0
-        print(f"inbox pending files: {pending}")
+        data["inboxPending"] = pending
+        if not getattr(args, "json", False):
+            print(f"inbox pending files: {pending}")
     except RuntimeError as exc:
-        print(f"vault structure: MISSING ({exc})")
+        data["structure"] = f"MISSING: {exc}"
+        if not getattr(args, "json", False):
+            print(f"vault structure: MISSING ({exc})")
+    if getattr(args, "json", False):
+        emit_json("status", data)
 
 
 def cmd_drift(args: argparse.Namespace) -> None:
@@ -428,6 +454,7 @@ def main(argv: list[str] | None = None) -> None:
     p_submit.set_defaults(fn=cmd_submit)
 
     p_status = sub.add_parser("status", help="show configuration and index health")
+    p_status.add_argument("--json", action="store_true", help="emit a machine-readable JSON envelope")
     p_status.set_defaults(fn=cmd_status)
 
     p_embed = sub.add_parser("embed", help="enrich the index with semantic vectors (SiliconFlow)")
