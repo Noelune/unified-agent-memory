@@ -197,9 +197,11 @@ describe('host plugin contract', () => {
       'memory_status',
       'memory_submit',
     ])
-    expect(routes).toHaveLength(1)
+    expect(routes).toHaveLength(2)
     expect(routes[0].path).toBe('/api/dsh-unified-agent-memory/status')
     expect(routes[0].kind).toBe('exact')
+    expect(routes[1].path).toBe('/api/dsh-unified-agent-memory/search')
+    expect(routes[1].kind).toBe('exact')
   })
 
   it('answers a loopback GET with the status payload', async () => {

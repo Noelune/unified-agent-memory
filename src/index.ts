@@ -45,8 +45,9 @@ import { resolveConfig, runCore } from './utils.ts'
 import { registerAll } from './tools.ts'
 import { checkForUpdate, getUpdateInfo } from './updater.ts'
 import { buildStatusPayload } from './status-payload.ts'
-import { guard, sendJson } from './routes.ts'
+import { guard, queryParam, sendJson } from './routes.ts'
 import type { RouteReq, RouteRes } from './routes.ts'
+import { SEARCH_PATH, handleSearch } from './route-search.ts'
 import type { PluginConfig } from './types.ts'
 import type { StatusStats } from './status-payload.ts'
 export const name = 'dsh-unified-agent-memory'
@@ -169,6 +170,26 @@ export function apply(ctx: Context, config: Record<string, unknown> = {}): void 
           // a defensive principle).
           sendJson(res, 500, { ok: false, error: 'internal error' })
         }
+      })()
+    },
+  })
+
+  // ---- HTTP search route consumed by the browser client half ----
+  // Read-only retrieval over the canonical notes; the panel renders the
+  // results. Registered after /status so the status endpoint stays untouched.
+  ws.webServer.register({
+    kind: 'exact',
+    path: SEARCH_PATH,
+    handler(req, res) {
+      if (!guard(req, res, ['GET', 'HEAD'])) return
+      return (async () => {
+        const query = queryParam(req.url, 'q')
+        if (!query) {
+          sendJson(res, 400, { ok: false, error: 'missing query' })
+          return
+        }
+        const hybrid = queryParam(req.url, 'hybrid') === '1'
+        sendJson(res, 200, await handleSearch(cfg, query, hybrid))
       })()
     },
   })
