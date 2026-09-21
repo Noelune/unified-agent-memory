@@ -41,7 +41,7 @@ FORMATS = ("full", "compact", "narrative")
 def rrf_fuse(
     streams: list[list[dict]],
     k: int = RRF_K,
-    weights: tuple[float, float, float] | None = None,
+    weights: tuple[float, ...] | None = None,
 ) -> list[tuple[str, float]]:
     """Weighted RRF over ranked lists of memory records.
 
