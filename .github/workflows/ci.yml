@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -20,6 +20,30 @@ jobs:
           python-version: "3.11"
       - name: Run core tests
         run: python -m unittest discover -s core/tests -v
+
+  js:
+    name: JS checks (typecheck / drift / sync / vitest / build / audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Drift check
+        run: npm run drift:check
+      - name: Sync check
+        run: npm run sync:check
+      - name: JS unit tests
+        run: npm run test:js
+      - name: Build
+        run: npm run build
+      - name: Package audit
+        run: npm run audit:package
 
   secrets:
     name: Secrets scan (gitleaks)

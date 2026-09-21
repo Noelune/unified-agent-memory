@@ -38,6 +38,7 @@
     "drift:check": "node scripts/drift-check.mjs",
     "drift:python": "node scripts/drift-python.mjs",
     "sync:check": "node scripts/sync-check.mjs",
+    "audit:package": "node scripts/audit-package.mjs",
     "setup-hooks": "node scripts/install-hooks.mjs",
     "test": "python -m unittest discover -s core/tests",
     "test:js": "vitest run",
