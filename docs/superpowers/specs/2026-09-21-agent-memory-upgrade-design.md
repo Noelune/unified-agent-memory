@@ -108,7 +108,7 @@
 **方案**：
 1. `drift-check.mjs` 增加：`dsh.plugin.json.version === package.json.version` 硬校验（失败即 exit 1）。
 2. `build.mjs` 增加一步：构建时从 package.json 回填 `dsh.plugin.json` 的 version/description（源单一，产物派生），并打印 diff。
-3. pre-commit hook（`scripts/install-hooks.mjs` 已建）追加调用 `pnpm run drift:check`。
+3. pre-commit hook（`scripts/install-hooks.mjs` 已建）追加调用 `npm run drift:check`（本仓库锁文件为 `package-lock.json`，统一用 npm）。
 
 **测试**：`test/` 加一个 `version-sync.test.mjs`：改 package.json 版本后运行脚本断言两文件一致，改回后恢复。
 
@@ -141,7 +141,7 @@
 **方案**：
 ```yaml
 # 新增 job: unit-js（node 22）
-run: pnpm install --frozen-lockfile && pnpm run typecheck && pnpm run drift:check && pnpm run test:js && pnpm run build && pnpm run audit:package
+run: npm ci && npm run typecheck && npm run drift:check && npm run test:js && npm run build && npm run audit:package
 # Python job 增加 windows-latest 到 matrix（本项目主目标平台：Windows）
 os: [ubuntu-latest, windows-latest, macos-latest]
 ```
@@ -323,7 +323,7 @@ Windows runner 同时验证中文路径/文件锁（`common.py` 的 `file_lock` 
 
 ## 12. 验收清单
 
-- [ ] 0.5.1：版本同步脚本 + CI 全绿（含 Windows）+ hybrid 参数可用
+- [x] 0.5.1/0.5.2：版本同步脚本 + CI 全绿（含 Windows）+ hybrid 参数可用 —— 已完成并推送（CI run 35611060469 success）
 - [ ] 0.6.0：`--json` 全子命令 + `memory_preview` + 中文检索升级 + 设置页
 - [ ] 0.7.0（任一满足即可发布大版本）：Dashboard / MCP / 图谱可视化
-- [ ] 每阶段 `pnpm run check`（typecheck+drift+sync+test:js+test+build+drift:python）与 `python -m unittest discover -s core/tests -v` 全绿
+- [ ] 每阶段 `npm run check`（typecheck+drift+sync+test:js+test+build+drift:python）与 `python -m unittest discover -s core/tests -v` 全绿
