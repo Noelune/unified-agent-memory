@@ -57,3 +57,49 @@ export interface PreviewData {
 
 /** The four views the core exposes. */
 export type PreviewView = 'pending' | 'recent' | 'forgetting' | 'conflicts'
+
+/** One day (or bucket) of a `daily` / `access` series. */
+export interface DayCount { date: string; count: number }
+
+/** A `types` bucket: the memory kind and how many of it. */
+export interface TypeCount { type: string; count: number }
+
+/** An `importance` bucket on the 0–1 scale. */
+export interface ImportanceCount { value: number; count: number }
+
+/**
+ * One `top` entry: a corpus label, rendered as text.
+ *
+ * `untrusted` is always true — the labels are written by other agents, and the
+ * renderer keys off this flag to avoid treating a label as trusted markup. It is
+ * pinned to the literal `true` rather than `boolean` so a caller cannot pass a
+ * falsy value through without a type error.
+ */
+export interface TopEntry { id: string; label: string; count: number; untrusted: true }
+
+/**
+ * The `/stats` aggregate payload, normalized.
+ *
+ * Every series is ALWAYS an array and every total is always a number: the route
+ * documents this shape, but a missing or malformed field must not hand the
+ * geometry helpers an `undefined` to call `.length` on. `data:null` (below) is
+ * how "the core could not be read" travels — never an all-zero dataset.
+ */
+export interface StatsData {
+  daily: DayCount[]
+  access: DayCount[]
+  types: TypeCount[]
+  importance: ImportanceCount[]
+  top: TopEntry[]
+  span: { start: string | null; end: string | null }
+  totals: { memories: number; vectors: number; accesses: number; inbox: number }
+}
+
+/**
+ * The console's view of a stats read.
+ *
+ * `error` means the route reported a degraded core (`ok:false`) or the transport
+ * failed; `data` is null in that case. It does NOT mean "0 memories" — an empty
+ * vault yields `status:'ok'` with empty arrays, so the UI can say the right thing.
+ */
+export interface StatsPayload { status: 'ok' | 'loading' | 'error'; data: StatsData | null }

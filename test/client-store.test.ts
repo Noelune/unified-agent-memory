@@ -33,11 +33,14 @@ import {
   dismissItem,
   isCurrentSearch,
   loadPreview,
+  loadStats,
   newPreviewGate,
+  newStatsGate,
   nextSeq,
   previewEffectKey,
   runSearch,
   runSearchSequence,
+  statsEffectKey,
   useSearchRun,
 } from '../src/client/store.ts'
 
@@ -69,6 +72,32 @@ function stubFetch(...replies: (Reply | (() => Promise<Reply>))[]): void {
 }
 
 const hit = (doc: string) => ({ doc, title: doc, snippet: 's' })
+
+/**
+ * Run the REAL `loadStats` against a hand-built response.
+ *
+ * The mutation block needs to feed the production function a body the `stubFetch`
+ * helper cannot express (a `json()` that rejects), so it stubs the global here
+ * rather than widening `stubFetch` for every other caller.
+ */
+async function loadStatsWith(
+  res: { json: () => Promise<unknown> },
+): Promise<Awaited<ReturnType<typeof loadStats>>> {
+  vi.stubGlobal('fetch', () => Promise.resolve({ ok: true, status: 200, json: res.json }))
+  const got = await loadStats()
+  vi.unstubAllGlobals()
+  return got
+}
+
+/** A fully-populated payload for the mutation checks. */
+function statsDataForMutation() {
+  return {
+    daily: [{ date: '2026-01-01', count: 1 }],
+    access: [], types: [], importance: [], top: [],
+    span: { start: null, end: null },
+    totals: { memories: 1, vectors: 1, accesses: 0, inbox: 0 },
+  }
+}
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -407,5 +436,216 @@ describe('usePreview effect decision (pure, no renderer)', () => {
     expect(checks.length).toBe(3)
     // The cleanup must dispose the gate, or it stays alive past unmount.
     expect(body).toMatch(/return\s+gate\.dispose/)
+  })
+})
+
+// ── loadStats: the console's aggregate feed ────────────────────────
+//
+// The route answers HTTP 200 in BOTH cases — the verdict is `body.ok`, exactly
+// like `dismissItem`. The distinction the console cannot afford to lose is
+// "degraded" (core unavailable, `data:null`) versus "empty" (core answered, and
+// the vault genuinely has nothing): both used to collapse into a zeroed chart.
+
+describe('loadStats', () => {
+  const statsData = (over: Record<string, unknown> = {}) => ({
+    daily: [{ date: '2026-01-01', count: 1 }],
+    access: [],
+    types: [],
+    importance: [],
+    top: [],
+    span: { start: null, end: null },
+    totals: { memories: 388, vectors: 388, accesses: 370, inbox: 31 },
+    ...over,
+  })
+
+  it('returns the payload when the body says ok', async () => {
+    // The brief's case, kept as the minimum contract. Note this file's
+    // `stubFetch` takes the JSON under `body:` — the bare `{ ok: true, … }` form
+    // in the brief means "the BODY has ok:true", not the transport flag.
+    stubFetch({ body: { ok: true, command: 'stats', status: 'ok', data: statsData() } })
+    const got = await loadStats()
+    expect(got.status).toBe('ok')
+    expect(got.data?.daily).toHaveLength(1)
+  })
+
+  it('degrades when the route reports ok:false — even though HTTP is 200', async () => {
+    stubFetch({ status: 200, body: { ok: false, command: 'stats', status: 'error', data: null } })
+    const got = await loadStats()
+    expect(got.status).toBe('error')
+    expect(got.data).toBeNull()
+  })
+
+  it('treats ok:true with data:null as degraded, never as an empty dataset', async () => {
+    // The mutation this guards: `body.ok === true` being the only gate, so a
+    // null payload survives and downstream geometry reads `daily.length` of
+    // undefined. A degraded core is not "0 memories".
+    stubFetch({ status: 200, body: { ok: true, command: 'stats', status: 'ok', data: null } })
+    const got = await loadStats()
+    expect(got.status).toBe('error')
+    expect(got.data).toBeNull()
+  })
+
+  it('degrades on a non-JSON body instead of throwing', async () => {
+    // A gateway/HTML error page is a 200 with a body that is not JSON. `res.json()`
+    // rejects and the caller must see a payload, not an unhandled rejection.
+    stubFetch({
+      status: 200,
+      json: async () => { throw new SyntaxError('Unexpected token <') },
+    } as unknown as Reply)
+    await expect(loadStats()).resolves.toEqual({ status: 'error', data: null })
+  })
+
+  it('degrades when the transport fails, without an uncaught rejection', async () => {
+    stubFetch({ throws: true })
+    await expect(loadStats()).resolves.toEqual({ status: 'error', data: null })
+  })
+
+  it('degrades on a non-ok HTTP status even if the body claims ok', async () => {
+    // Belt and braces: with a 500 the body is not ours to trust.
+    stubFetch({ status: 500, body: { ok: true, command: 'stats', data: statsData() } })
+    await expect(loadStats()).resolves.toEqual({ status: 'error', data: null })
+  })
+
+  it('requests the stats route without caching and asks for JSON', async () => {
+    stubFetch({ body: { ok: true, command: 'stats', status: 'ok', data: statsData() } })
+    await loadStats()
+    expect(calls[0].url).toBe('/api/dsh-unified-agent-memory/stats')
+    expect(calls[0].init?.cache).toBe('no-store')
+    expect(JSON.stringify(calls[0].init?.headers)).toContain('application/json')
+  })
+
+  it('normalizes a missing or malformed series instead of leaking undefined', async () => {
+    // The route's contract is the shape the brief documents, but "field missing"
+    // is an explicit requirement: the console must get renderable arrays, not
+    // `undefined`. Geometry that reads `.length` on undefined crashes the pane.
+    stubFetch({
+      body: {
+        ok: true,
+        command: 'stats',
+        status: 'ok',
+        data: { daily: 'nope', top: [{ id: 'a' }], totals: { memories: 5 } },
+      },
+    })
+    const got = await loadStats()
+    expect(got.status).toBe('ok')
+    for (const key of ['daily', 'access', 'types', 'importance', 'top'] as const) {
+      expect(Array.isArray(got.data?.[key]), `${key} must always be an array`).toBe(true)
+    }
+    expect(got.data?.span).toEqual({ start: null, end: null })
+    expect(got.data?.totals).toEqual({ memories: 5, vectors: 0, accesses: 0, inbox: 0 })
+    expect(got.data?.top[0]).toEqual({ id: 'a', label: '', count: 0, untrusted: true })
+  })
+
+  it('drops a series entry that is not an object', async () => {
+    stubFetch({
+      body: {
+        ok: true,
+        command: 'stats',
+        data: {
+          daily: [{ date: '2026-01-01', count: 2 }, null, 'x'],
+          types: [{ type: 'fact', count: 3 }, 7],
+        },
+      },
+    })
+    const got = await loadStats()
+    expect(got.data?.daily).toEqual([{ date: '2026-01-01', count: 2 }])
+    expect(got.data?.types).toEqual([{ type: 'fact', count: 3 }])
+  })
+
+  it('always reports untrusted:true on a top entry', async () => {
+    // Corpus labels are written by other agents; the renderer keys off this flag
+    // to treat them as text. A route that forgets it must not make the console
+    // treat a label as trusted markup.
+    stubFetch({
+      body: {
+        ok: true,
+        command: 'stats',
+        data: { top: [{ id: 'a', label: '<script>', count: 1, untrusted: false }] },
+      },
+    })
+    const got = await loadStats()
+    expect(got.data?.top[0].untrusted).toBe(true)
+  })
+})
+
+describe('useStats effect decision (pure, no renderer)', () => {
+  // Same ceiling as `usePreview`: there is no renderer here, so the effect's
+  // decisions are pure functions the hook MUST call, asserted directly.
+
+  it('treats a load as live before the gate closes and dead after', () => {
+    const gate = newStatsGate()
+    expect(canApplyPreview(gate)).toBe(true)
+    gate.dispose()
+    expect(canApplyPreview(gate)).toBe(false)
+  })
+
+  it('refetches when the nonce bumps, and not otherwise', () => {
+    expect(statsEffectKey(0)).not.toBe(statsEffectKey(1))
+    expect(statsEffectKey(3)).toBe(statsEffectKey(3))
+  })
+
+  it('makes useStats CALL the guard: gate, one check, one cleanup', () => {
+    // Without this the pure helpers above could be tested and never used, and a
+    // late response would setState on an unmounted component.
+    const start = SRC.indexOf('export function useStats(')
+    expect(start, 'useStats not found').toBeGreaterThan(-1)
+    const rest = SRC.slice(start + 1)
+    const end = [rest.indexOf('export function useSearch('), rest.indexOf('export function usePreview(')]
+      .filter((i) => i >= 0)
+      .sort((a, b) => a - b)[0]
+    const body = rest.slice(0, end)
+
+    expect(body).toMatch(/newStatsGate\s*\(\)/)
+    expect(body).toMatch(/canApplyPreview\s*\(\s*gate\s*\)/)
+    expect(body).toMatch(/return\s+gate\.dispose/)
+  })
+})
+
+describe('mutation: loadStats ok-gate and shape normalization', () => {
+  it('goes red when the ok-gate is dropped so a degraded payload leaks through', async () => {
+    // The mutant models the brief's draft: it trusts `body.data` whenever it is
+    // present and never consults `body.ok`.
+    const mutant = async function (res: { json: () => Promise<unknown> }) {
+      const body = (await res.json()) as { ok?: boolean; data?: unknown }
+      if (!body.data) return { status: 'error', data: null }
+      return { status: 'ok', data: body.data }
+    }
+    const assert = function (got: { status: string; data: unknown }) {
+      expect(got.status).toBe('error')
+      expect(got.data).toBeNull()
+    }
+    const realRes = { json: async () => ({ ok: false, data: statsDataForMutation() }) }
+    assert(await loadStatsWith(realRes))                       // real: passes
+    await expect(async () => assert(await mutant(realRes))).rejects.toThrow() // mutant: caught
+  })
+
+  it('goes red when data:null is normalized into an empty dataset', async () => {
+    const mutant = function (data: unknown) {
+      return {
+        status: 'ok',
+        data: {
+          daily: (data as { daily?: unknown[] } | null)?.daily ?? [],
+          access: [], types: [], importance: [], top: [],
+          span: { start: null, end: null },
+          totals: { memories: 0, vectors: 0, accesses: 0, inbox: 0 },
+        },
+      }
+    }
+    const assert = function (got: { status: string; data: unknown }) {
+      expect(got.status).toBe('error')
+      expect(got.data).toBeNull()
+    }
+    const res = { json: async () => ({ ok: false, command: 'stats', status: 'error', data: null }) }
+    assert(await loadStatsWith(res))                      // real: passes
+    await expect(async () => assert(mutant(null))).rejects.toThrow() // mutant: caught
+  })
+
+  it('goes red when a timeout is treated as success', async () => {
+    // `loadStats` must reject on an aborted transport, never resolve ok.
+    const mutant = async function () { return { status: 'ok', data: null } }
+    const assert = function (got: { status: string }) { expect(got.status).toBe('error') }
+    const res = { json: async () => { throw new DOMException('aborted', 'AbortError') } }
+    assert(await loadStatsWith(res))
+    await expect(async () => assert(await mutant())).rejects.toThrow()
   })
 })

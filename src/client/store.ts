@@ -13,7 +13,9 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from '../deps.ts'
-import type { PreviewData, PreviewView, SearchHit, StatusPayload } from './types.ts'
+import type {
+  PreviewData, PreviewView, SearchHit, StatsData, StatsPayload, StatusPayload,
+} from './types.ts'
 
 export const STATUS_URL = '/api/dsh-unified-agent-memory/status'
 export const POLL_INTERVAL_MS = 10000
@@ -22,6 +24,7 @@ export const BASE_URL = '/api/dsh-unified-agent-memory'
 export const SEARCH_URL = `${BASE_URL}/search`
 export const PREVIEW_URL = `${BASE_URL}/preview`
 export const DISMISS_URL = `${BASE_URL}/dismiss`
+export const STATS_URL = `${BASE_URL}/stats`
 
 /**
  * Default cap on a preview list, matching the host route.
@@ -383,5 +386,147 @@ export async function dismissItem(name: string): Promise<boolean> {
     return body.ok === true
   } catch {
     return false
+  }
+}
+
+// ── Stats ──────────────────────────────────────────────────────────
+
+/** Coerce a value to an array; anything else is an empty series. */
+function asArray(v: unknown): unknown[] {
+  return Array.isArray(v) ? v : []
+}
+
+/** Keep only object entries, so a stray null cannot reach the geometry. */
+function rows(v: unknown): Record<string, unknown>[] {
+  return asArray(v).filter(function (r): r is Record<string, unknown> {
+    return typeof r === 'object' && r !== null
+  })
+}
+
+function num(v: unknown): number {
+  return typeof v === 'number' && Number.isFinite(v) ? v : 0
+}
+
+function str(v: unknown): string {
+  return typeof v === 'string' ? v : ''
+}
+
+/** `string | null`: an absent span end is "unknown", not an empty string. */
+function nullableStr(v: unknown): string | null {
+  return typeof v === 'string' ? v : null
+}
+
+/**
+ * Normalize whatever the route sent into the renderable shape.
+ *
+ * The route's contract is the shape the brief documents, but "field missing" has
+ * an explicit behaviour here rather than a crash: every series becomes an array,
+ * every number becomes a number, and every label a string.
+ */
+function shapeStats(d: Record<string, unknown>): StatsData {
+  const span = (typeof d.span === 'object' && d.span !== null ? d.span : {}) as Record<string, unknown>
+  const totals = (typeof d.totals === 'object' && d.totals !== null ? d.totals : {}) as Record<string, unknown>
+  return {
+    daily: rows(d.daily).map(function (r) { return { date: str(r.date), count: num(r.count) } }),
+    access: rows(d.access).map(function (r) { return { date: str(r.date), count: num(r.count) } }),
+    types: rows(d.types).map(function (r) { return { type: str(r.type), count: num(r.count) } }),
+    importance: rows(d.importance).map(function (r) { return { value: num(r.value), count: num(r.count) } }),
+    // `untrusted` is forced true: the labels are corpus-authored, so the renderer
+    // must never be talked out of treating them as text.
+    top: rows(d.top).map(function (r) {
+      return { id: str(r.id), label: str(r.label), count: num(r.count), untrusted: true as const }
+    }),
+    span: { start: nullableStr(span.start), end: nullableStr(span.end) },
+    totals: {
+      memories: num(totals.memories),
+      vectors: num(totals.vectors),
+      accesses: num(totals.accesses),
+      inbox: num(totals.inbox),
+    },
+  }
+}
+
+/**
+ * Read the aggregate feed for the console figures.
+ *
+ * Two independent gates, exactly like `dismissItem`:
+ *
+ *  - the HTTP status must be ok, because a 500 body is not ours to trust;
+ *  - `body.ok === true` must hold, because the route answers **200 with
+ *    `ok:false`,`data:null`** when the core is degraded.
+ *
+ * `data:null` is reported as `status:'error'`, never normalized into an empty
+ * dataset: "the core could not be read" and "the vault has nothing in it" are
+ * different facts and the console renders them differently. Every failure — a
+ * non-JSON body (`res.json()` rejects), an aborted transport, a missing field —
+ * resolves to an error payload. This function never rejects.
+ */
+export async function loadStats(): Promise<StatsPayload> {
+  try {
+    const r = await fetch(STATS_URL, {
+      cache: 'no-store',
+      headers: { accept: 'application/json' },
+    })
+    if (!r.ok) return { status: 'error', data: null }
+    const body = (await r.json()) as { ok?: boolean; data?: unknown } | null
+    if (!body || body.ok !== true) return { status: 'error', data: null }
+    if (typeof body.data !== 'object' || body.data === null) return { status: 'error', data: null }
+    return { status: 'ok', data: shapeStats(body.data as Record<string, unknown>) }
+  } catch {
+    return { status: 'error', data: null }
+  }
+}
+
+/**
+ * Liveness token for one stats load. Same contract as `PreviewGate`: a response
+ * that lands after the effect's cleanup must not setState on a dead component.
+ */
+export interface StatsGate {
+  alive: boolean
+  dispose: () => void
+}
+
+/** Open a gate for one effect run. */
+export function newStatsGate(): StatsGate {
+  const gate: StatsGate = {
+    alive: true,
+    dispose: function () { gate.alive = false },
+  }
+  return gate
+}
+
+/** Identity of one stats effect run: it changes iff the load must re-fire. */
+export function statsEffectKey(nonce: number): number {
+  return nonce
+}
+
+/**
+ * Stats state for the console figures. Loads on mount; `reload` re-reads.
+ *
+ * `loading` is the mount state, so the pane renders its skeleton instead of
+ * flashing "no data" before the first response.
+ */
+export function useStats(): {
+  status: StatsPayload['status']
+  data: StatsData | null
+  reload: () => void
+} {
+  const [state, setState] = useState<StatsPayload>({ status: 'loading', data: null })
+  const [nonce, setNonce] = useState(0)
+
+  useEffect(function () {
+    // Guards every settle path, so a late response cannot reach a dead component.
+    const gate = newStatsGate()
+    setState({ status: 'loading', data: null })
+    loadStats()
+      .then(function (p) { if (canApplyPreview(gate)) setState(p) })
+      .catch(function () { if (canApplyPreview(gate)) setState({ status: 'error', data: null }) })
+    return gate.dispose
+  }, [nonce])
+
+  return {
+    status: state.status,
+    data: state.data,
+    reload: function () { setNonce(function (n) { return n + 1 }) },
   }
 }
