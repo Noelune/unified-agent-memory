@@ -1,13 +1,16 @@
 /**
  * GET /stats — the read-only aggregate feed for the memory console.
  *
- * Follows the three-layer split the other read routes use so each layer is
- * testable alone: buildStatsArgs (argv), shapeStatsResult (parse), handleStats
- * (wire). Nothing here writes.
+ * Two layers live here, not three: buildStatsArgs (argv) and shapeStatsResult
+ * (parse). Both are pure, so each is unit-testable alone. Nothing here writes.
  *
- * The wire layer lives in `src/index.ts` beside the other five routes, so this
- * module stays pure — no `runCore`, no `guard`, no `sendJson` — and every line
- * of it is unit-testable without an HTTP request or a Python subprocess.
+ * There is deliberately no `handleStats`: this module stays pure — no `runCore`,
+ * no `guard`, no `sendJson` — and the wire layer is registered in `src/index.ts`
+ * beside the other five routes, exactly as /preview, /note, /search and
+ * /dismiss are. That registration (the `r.ok ? … : {ok:false,…}` branch and the
+ * `sendJson(res, 200, …)` call) is the part no unit test on this file can see,
+ * so it is covered end to end by `test/route-stats-route.test.ts` driving the
+ * real handler.
  */
 
 export const STATS_PATH = '/api/dsh-unified-agent-memory/stats'
