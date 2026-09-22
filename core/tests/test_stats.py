@@ -1,8 +1,12 @@
 # -*- coding: utf-8 -*-
+import sys
 import unittest
 import tempfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from test_common import _GUARD_INDEX_DB, assert_guard_intact  # arms the isolation guard
 from unified_memory import index as index_mod
 from unified_memory import memory as mem_mod
 from unified_memory import stats as stats_mod
@@ -13,9 +17,9 @@ class _ScratchIndexTest(unittest.TestCase):
 
     memory.INDEX_DB is the single redirectable base path (see schema.index_db_for)
     but it defaults to ~/.unified-memory/index.db, so an unredirected test leaks
-    one index-<hash>.db per run into the user's home. Each concrete class gets its
-    own scratch base path under its own tempdir, and the original value is
-    restored in tearDown so other test files in the same process are unaffected.
+    one index-<hash>.db per run into the user's home. Importing test_common arms
+    the session-wide guard first, so the restore below can never put a real-home
+    path back: the saved value is either a scratch path or the guard dir.
     """
 
     scratch_dir = "index"  # per-class subdir; overridden to avoid cross-class hits
@@ -42,7 +46,14 @@ class _ScratchIndexTest(unittest.TestCase):
         conn.close()
 
     def tearDown(self):
-        mem_mod.INDEX_DB = self._saved_index_db
+        # Never restore a real-home path: if the pre-setUp value was the real
+        # default (test_common not yet imported in an older revision of this
+        # file), fall back to the guard dir instead of handing the next test the
+        # user's own index location.
+        mem_mod.INDEX_DB = (
+            _GUARD_INDEX_DB if self._saved_index_db is None else self._saved_index_db
+        )
+        assert_guard_intact()
         self.tmp.cleanup()
 
 
@@ -98,6 +109,13 @@ class AccessCountsTest(_ScratchIndexTest):
 class BreakdownTest(_ScratchIndexTest):
     scratch_dir = "breakdown-index"
 
+    # A superseded row that would top every breakdown if the WHERE status='active'
+    # filter were dropped: unique type, unique-and-highest importance, and the
+    # highest access_count. Its presence is what makes an unfiltered query fail
+    # loudly instead of passing on an all-active fixture.
+    SUPERSEDED_ID = "m-superseded"
+    SUPERSEDED_LINE = "memory superseded"
+
     def setUp(self):
         super().setUp()
         conn = index_mod.get_conn(self.vault)
@@ -108,14 +126,16 @@ class BreakdownTest(_ScratchIndexTest):
             ("m1", "fact", 0.5, 3, "memory one"),
             ("m2", "fact", 0.9, 0, "memory two"),
             ("m3", "bug", 0.9, 7, "memory three"),
+            (self.SUPERSEDED_ID, "workflow", 1.0, 99, self.SUPERSEDED_LINE),
         ]
         for mid, typ, imp, ac, line in rows:
             conn.execute(
                 "INSERT INTO memories (id, doc, line, type, importance, status,"
                 " access_count, created_at, updated_at)"
                 " VALUES (?,?,?,?,?,?,?,?,?)",
-                (mid, "a.md", line, typ, imp, "active", ac,
-                 "2026-01-01T00:00:00", "2026-01-01T00:00:00"),
+                (mid, "a.md", line, typ, imp,
+                 "superseded" if mid == self.SUPERSEDED_ID else "active",
+                 ac, "2026-01-01T00:00:00", "2026-01-01T00:00:00"),
             )
         conn.commit()
         conn.close()
@@ -137,6 +157,40 @@ class BreakdownTest(_ScratchIndexTest):
         self.assertEqual([g["count"] for g in got], [7, 3])
         for g in got:
             self.assertIs(g["untrusted"], True)
+
+    def test_superseded_row_is_excluded_from_every_breakdown(self):
+        # The fixture's superseded row carries the highest access_count (99), a
+        # private type ('workflow') and the top importance band (1.0): each
+        # function is checked directly, and the row's id/label must never appear
+        # anywhere, because an unfiltered query would surface it first.
+        types = stats_mod.type_counts(self.vault)
+        self.assertEqual([t["type"] for t in types], ["fact", "bug"])
+        self.assertNotIn("workflow", [t["type"] for t in types])
+
+        importance = stats_mod.importance_counts(self.vault)
+        self.assertEqual([i["value"] for i in importance], [0.9, 0.5])
+        self.assertNotIn(1.0, [i["value"] for i in importance])
+
+        top = stats_mod.top_accessed(self.vault)
+        self.assertNotIn(self.SUPERSEDED_ID, [t["id"] for t in top])
+        self.assertEqual([t["count"] for t in top], [7, 3])
+        self.assertNotIn(
+            self.SUPERSEDED_LINE, [t["label"] for t in top],
+            "a superseded memory leaked into the most-recalled ranking",
+        )
+
+    def test_superseded_row_is_excluded_even_as_the_only_other_row(self):
+        # Same invariant, minimal shape: delete the active rows and the
+        # superseded one must still be invisible to every breakdown.
+        conn = index_mod.get_conn(self.vault)
+        conn.execute(
+            "DELETE FROM memories WHERE id != ?", (self.SUPERSEDED_ID,)
+        )
+        conn.commit()
+        conn.close()
+        self.assertEqual(stats_mod.type_counts(self.vault), [])
+        self.assertEqual(stats_mod.importance_counts(self.vault), [])
+        self.assertEqual(stats_mod.top_accessed(self.vault), [])
 
     def test_top_accessed_label_is_redacted(self):
         # redact() is a secret scrubber, not a content stripper (see

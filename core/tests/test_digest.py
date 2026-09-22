@@ -19,10 +19,15 @@ class DigestTest(unittest.TestCase):
         self.vault = make_scratch_vault()
         self.arch = common.canonical_dir(self.vault) / "会话归档"
         self.arch.mkdir(parents=True, exist_ok=True)
-        # Redirect config path so digest_enabled reads a scratch config.
+        # Redirect config path so digest_enabled reads a scratch config. The
+        # original value is restored in tearDown: leaving a deleted temp path
+        # here would hand the next test (or a later digest_enabled call) a
+        # config that no longer exists.
+        self._saved_config = common.CONFIG_PATH
         common.CONFIG_PATH = self.vault.parent / "config.yaml"
 
     def tearDown(self):
+        common.CONFIG_PATH = self._saved_config
         destroy_scratch(self.vault)
 
     def _write_session(self, name, body):
