@@ -49,3 +49,18 @@ def daily_counts(vault: Path) -> list[dict]:
         if d:
             seen[d] = seen.get(d, 0) + 1
     return [{"date": d, "count": seen.get(d, 0)} for d in _span(list(seen))]
+
+
+def access_counts(vault: Path) -> list[dict]:
+    """Recall events per day, zero-filled across the full span."""
+    conn = index_mod.get_conn(vault)
+    try:
+        rows = conn.execute("SELECT at FROM access_log").fetchall()
+    finally:
+        conn.close()
+    seen: dict[str, int] = {}
+    for r in rows:
+        d = _day(r["at"])
+        if d:
+            seen[d] = seen.get(d, 0) + 1
+    return [{"date": d, "count": seen.get(d, 0)} for d in _span(list(seen))]

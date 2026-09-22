@@ -66,5 +66,34 @@ class DailyCountsTest(_ScratchIndexTest):
         self.assertEqual(stats_mod.daily_counts(empty), [])
 
 
+class AccessCountsTest(_ScratchIndexTest):
+    scratch_dir = "access-counts-index"
+
+    def setUp(self):
+        super().setUp()
+        conn = index_mod.get_conn(self.vault)
+        for mid, at in [
+            ("m1", "2026-02-01T08:00:00"),
+            ("m1", "2026-02-01T09:00:00"),
+            ("m2", "2026-02-04T09:00:00"),
+        ]:
+            conn.execute(
+                "INSERT INTO access_log (memory_id, at) VALUES (?,?)", (mid, at)
+            )
+        conn.commit()
+        conn.close()
+
+    def test_zero_fills_across_span(self):
+        got = stats_mod.access_counts(self.vault)
+        self.assertEqual([g["count"] for g in got], [2, 0, 0, 1])
+        self.assertEqual(got[0]["date"], "2026-02-01")
+        self.assertEqual(got[-1]["date"], "2026-02-04")
+
+    def test_no_accesses_returns_empty(self):
+        empty = Path(self.tmp.name) / "empty"
+        index_mod.get_conn(empty).close()  # create nothing but an empty index
+        self.assertEqual(stats_mod.access_counts(empty), [])
+
+
 if __name__ == "__main__":
     unittest.main()
