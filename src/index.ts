@@ -52,6 +52,7 @@ import {
   NOTE_PATH, PREVIEW_PATH, PREVIEW_VIEWS, clampPreviewLimit, handleNote, handlePreview,
 } from './route-preview.ts'
 import { DISMISS_PATH, handleDismiss, parseDismissBody } from './route-dismiss.ts'
+import { STATS_PATH, buildStatsArgs, shapeStatsResult } from './route-stats.ts'
 import type { PluginConfig } from './types.ts'
 import type { StatusStats } from './status-payload.ts'
 export const name = 'dsh-unified-agent-memory'
@@ -283,6 +284,32 @@ export function apply(ctx: Context, config: Record<string, unknown> = {}): void 
         }
         const result = await handleDismiss(cfg, name)
         sendJson(res, result.ok ? 200 : 409, result)
+      })()
+    },
+  })
+
+  // ---- HTTP stats route: the read-only aggregate feed ----
+  // Registered last so the existing endpoints keep their positions. Read-only
+  // like /preview and /search: `guard`, never `guardWrite`. A core that is
+  // unconfigured, missing or crashed is NOT a server fault here — this is a
+  // dashboard feed, so it degrades to 200 + `{ok:false}` exactly as /preview
+  // does, and the panel renders "no figures" instead of an error banner.
+  ws.webServer.register({
+    kind: 'exact',
+    path: STATS_PATH,
+    handler(req, res) {
+      if (!guard(req, res, ['GET', 'HEAD'])) return
+      return (async () => {
+        const r = await runCore(cfg, buildStatsArgs())
+        const payload = r.ok
+          ? shapeStatsResult(r.output)
+          : { ok: false, status: 'error' as const, data: null }
+        sendJson(res, 200, {
+          ok: payload.ok,
+          command: 'stats',
+          status: payload.status,
+          data: payload.data,
+        })
       })()
     },
   })
