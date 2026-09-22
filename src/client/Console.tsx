@@ -1,30 +1,39 @@
 /**
- * dsh-unified-agent-memory — four-tab memory console.
+ * dsh-unified-agent-memory — the memory console: one search tab, four figures.
  *
  * Replaces the old read-only KV sheet, which showed system metadata (vault
  * path, pythonPath, remoteEnabled) the user never opened the sidebar to see.
  * Each tab answers a question the user actually asks:
  *
- *   search — "I want to look something up"      → useSearch
- *   inbox  — "what did an agent just write?"    → usePreview('pending')
- *   vault  — "what does my library look like?"  → usePreview('recent') + stats
- *   system — "is anything broken?"              → status payload
+ *   search   — "I want to look something up"     → useSearch
+ *   activity — "when do I actually use this?"    → CalendarHeatmap
+ *   growth   — "is my library still growing?"    → GrowthChart
+ *   makeup   — "what is it made of?"             → BreakdownDonut
+ *   top      — "what do I keep coming back to?"  → TopBars
+ *
+ * The three list tabs (待处理 / 库全貌 / 系统) are gone: the figures answer
+ * their questions from the aggregate feed with less plumbing, and the panes
+ * that survived them are asserted in test/client-console to be unrunnable —
+ * their call sites are gone, not merely unreferenced.
  *
  * Display decisions (empty-vs-unsupported copy, refusal wording, highlight
- * splitting) live in `./view.ts` so they can be unit-tested without a DOM.
+ * splitting, which tab carries the pending badge) live in `./view.ts` so they
+ * can be unit-tested without a DOM.
  *
- * Every tab owns its own data loading; nothing here polls except the status
- * payload the caller already holds.
+ * The four figures share ONE `useStats()` read: four calls would be four
+ * requests per mount, and four payload copies that can drift between panes.
  *
  * @module src/client/Console
  */
 
 import { h, useState } from '../deps.ts'
-import type { SearchHit } from './types.ts'
-import { dismissItem, usePreview, useSearch } from './store.ts'
+import type { SearchHit, StatsPayload } from './types.ts'
+import { useSearch, useStats } from './store.ts'
 import {
-  CONSOLE_TABS, TAB_LABEL, dismissReasonText, highlightParts, previewEmptyText,
-  searchFailureText,
+  BreakdownDonut, CalendarHeatmap, GrowthChart, TopBars,
+} from './Figures.tsx'
+import {
+  CONSOLE_TABS, PENDING_BADGE_TAB, TAB_LABEL, highlightParts, searchFailureText,
 } from './view.ts'
 import type { TabId } from './view.ts'
 
@@ -39,22 +48,29 @@ export type { TabId }
  * `CONSOLE_TABS` without giving it a pane is a type error, and the render path
  * holds no tab-id literal of its own that could drift from the constant.
  */
-type PaneOf = (props: { status: ConsoleStatus | null }) => Child
+type PaneOf = (props: { status: ConsoleStatus | null; stats: StatsPayload }) => Child
 
+/**
+ * Tab id → pane renderer, and the shared feed every figure pane reads.
+ *
+ * The pane is handed the console's single `useStats()` result rather than
+ * calling the hook itself: one request per mount, one payload, no chance of two
+ * figures drawing from different reads of the same library.
+ */
 const TAB_PANE: Record<TabId, PaneOf> = {
   search: function SearchPane() { return h(SearchTab, null) },
-  inbox: function InboxPane(props) {
-    return h('div', { className: 'dsh-memory-pane' },
-      h(StatusStrip, { status: props.status }),
-      h(ListTab, { view: 'pending', head: '提交区 · 等待晋升' }))
+  activity: function ActivityPane(props) {
+    return h(CalendarHeatmap, { status: props.stats.status, data: props.stats.data })
   },
-  vault: function VaultPane(props) {
-    return h(VaultTab, {
-      stats: props.status?.stats ?? null,
-      version: props.status?.version ?? '—',
-    })
+  growth: function GrowthPane(props) {
+    return h(GrowthChart, { status: props.stats.status, data: props.stats.data })
   },
-  system: function SystemPane(props) { return h(SystemTab, { status: props.status }) },
+  makeup: function MakeupPane(props) {
+    return h(BreakdownDonut, { status: props.stats.status, data: props.stats.data })
+  },
+  top: function TopPane(props) {
+    return h(TopBars, { status: props.stats.status, data: props.stats.data })
+  },
 }
 
 export interface ConsoleStats {
@@ -74,7 +90,7 @@ type Child = ReturnType<typeof h> | string | number | boolean | null | undefined
 
 // ── Primitives ──────────────────────────────────────────────────────
 
-/** Tab strip. The pending count rides on the inbox tab only. */
+/** Tab strip. The pending count rides on `PENDING_BADGE_TAB` only — see view.ts. */
 function TabBar(props: { active: TabId; onPick: (t: TabId) => void; pending: number }): Child {
   return h('div', { className: 'dsh-memory-tabs' },
     ...CONSOLE_TABS.map(function (t: TabId) {
@@ -89,8 +105,11 @@ function TabBar(props: { active: TabId; onPick: (t: TabId) => void; pending: num
       },
         h('i', { className: 'dsh-memory-tab-dot' }),
         TAB_LABEL[t],
-        t === 'inbox' && props.pending > 0
-          ? h('span', { className: 'dsh-memory-pill' }, String(props.pending))
+        // The count is the inbox queue, and the tab it rides on is the console's
+        // only non-figure pane — so the number needs its subject spelled out.
+        t === PENDING_BADGE_TAB && props.pending > 0
+          ? h('span', { className: 'dsh-memory-pill', title: String(props.pending) + ' 条待处理' },
+              String(props.pending))
           : null,
       )
     }))
@@ -202,151 +221,18 @@ function SearchTab(): Child {
     ))
 }
 
-function ListTab(props: {
-  view: 'pending' | 'recent'
-  head: string
-}): Child {
-  const { data, busy, reload } = usePreview(props.view)
-  const [refusal, setRefusal] = useState('')
-
-  function onDismiss(name: string): void {
-    setRefusal('')
-    // `dismissItem` resolves a boolean per its declared signature, but the host
-    // also carries a refusal reason on the wire; surface the boolean verdict and
-    // a readable sentence rather than silently doing nothing on refusal.
-    dismissItem(name).then(function (ok: boolean) {
-      if (ok) { reload(); return }
-      setRefusal(dismissReasonText('not-found'))
-    })
-  }
-
-  const items = data?.items ?? []
-  const empty = previewEmptyText(data)
-
-  return h('div', { className: 'dsh-memory-pane' },
-    h('div', { className: 'dsh-memory-card dsh-memory-card-lead' },
-      h('div', { className: 'dsh-memory-cardhead' },
-        props.head,
-        h('span', { className: 'dsh-memory-cardcount' },
-          String(items.length) + ' items')),
-      refusal ? h(Failure, { text: refusal }) : null,
-      busy
-        ? h(Skeleton, null)
-        : empty
-          ? h(Empty, { title: empty.title, hint: empty.hint })
-          : h('div', { className: 'dsh-memory-rows' },
-              ...items.map(function (it) {
-                return h('div', { key: it.name, className: 'dsh-memory-row' },
-                  h('i', { className: 'dsh-memory-bar dsh-memory-bar-doc' }),
-                  h('span', { className: 'dsh-memory-rowname' }, it.name),
-                  props.view === 'pending'
-                    ? h('button', {
-                        type: 'button',
-                        className: 'dsh-memory-action',
-                        title: '移入已处理',
-                        onClick: function () { onDismiss(it.name) },
-                      }, '已处理')
-                    : null,
-                )
-              })),
-    ))
-}
-
-function VaultTab(props: { stats: ConsoleStats | null; version: string }): Child {
-  const s = props.stats
-  /** A count that was never reported renders as "—", never as 0. */
-  function n(v: number | undefined): string {
-    return v === undefined || v === null ? '—' : String(v)
-  }
-  return h('div', { className: 'dsh-memory-pane' },
-    h('div', { className: 'dsh-memory-card dsh-memory-card-lead' },
-      h('div', { className: 'dsh-memory-cardhead' }, '规模'),
-      h('div', { className: 'dsh-memory-stats' },
-        h('div', { className: 'dsh-memory-stat' },
-          h('b', null, n(s?.memories)), h('span', null, 'memories')),
-        h('div', { className: 'dsh-memory-stat' },
-          h('b', null, n(s?.vectors)), h('span', null, 'vectors')),
-        h('div', { className: 'dsh-memory-stat' },
-          h('b', null, n(s?.pending)), h('span', null, 'pending')),
-      )),
-    h('div', { className: 'dsh-memory-card' },
-      h('div', { className: 'dsh-memory-cardhead' }, '最近更新'),
-      h(RecentList, null)),
-  )
-}
-
-function RecentList(): Child {
-  const { data, busy } = usePreview('recent')
-  const items = (data?.items ?? []).slice(0, 6)
-  const empty = previewEmptyText(data)
-  if (busy) return h(Skeleton, null)
-  if (empty) return h(Empty, { title: empty.title, hint: empty.hint })
-  return h('div', { className: 'dsh-memory-rows' },
-    ...items.map(function (it) {
-      return h('div', { key: it.name, className: 'dsh-memory-row' },
-        h('i', { className: 'dsh-memory-bar dsh-memory-bar-doc' }),
-        h('span', { className: 'dsh-memory-rowname' }, it.name),
-        h('span', { className: 'dsh-memory-rowmeta' }, 'md'),
-      )
-    }))
-}
-
-function SystemTab(props: { status: ConsoleStatus | null }): Child {
-  const s = props.status
-  const vault = s?.vaultPath
-  const ok = typeof vault === 'string' && vault.length > 0
-  return h('div', { className: 'dsh-memory-pane' },
-    h('div', { className: 'dsh-memory-card dsh-memory-card-lead' },
-      h('div', { className: 'dsh-memory-cardhead' }, '系统'),
-      h('div', { className: 'dsh-memory-row' },
-        h('i', {
-          className: 'dsh-memory-bar '
-            + (ok ? 'dsh-memory-bar-ok' : 'dsh-memory-bar-warn'),
-        }),
-        h('span', { className: 'dsh-memory-rowname' },
-          ok ? 'vault connected' : 'vaultPath 未配置'),
-        h('span', { className: 'dsh-memory-rowmeta' }, ok ? 'ok' : 'warn')),
-      h('div', { className: 'dsh-memory-row' },
-        h('i', { className: 'dsh-memory-bar' }),
-        h('span', { className: 'dsh-memory-rowname' }, 'vault path'),
-        h('span', { className: 'dsh-memory-rowmeta' }, vault ?? '—')),
-      h('div', { className: 'dsh-memory-row' },
-        h('i', { className: 'dsh-memory-bar' }),
-        h('span', { className: 'dsh-memory-rowname' }, 'version'),
-        h('span', { className: 'dsh-memory-rowmeta' }, s?.version ?? '—')),
-    ))
-}
-
 // ── Console ─────────────────────────────────────────────────────────
 
-/** The four-tab console. Each tab owns its own data loading. */
+/** The five-tab console. Every pane reads the payload the caller already holds. */
 export function Console(props: { status?: ConsoleStatus | null }): Child {
   const [active, setActive] = useState<TabId>(CONSOLE_TABS[0])
   const pending = props.status?.stats?.pending ?? 0
   const status = props.status ?? null
+  const stats = useStats()
   const Pane = TAB_PANE[active]
 
   return h('div', { className: 'dsh-memory-console' },
     h(TabBar, { active, onPick: setActive, pending }),
-    h(Pane, { status }),
-  )
-}
-
-/** The status summary the inbox tab carries above its list. */
-function StatusStrip(props: { status: ConsoleStatus | null }): Child {
-  const s = props.status
-  const vault = s?.vaultPath
-  const ok = typeof vault === 'string' && vault.length > 0
-  if (!s) return null
-  return h('div', { className: 'dsh-memory-card' },
-    h('div', { className: 'dsh-memory-cardhead' }, '连接'),
-    h('div', { className: 'dsh-memory-row' },
-      h('i', {
-        className: 'dsh-memory-bar '
-          + (ok ? 'dsh-memory-bar-ok' : 'dsh-memory-bar-warn'),
-      }),
-      h('span', { className: 'dsh-memory-rowname' },
-        ok ? 'vault connected' : 'vaultPath 未配置'),
-      h('span', { className: 'dsh-memory-rowmeta' }, s.version ?? '—')),
+    h(Pane, { status, stats }),
   )
 }

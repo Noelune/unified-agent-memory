@@ -1,11 +1,11 @@
 /**
- * Task 8 — the four-tab memory console.
+ * Task 8 + Task 9 — the memory console: one search tab and four figure tabs.
  *
  * Two layers, deliberately:
  *
  *  1. structure assertions (static): the browser half is bundled against the DSH
- *     client runtime and there is no DOM here, so the tab list, the store-hook
- *     usage and the "react only via deps.ts" rule are pinned at source level;
+ *     client runtime and there is no DOM here, so the tab list, the figure call
+ *     sites and the "react only via deps.ts" rule are pinned at source level;
  *  2. behavior assertions (dynamic): the display decisions the console makes are
  *     real logic, so they live in `src/client/view.ts` — a module with no React
  *     import — and run their real code here. A static `toContain` cannot tell
@@ -32,6 +32,8 @@ import { execSync } from 'node:child_process'
 
 import {
   CONSOLE_TABS,
+  PENDING_BADGE_TAB,
+  TAB_LABEL,
   dismissReasonText,
   highlightParts,
   previewEmptyText,
@@ -103,10 +105,29 @@ function preview(over: Partial<PreviewData>): PreviewData {
 // ── Structure ──────────────────────────────────────────────────────
 
 describe('console structure', () => {
-  it('declares exactly the four tab ids, in order', () => {
+  it('declares exactly the five tab ids, in order', () => {
     // A pure-value assertion: stronger than four `toContain` string checks,
     // because it also pins the order and the absence of extras.
-    expect(CONSOLE_TABS).toEqual(['search', 'inbox', 'vault', 'system'])
+    expect(CONSOLE_TABS).toEqual(['search', 'activity', 'growth', 'makeup', 'top'])
+  })
+
+  it('has retired the three list tabs', () => {
+    // The old trio carried lists that the figures now answer better; a
+    // leftover id here would render a pane with no copy behind it.
+    for (const gone of ['inbox', 'vault', 'system']) {
+      expect(CONSOLE_TABS as readonly string[]).not.toContain(gone)
+      expect(Object.keys(TAB_LABEL)).not.toContain(gone)
+    }
+    expect(Object.keys(TAB_LABEL)).toEqual([...CONSOLE_TABS])
+  })
+
+  it('labels every tab, with no stale copy from the deleted ones', () => {
+    for (const t of CONSOLE_TABS) expect(TAB_LABEL[t].length).toBeGreaterThan(0)
+    // The exact strings the retired tabs used; a label left behind is a tab the
+    // user can read but not reach.
+    for (const old of ['待处理', '库全貌', '系统']) {
+      expect(Object.values(TAB_LABEL)).not.toContain(old)
+    }
   })
 
   it('renders the console, not just a bare constant', () => {
@@ -120,14 +141,14 @@ describe('console structure', () => {
     // Assert the CALL FORM, against the comment-stripped source.
     //
     // The original `expect(CONSOLE).toContain('useSearch')` was decorative: the
-    // header comment names all three hooks, so the assertion was satisfied by
-    // prose. Mutation-verified — deleting `useSearch()` *and* its import left
-    // the whole file green. So: strip comments, then require each hook to be
-    // INVOKED (an assignment/expression `useSearch(`, not a bare mention in an
-    // import list). Deleting either the call or the import now fails here.
+    // header comment names every hook, so the assertion was satisfied by prose.
+    // Mutation-verified — deleting `useSearch()` *and* its import left the whole
+    // file green. So: strip comments, then require the hook to be INVOKED (an
+    // assignment `useSearch(`, not a bare mention in an import list). Deleting
+    // either the call or the import now fails here. The preview/dismiss call
+    // sites are gone with the retired list tabs; the reader they moved to is
+    // covered by the figure-wiring block below.
     expect(CONSOLE_CODE).toMatch(/\bconst\s+\w+\s*=\s*useSearch\(/)
-    expect(CONSOLE_CODE).toMatch(/\bconst\s+\{[^}]*\}\s*=\s*usePreview\(/)
-    expect(CONSOLE_CODE).toMatch(/[^.\w]dismissItem\(/)
     expect(CONSOLE_CODE).not.toMatch(/fetch\(/)
   })
 
@@ -140,16 +161,86 @@ describe('console structure', () => {
     expect(CONSOLE_CODE).toContain("'mark'")
   })
 
-  it('gates dismiss on the ok flag, not the http status', () => {
-    // dismissItem resolves false on a 200-with-ok:false refusal, so the reload
-    // must key off the boolean, never off a response status.
-    expect(CONSOLE_CODE).toMatch(/dismissItem[\s\S]{0,200}?\bok\b/)
-    expect(CONSOLE_CODE).not.toMatch(/status\s*===?\s*200/)
-  })
-
   it('keeps the registrations the host contract needs', () => {
     expect(INDEX).toContain("'shell.overlay'")
     expect(INDEX).toContain("'sidebar.footer.action'")
+  })
+})
+
+// ── Figure wiring ──────────────────────────────────────────────────
+//
+// The console draws its four figures from the tabs, and the failure these
+// assertions exist for is the one a bare `toContain` cannot see: `Console.tsx`
+// IMPORTS every figure name, so `expect(CONSOLE_CODE).toContain('CalendarHeatmap')`
+// stays green with the component deleted from every pane (this repository has
+// shipped exactly that shape of bug once already — three `toContain('useSearch')`
+// assertions satisfied by the file's own header comment). So each assertion
+// below names the CALL, and the props object that feeds it.
+
+/** The four figure panes: `[tab id, component]`, in `CONSOLE_TABS` order. */
+const FIGURE_TABS: ReadonlyArray<readonly [string, string]> = [
+  ['activity', 'CalendarHeatmap'],
+  ['growth', 'GrowthChart'],
+  ['makeup', 'BreakdownDonut'],
+  ['top', 'TopBars'],
+]
+
+/**
+ * The source of one figure's CALL, or `''` when it is never called.
+ *
+ * Bounded to 120 characters on purpose. An unbounded `/CalendarHeatmap[\s\S]*?data=/`
+ * would be satisfied by ANOTHER pane's `data:` further down the file — deleting
+ * this figure's call would leave it green, which is the exact trap above. One
+ * call spans well under 120 characters, and the next pane is far further away.
+ */
+function figureCall(name: string): string {
+  const at = CONSOLE_CODE.search(new RegExp('h\\(\\s*' + name + '\\s*,'))
+  return at < 0 ? '' : CONSOLE_CODE.slice(at, at + 120)
+}
+
+describe('wiring: each figure tab draws its figure from one shared stats read', () => {
+  it('loads the aggregate feed exactly once, so the four figures share it', () => {
+    // A call per figure would be four requests every time the pane mounts, and
+    // four payload copies that can drift apart between panes.
+    const loads = CONSOLE_CODE.match(/=\s*useStats\(\)/g) ?? []
+    expect(loads.length, 'useStats() must be called once, not once per figure').toBe(1)
+  })
+
+  it('invokes every figure with the stats payload, not merely imports it', () => {
+    for (const [tab, name] of FIGURE_TABS) {
+      const call = figureCall(name)
+      expect(call, `${name} is never invoked (tab: ${tab})`).not.toBe('')
+      expect(call, `${name} is invoked without a data prop`).toMatch(/\bdata\s*:/)
+      expect(call, `${name} is invoked without a status prop`).toMatch(/\bstatus\s*:/)
+    }
+  })
+
+  it('never pins a figure to a literal payload', () => {
+    // A pane wired to `data: null` or a frozen stub renders 暂无数据 forever
+    // while every other assertion in this file stays green.
+    for (const [, name] of FIGURE_TABS) {
+      expect(figureCall(name), `${name} does not read the payload`).not.toMatch(/data\s*:\s*(null|\[\]|\{)/)
+    }
+  })
+})
+
+describe('wiring: the pending count survives its tab', () => {
+  it('badges a tab the console still renders', () => {
+    // The count used to ride on the retired 待处理 tab. It must be rendered by
+    // SOME tab, or `stats.pending` is computed and never shown — and the class
+    // contract below reports .dsh-memory-pill as styled-but-never-rendered.
+    // The badge's home tab is display policy, so it travels as a view.ts
+    // constant: a second tab-id literal in the component is banned by the test
+    // above ("the tab ids should be declared once, in view.ts").
+    expect(CONSOLE_TABS).toContain(PENDING_BADGE_TAB)
+    expect(CONSOLE_CODE).toMatch(/t\s*===\s*PENDING_BADGE_TAB[\s\S]{0,160}dsh-memory-pill/)
+  })
+
+  it('feeds the strip from the status payload', () => {
+    // ...and the number the badge shows must still come from the poll payload,
+    // not from a hardcoded 0 that quiets the badge forever.
+    expect(CONSOLE_CODE).toMatch(/const\s+pending\s*=[^\n]*stats[^\n]*pending/)
+    expect(CONSOLE_CODE).toMatch(/h\(TabBar,\s*\{[^}]*\bpending\b[^}]*\}\)/)
   })
 })
 
@@ -342,7 +433,7 @@ describe('console styles', () => {
       'dsh-memory-tabs', 'dsh-memory-tab', 'dsh-memory-card', 'dsh-memory-row',
       'dsh-memory-console', 'dsh-memory-pane', 'dsh-memory-empty',
       'dsh-memory-skeleton', 'dsh-memory-search', 'dsh-memory-pill',
-      'dsh-memory-bar', 'dsh-memory-stat', 'dsh-memory-action',
+      'dsh-memory-bar', 'dsh-memory-action',
     ]) {
       expect(STYLES, `missing .${cls}`).toContain(`.${cls}`)
     }
@@ -743,7 +834,7 @@ describe('contrast: the card boundary is visible against the page', () => {
     // 1.16:1 of fill difference cannot carry the boundary on its own; the card
     // must also declare a stroke stronger than the hairline l1. Read the rule
     // from the console section, past the leftover pre-console `.dsh-memory-card`.
-    const consoleCss = STYLES.slice(STYLES.indexOf('── Four-tab console'))
+    const consoleCss = STYLES.slice(STYLES.indexOf('── Console tabs'))
     const card = consoleCss.slice(consoleCss.indexOf('.dsh-memory-card {'))
     const rule = card.slice(0, card.indexOf('}'))
     expect(rule).toMatch(/border:\s*1px solid var\(--dsw-alias-(border-l2|border-l3)\)/)
@@ -811,31 +902,6 @@ describe('wiring: the four tabs come from CONSOLE_TABS', () => {
 
   it('keeps the labels keyed by tab so no tab can be added without copy', () => {
     expect(CONSOLE_CODE).toMatch(/TAB_LABEL\[t\]/)
-  })
-})
-
-describe('wiring: a dismiss refusal is turned into a sentence', () => {
-  it('routes the reason through dismissReasonText', () => {
-    // The mutation to catch: `dismissItem(name).then(ok => { if (ok) reload() })`
-    // — the refusal is dropped on the floor and the user sees nothing happen.
-    expect(CONSOLE_CODE).toMatch(/dismissReasonText\(/)
-  })
-
-  it('stores the mapped text in state that the render path reads', () => {
-    const handler = CONSOLE_CODE.slice(CONSOLE_CODE.indexOf('function onDismiss'))
-    const body = handler.slice(0, handler.indexOf('const items'))
-    // The mapped sentence must reach a setter...
-    expect(body).toMatch(/set[A-Za-z]+\(dismissReasonText\(/)
-    // ...and the value that setter owns must be rendered, not merely stored.
-    const stateName = (body.match(/set([A-Za-z]+)\(/) ?? [])[1]
-    const varName = stateName.charAt(0).toLowerCase() + stateName.slice(1)
-    expect(CONSOLE_CODE).toMatch(new RegExp(varName + '\\s*\\?\\s*h\\(Failure'))
-  })
-
-  it('does not discard the verdict with an empty branch', () => {
-    // A plausible "simplification": `if (!ok) return`. That is the exact shape
-    // of silently doing nothing on refusal.
-    expect(CONSOLE_CODE).not.toMatch(/then\(function \(ok[^)]*\) \{\s*if \(!ok\) return/)
   })
 })
 

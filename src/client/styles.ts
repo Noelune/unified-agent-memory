@@ -65,16 +65,6 @@ export const PANEL_CSS = `
   border: 1px solid var(--dsw-alias-border-l1);
   border-radius: 10px;
 }
-.dsh-memory-stats { display: flex; gap: 8px; }
-.dsh-memory-stat {
-  flex: 1; display: flex; flex-direction: column; gap: 2px;
-  align-items: flex-start;
-}
-.dsh-memory-stat .n {
-  font-size: 18px; font-weight: 600; line-height: 1.1;
-  font-variant-numeric: tabular-nums;
-}
-.dsh-memory-stat .l { font-size: 10px; color: var(--dsw-alias-label-tertiary); }
 .dsh-memory-note {
   /* secondary, not tertiary: on a light-theme card the tertiary token resolves
      to a value that is 3.71:1 here — below AA. secondary clears it (5.80:1).
@@ -83,7 +73,7 @@ export const PANEL_CSS = `
   line-height: 1.4;
 }
 
-/* ── Four-tab console ───────────────────────────────────────────────
+/* ── Console tabs (search + the four figures) ───────────────────────
    Shapes are the ones locked in docs/superpowers/specs/t8-preview-v3.html.
    Every colour is a --dsw-alias-* token so dark/light follow the host theme.
    The tokens below are the ones the HOST ACTUALLY DECLARES — a var() pointing
@@ -229,8 +219,6 @@ export const PANEL_CSS = `
   background: var(--dsw-alias-label-tertiary); opacity: .45;
 }
 .dsh-memory-bar-doc { background: var(--dsw-alias-brand-primary); opacity: .75; }
-.dsh-memory-bar-ok { background: var(--dsw-alias-state-success-primary); opacity: .7; }
-.dsh-memory-bar-warn { background: var(--dsw-alias-state-warn-primary); opacity: .7; }
 .dsh-memory-rowname {
   flex: 1; min-width: 0; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap;
@@ -256,21 +244,6 @@ export const PANEL_CSS = `
 .dsh-memory-row:hover .dsh-memory-action {
   opacity: 1; color: var(--dsw-alias-brand-primary);
   border-color: var(--dsw-alias-brand-primary);
-}
-.dsh-memory-stats { display: flex; gap: 8px; }
-.dsh-memory-stat {
-  flex: 1; display: flex; flex-direction: column; gap: 1px;
-  padding: 9px 10px 8px; border-radius: 9px;
-  background: var(--dsw-alias-bg-layer-2);
-  border: 1px solid var(--dsw-alias-border-l1);
-}
-.dsh-memory-stat b {
-  font-size: 21px; line-height: 1.05; letter-spacing: -.02em; font-weight: 600;
-  font-variant-numeric: tabular-nums; color: var(--dsw-alias-label-primary);
-}
-.dsh-memory-stat span {
-  font-size: 9px; font-weight: 700; letter-spacing: .07em;
-  text-transform: uppercase; color: var(--dsw-alias-label-tertiary);
 }
 .dsh-memory-empty {
   display: flex; flex-direction: column; align-items: center; gap: 6px;

@@ -16,7 +16,7 @@
 import type { PreviewData } from './types.ts'
 
 /** Tab ids, in display order. The console renders these left to right. */
-export const CONSOLE_TABS = ['search', 'inbox', 'vault', 'system'] as const
+export const CONSOLE_TABS = ['search', 'activity', 'growth', 'makeup', 'top'] as const
 
 /** One tab id. */
 export type TabId = (typeof CONSOLE_TABS)[number]
@@ -24,10 +24,28 @@ export type TabId = (typeof CONSOLE_TABS)[number]
 /** Chinese label per tab. */
 export const TAB_LABEL: Record<TabId, string> = {
   search: '搜索',
-  inbox: '待处理',
-  vault: '库全貌',
-  system: '系统',
+  activity: '访问',
+  growth: '生长',
+  makeup: '构成',
+  top: '排行',
 }
+
+/**
+ * The tab that carries the pending-inbox count.
+ *
+ * The count used to ride on the 待处理 tab, which the figures retired. It has
+ * to ride on SOME tab: the console still polls `stats.pending`, and a count that
+ * is computed and never rendered is dead weight the class contract would report
+ * as a styled-but-unused `.dsh-memory-pill`. WHICH tab is a display decision, so
+ * it lives here beside `TAB_LABEL` — the component is asserted to hold no tab-id
+ * literal of its own, so a hardcoded `'search'` there would fork the "tab ids
+ * are declared once" rule.
+ *
+ * 搜索 is the choice because it is the console's only non-figure pane: the four
+ * figure tabs are charts of the library, and a badge counting the inbox queue
+ * sitting beside a chart axis reads as part of the chart.
+ */
+export const PENDING_BADGE_TAB: TabId = 'search'
 
 /** One fragment of an annotated string. */
 export interface Part {
