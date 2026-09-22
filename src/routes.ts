@@ -40,6 +40,32 @@ export function isLoopback(remote: string | undefined): boolean {
 }
 
 /**
+ * True when a `Host` header names this machine.
+ *
+ * This is the DNS-rebinding fence, and it is the *only* one that works: rebinding
+ * makes the attacker's page and the target look same-origin, so both `Origin` and
+ * `Host` read `evil.com` and any "is Origin equal to Host" compare is satisfied.
+ * What the attacker cannot do is make the browser send a Host that is *us* while
+ * talking to their own name — so the Host value itself is the signal.
+ *
+ * Accepts `127.0.0.1`, `localhost` and `[::1]`, with or without a port, in any
+ * case; anything else — including a name that merely *contains* a loopback
+ * spelling (`127.0.0.1.evil.com`, `localhost.evil.com`) — is rejected. A missing
+ * or empty Host is not loopback: a real local browser request always carries one,
+ * so failing closed costs nothing and keeps a hand-rolled client from opting out.
+ */
+export function isLoopbackHost(host: string | undefined): boolean {
+  if (!host) return false
+  const value = host.trim().toLowerCase()
+  // `[::1]:3081` -> `[::1]`; `127.0.0.1:3081` -> `127.0.0.1`. Only a trailing
+  // `:port` is stripped, so `[::1]` keeps the brackets that make it unambiguous.
+  const name = /^(\[[^\]]*\])(?::\d+)?$/.test(value)
+    ? value.slice(0, value.indexOf(']') + 1)
+    : value.replace(/:\d+$/, '')
+  return name === '127.0.0.1' || name === 'localhost' || name === '[::1]'
+}
+
+/**
  * Apply the shared baseline. Returns false when the request was already
  * answered (403 or 405); the caller must then return without writing more.
  */
@@ -91,25 +117,39 @@ function headerValue(req: RouteReq, name: string): string | undefined {
  * exact route never reaches the host's own Host-fence + cookie auth. A hostile
  * page therefore reaches this handler with `remoteAddress` still `127.0.0.1`,
  * which `guard` alone waves through — the loopback check was never a CSRF
- * defence, and DNS rebinding defeats even a Host check on the *name*, not the
- * address. Read routes deliberately keep `guard` only: an agent running curl
+ * defence. Read routes deliberately keep `guard` only: an agent running curl
  * against the local memory store is a supported use, and nothing there writes.
+ *
+ * Two distinct attacks, two distinct fences, and the order matters:
+ *
+ *   - **DNS rebinding** is stopped by `isLoopbackHost` alone, and ONLY by it.
+ *     After the attacker's DNS answer flips to 127.0.0.1 the page and the target
+ *     look same-origin, so the browser sends `Origin: http://evil.com` *and*
+ *     `Host: evil.com` — `origin === host` is satisfied and waves it through.
+ *     (An earlier revision compared those two and claimed rebinding solved; it
+ *     was not, and a probe showed `Origin=evil.com, Host=evil.com` allowed.)
+ *     Rebinding cannot fake a loopback `Host`, so that check is the fence.
+ *   - **CSRF** needs the Origin/Sec-Fetch-Site/Referer layer below, because its
+ *     `Host` is genuinely `127.0.0.1:3081` and the rebinding fence passes it.
  *
  * Decision order (fail-closed throughout):
  *
- *   1. `Origin` present -> must be same-origin with the request's own Host.
- *      Cross-site, unparseable, or a rebinding mismatch (loopback Origin with a
- *      foreign Host) is a 403.
- *   2. No `Origin` -> `Sec-Fetch-Site`. `same-origin` / `none` pass; everything
+ *   1. `Host` must name this machine — `127.0.0.1` / `localhost` / `[::1]`, any
+ *      port, any case. Anything else, including an absent Host, is a 403.
+ *   2. `Origin` present -> must be same-origin with the request's own Host.
+ *      Cross-site or unparseable is a 403.
+ *   3. No `Origin` -> `Sec-Fetch-Site`. `same-origin` / `none` pass; everything
  *      else (`cross-site`, `same-site`) is a 403.
- *   3. Neither present -> allowed. This is the deliberate carve-out: no browser
+ *   4. Neither present -> allowed. This is the deliberate carve-out: no browser
  *      has sent either header, so the caller is a local CLI (curl, another
- *      agent) and refusing would break the documented read/write tooling.
- *      `ponytail:` the ceiling is exactly that — a minimal hand-rolled HTTP
- *      client that sends neither header is indistinguishable from curl and gets
- *      through. Closing it needs a shared secret between plugin and browser
- *      client, which the CLI path cannot supply.
- *   4. `Referer` is consulted only when `Origin` is absent: present and
+ *      agent) and refusing would break the documented read/write tooling. It is
+ *      still gated on rule 1, so it is "a local CLI talking to a local Host",
+ *      never a blanket pass. `ponytail:` the ceiling is exactly that — a minimal
+ *      hand-rolled HTTP client that sends a loopback Host and neither header is
+ *      indistinguishable from curl and gets through. Closing it needs a shared
+ *      secret between plugin and browser client, which the CLI path cannot
+ *      supply.
+ *   5. `Referer` is consulted only when `Origin` is absent: present and
  *      off-host is a 403 (a supplement, never the sole basis for admission).
  */
 export function guardWrite(req: RouteReq, res: RouteRes, allowed: readonly string[] = ['POST']): boolean {
@@ -122,11 +162,15 @@ export function guardWrite(req: RouteReq, res: RouteRes, allowed: readonly strin
   }
 
   const host = headerValue(req, 'host')
+  // The rebinding fence, and it comes first: nothing below can distinguish a
+  // rebound request, because a rebound request looks same-origin by design.
+  if (!isLoopbackHost(host)) return deny()
+  const local = host!.toLowerCase()
+
   const origin = headerValue(req, 'origin')
   if (origin !== undefined) {
     const from = originHost(origin)
-    if (from === null || host === undefined) return deny()
-    return from === host.toLowerCase() ? true : deny()
+    return from !== null && from === local ? true : deny()
   }
 
   const site = headerValue(req, 'sec-fetch-site')?.toLowerCase()
@@ -135,11 +179,12 @@ export function guardWrite(req: RouteReq, res: RouteRes, allowed: readonly strin
   const referer = headerValue(req, 'referer')
   if (referer !== undefined) {
     const from = originHost(referer)
-    if (from === null || host === undefined || from !== host.toLowerCase()) return deny()
+    if (from === null || from !== local) return deny()
   }
 
   // No Origin, no Sec-Fetch-Site (and no usable Referer): local non-browser
-  // client. Fail-open here, by explicit product decision — see the ceiling note.
+  // client, already proven to be addressing a loopback Host. Fail-open here, by
+  // explicit product decision — see the ceiling note.
   return true
 }
 

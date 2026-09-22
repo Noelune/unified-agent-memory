@@ -476,8 +476,8 @@ else:
 | `cache-control` | 恒为 `no-store` |
 | 失败降级 | core 不可用一律 `{ok:false}`，**不产生 500**；仅序列化失败（循环引用等）才 500 |
 
-> 写路由 `/dismiss` 在 `guard()` 之上**再加一道同源校验**（`guardWrite`，见 §7.6）；
-> 四条读路由**只用** `guard()`，行为未变。
+> 写路由 `/dismiss` 在 `guard()` 之上**再加两道校验**：`Host` 必须是本机、且请求同源
+> （`guardWrite`，见 §7.6）；四条读路由**只用** `guard()`，行为未变。
 
 ### 7.2 路由总表
 
@@ -487,7 +487,7 @@ else:
 | 2 | GET/HEAD | `/api/dsh-unified-agent-memory/search` | `q`（**必填**）、`hybrid=1` | 200 `{ok,query,count,results}` | 缺 `q`/`q` 空 → **400**；core 不可用 → **200** `{ok:false,...}` |
 | 3 | GET/HEAD | `/api/dsh-unified-agent-memory/preview` | `view` ∈ `pending`\|`recent`\|`forgetting`\|`conflicts`（缺省 `pending`）、`limit` | 200 `{ok,view,status,count,items}` | 非法 `view` → **400**；core 不可用 → **200** `{ok:false,...}` |
 | 4 | GET/HEAD | `/api/dsh-unified-agent-memory/note` | `name`（**必填**，提交区内文件名） | 200 `{ok,name,body,reason}` | 缺 `name` → **400**；读不到 → **200** `{ok:true, body:null, reason}`；core 不可用 → **200** `{ok:false}` |
-| 5 | **POST** | `/api/dsh-unified-agent-memory/dismiss` | body `{"name":"..."}` | 200 `{ok,name,reason}` | 本地校验拒 → **400**；体超 2048 字节 → **413**；跨站 `Origin` → **403**；业务拒绝 → **409**；core 不可用 → **409** |
+| 5 | **POST** | `/api/dsh-unified-agent-memory/dismiss` | body `{"name":"..."}` | 200 `{ok,name,reason}` | 本地校验拒 → **400**；体超 2048 字节 → **413**；`Host` 非本机或跨站 → **403**；业务拒绝 → **409**；core 不可用 → **409** |
 
 **关键区别——降级为 200 还是 4xx，看的是「谁的错」：**
 
@@ -569,17 +569,26 @@ else:
 
 ### 7.6 写路由的同源要求（`guardWrite`）
 
-**只有 `/dismiss` 这一条写路由**额外要求**同源**：跨站请求一律 **403**
-（`{"ok":false,"error":"forbidden: cross-site write"}`），且**不会 spawn core**。
+**只有 `/dismiss` 这一条写路由**额外加两道校验：**`Host` 必须是本机**，且请求必须**同源**。
+任一不满足 → **403**（`{"ok":false,"error":"forbidden: cross-site write"}`），且**不会 spawn core**。
 
 判定顺序（全程 fail-closed）：
 
-| 情形 | 结果 |
-|---|---|
-| `Origin` 存在 | 必须与请求自身的 `Host` 同源；跨站、不可解析、或 `Origin` 与本请求 `Host` 不一致（DNS rebinding）→ **403** |
-| `Origin` 缺失、`Sec-Fetch-Site` 存在 | `same-origin` / `none` → 放行；其余（含 `cross-site`、`same-site`）→ **403** |
-| 两者都缺失 | **放行**——这是**本机非浏览器客户端**（curl、其他 Agent）的典型形态，刻意保留 |
-| `Origin` 缺失但有 `Referer` | 仅作**补充**信号：存在且跨站 → **403**；不单独构成放行依据 |
+| # | 情形 | 结果 |
+|---|---|---|
+| 1 | **`Host` 必须是本机**（`127.0.0.1` / `localhost` / `[::1]`，可带端口，大小写不敏感） | 否则（含 `Host` 缺失）→ **403** |
+| 2 | `Host` 本机 + `Origin` 存在 | 必须与 `Host` 同源；跨站或不可解析 → **403** |
+| 3 | `Host` 本机 + `Origin` 缺失、`Sec-Fetch-Site` 存在 | `same-origin` / `none` → 放行；其余（含 `cross-site`、`same-site`）→ **403** |
+| 4 | `Host` 本机 + `Origin`、`Sec-Fetch-Site` 都缺失 | **放行**——本机非浏览器客户端（curl、其他 Agent）的典型形态，刻意保留 |
+| 5 | `Host` 本机 + `Origin` 缺失但有 `Referer` | 仅作**补充**信号：存在且跨站 → **403** |
+
+**为什么第 1 条单独就够挡 DNS rebinding，而第 2 条的「Origin 等于 Host」不行**：
+DNS rebinding 的本质是**攻击者页面与目标看起来同源**。浏览器从 `http://evil.com` 发请求 →
+`Origin: http://evil.com`；因 DNS 已重绑定到 `127.0.0.1`，请求打到本机，**但 `Host` 头仍是 `evil.com`**。
+于是 `Origin === Host` 判定为「同源」→ 放行——**对 rebinding 完全无效**（这正是第一轮修复的漏洞）。
+rebinding **无法伪造本机 `Host`**：浏览器要访问攻击者域名，`Host` 必然是该域名。
+因此「`Host` 必须是本机」是与 `Origin` 无关的独立判据，**它才是 rebinding 的围栏**。
+第 2–5 条继续负责普通 CSRF（其 `Host` 确实是 `127.0.0.1:3081`，能过第 1 条）。
 
 **为什么需要这一层**：五条路由都注册为 `kind: 'exact'`，而宿主的 `match()` **先查 exact 表、
 命中即返回**，之后才走 `/api` prefix——因此 exact 路由**完全绕过**宿主注册在 `/api` 上的
@@ -589,9 +598,12 @@ else:
 **读路由（`/status`、`/search`、`/preview`、`/note`）刻意不加这一层**：
 本机其他 Agent 用 curl 直读记忆库是正常用法，且它们不写。`guard()` 的既有签名与读路由行为均未改动。
 
-> **已知上限（`ponytail:` 记录）**：`Origin` 与 `Sec-Fetch-Site` 都缺失时放行，
-> 因此一个**不发送任何这两个头**的最小化 HTTP 客户端与 curl 不可区分，会被放行。
-> 要彻底封闭需要插件与浏览器客户端之间的共享密钥，而 CLI 路径无法提供该密钥。
+> **已知上限（`ponytail:` 记录）**：`Host` 为本机、但 `Origin` 与 `Sec-Fetch-Site` 都缺失时放行，
+> 因此一个**不发送这两个头、且把 `Host` 写成 `127.0.0.1`** 的最小化 HTTP 客户端与 curl 不可区分，
+> 会被放行。要彻底封闭需要插件与浏览器客户端之间的共享密钥，而 CLI 路径无法提供该密钥。
+
+> **本机 CLI 的 `Host`**：HTTP/1.1 下每个客户端都会发 `Host`（curl 发 `127.0.0.1:3081`），
+> 因此第 1 条不会影响 curl / 其他 Agent；只有**没有 `Host` 的畸形请求**会被拒。
 
 ---
 

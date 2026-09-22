@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { guard, guardWrite, isLoopback, queryParam, readBody, sendJson } from '../src/routes.ts'
+import {
+  guard,
+  guardWrite,
+  isLoopback,
+  isLoopbackHost,
+  queryParam,
+  readBody,
+  sendJson,
+} from '../src/routes.ts'
 
 function fakeRes() {
   const calls: { code?: number; headers?: Record<string, string>; body?: string } = {}
@@ -49,6 +57,39 @@ describe('isLoopback', () => {
   it('rejects everything else', () => {
     expect(isLoopback('192.168.1.5')).toBe(false)
     expect(isLoopback(undefined)).toBe(false)
+  })
+})
+
+describe('isLoopbackHost', () => {
+  // The Host header is what DNS rebinding cannot hide (see guardWrite): the
+  // attacker's name rides in it even after its DNS answer flips to 127.0.0.1.
+  it('accepts the loopback spellings, with or without a port and in any case', () => {
+    expect(isLoopbackHost('127.0.0.1')).toBe(true)
+    expect(isLoopbackHost('127.0.0.1:3081')).toBe(true)
+    expect(isLoopbackHost('localhost')).toBe(true)
+    expect(isLoopbackHost('localhost:3081')).toBe(true)
+    expect(isLoopbackHost('LOCALHOST:3081')).toBe(true)
+    expect(isLoopbackHost('[::1]')).toBe(true)
+    expect(isLoopbackHost('[::1]:3081')).toBe(true)
+  })
+
+  it('rejects a foreign name, even one wearing a loopback port', () => {
+    expect(isLoopbackHost('evil.com')).toBe(false)
+    expect(isLoopbackHost('evil.com:3081')).toBe(false)
+    expect(isLoopbackHost('localhost.evil.com')).toBe(false)
+    expect(isLoopbackHost('127.0.0.1.evil.com')).toBe(false)
+    expect(isLoopbackHost('127.0.0.1:3081.evil.com')).toBe(false)
+  })
+
+  it('rejects a missing or empty Host', () => {
+    expect(isLoopbackHost(undefined)).toBe(false)
+    expect(isLoopbackHost('')).toBe(false)
+  })
+
+  it('rejects a non-loopback address literal', () => {
+    expect(isLoopbackHost('10.0.0.9')).toBe(false)
+    expect(isLoopbackHost('10.0.0.9:3081')).toBe(false)
+    expect(isLoopbackHost('[::2]:3081')).toBe(false)
   })
 })
 
@@ -142,6 +183,76 @@ describe('guardWrite', () => {
     expect(res.calls.code).toBe(403)
   })
 
+  it('403s a rebinding request whose Origin and Host agree on the attacker name', () => {
+    // The case the first pass missed. Rebinding's whole point is that the page
+    // and the target LOOK same-origin, so Origin == Host == evil.com — a
+    // same-origin compare is satisfied and lets the write through. Only
+    // "Host must be loopback" catches it; Origin never can.
+    const res = fakeRes()
+    const ok = guardWrite(writeReq({ origin: 'http://evil.com', host: 'evil.com' }), res)
+    expect(ok).toBe(false)
+    expect(res.calls.code).toBe(403)
+    expect(res.calls.headers?.['cache-control']).toBe('no-store')
+    expect(JSON.parse(res.calls.body!)).toEqual({ ok: false, error: 'forbidden: cross-site write' })
+  })
+
+  it('403s the same agreeing-Origin rebinding request when Sec-Fetch-Site is absent', () => {
+    const res = fakeRes()
+    const ok = guardWrite(
+      writeReq({ origin: 'http://evil.com', host: 'evil.com:3081' }),
+      res,
+    )
+    expect(ok).toBe(false)
+    expect(res.calls.code).toBe(403)
+  })
+
+  it('403s a bare rebinding request that only carries a foreign Host', () => {
+    // No Origin, no Sec-Fetch-Site, no Referer: the carve-out for headerless
+    // local clients must not become a blanket pass for any Host.
+    const res = fakeRes()
+    const ok = guardWrite(writeReq({ host: 'evil.com' }), res)
+    expect(ok).toBe(false)
+    expect(res.calls.code).toBe(403)
+  })
+
+  it('403s a headerless request that does not carry a local Host at all', () => {
+    // A request with NO Host header is not a local browser request either.
+    expect(guardWrite(writeReq({}), fakeRes())).toBe(false)
+  })
+
+  it('allows the local loopback Host spellings with a matching Origin', () => {
+    expect(
+      guardWrite(writeReq({ host: '127.0.0.1:3081', origin: 'http://127.0.0.1:3081' }), fakeRes()),
+    ).toBe(true)
+    expect(
+      guardWrite(writeReq({ host: 'localhost:3081', origin: 'http://localhost:3081' }), fakeRes()),
+    ).toBe(true)
+    expect(
+      guardWrite(writeReq({ host: '[::1]:3081', origin: 'http://[::1]:3081' }), fakeRes()),
+    ).toBe(true)
+  })
+
+  it('allows a local loopback Host with Sec-Fetch-Site and no Origin', () => {
+    expect(
+      guardWrite(writeReq({ host: '127.0.0.1:3081', 'sec-fetch-site': 'same-origin' }), fakeRes()),
+    ).toBe(true)
+    expect(
+      guardWrite(writeReq({ host: 'localhost:3081', 'sec-fetch-site': 'none' }), fakeRes()),
+    ).toBe(true)
+  })
+
+  it('403s a foreign Host even when Sec-Fetch-Site claims same-origin', () => {
+    // Sec-Fetch-Site is attacker-controllable in a hand-rolled client, so the
+    // Host fence must not be bypassable by claiming a benign fetch context.
+    const res = fakeRes()
+    const ok = guardWrite(
+      writeReq({ host: 'evil.com', 'sec-fetch-site': 'same-origin' }),
+      res,
+    )
+    expect(ok).toBe(false)
+    expect(res.calls.code).toBe(403)
+  })
+
   it('allows Origin that matches the Host it was sent to', () => {
     const res = fakeRes()
     const ok = guardWrite(
@@ -161,19 +272,26 @@ describe('guardWrite', () => {
   it.each(['same-origin', 'none', 'SAME-ORIGIN'])(
     'allows Sec-Fetch-Site: %s when Origin is absent',
     (site) => {
-      expect(guardWrite(writeReq({ 'sec-fetch-site': site }), fakeRes())).toBe(true)
+      expect(
+        guardWrite(writeReq({ host: '127.0.0.1:3081', 'sec-fetch-site': site }), fakeRes()),
+      ).toBe(true)
     },
   )
 
   it('allows a headerless caller — the local CLI shape', () => {
-    expect(guardWrite(writeReq({}), fakeRes())).toBe(true)
+    // Every real HTTP client sends Host (curl sends `127.0.0.1:3081`); the shape
+    // under test is "no Origin, no Sec-Fetch-Site, no Referer" against a loopback
+    // Host. A request with no Host at all is a different case, tested above.
+    expect(guardWrite(writeReq({ host: '127.0.0.1:3081' }), fakeRes())).toBe(true)
   })
 
   it('403s a same-site (not same-origin) fetch', () => {
     // `same-site` means a different origin on the same registrable domain: a
     // sibling subdomain can still be attacker-controlled, so it is not enough.
     const res = fakeRes()
-    expect(guardWrite(writeReq({ 'sec-fetch-site': 'same-site' }), res)).toBe(false)
+    expect(
+      guardWrite(writeReq({ host: '127.0.0.1:3081', 'sec-fetch-site': 'same-site' }), res),
+    ).toBe(false)
     expect(res.calls.code).toBe(403)
   })
 

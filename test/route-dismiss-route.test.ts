@@ -77,7 +77,13 @@ function capture() {
   return { res, out }
 }
 
-/** A request whose `on` replays `body` as one data chunk then ends. */
+/**
+ * A request whose `on` replays `body` as one data chunk then ends.
+ *
+ * `Host` defaults to the loopback authority the real client would send: every
+ * HTTP/1.1 client emits it, so omitting it made these fakes model a request that
+ * cannot occur, and the Host fence (H-1 round 2) surfaced that as failures.
+ */
 function reqWithBody(
   body: string,
   method = 'POST',
@@ -87,7 +93,7 @@ function reqWithBody(
   return {
     socket: { remoteAddress },
     method,
-    headers,
+    headers: { host: '127.0.0.1:3081', ...headers },
     on(ev: string, cb: (chunk?: unknown) => void) {
       if (ev === 'data') cb(body)
       if (ev === 'end') cb()
@@ -210,12 +216,24 @@ describe('POST /dismiss route', () => {
   it('refuses a cross-site Origin with 403 and never spawns the core', async () => {
     const out = await post('{"name":"a.md"}', 'POST', '127.0.0.1', {
       origin: 'https://evil.example.com',
+      // A real cross-site request reaches us addressed to the loopback authority;
+      // the Origin is what marks it cross-site.
       host: '127.0.0.1:3081',
     })
 
     expect(out.code).toBe(403)
     expect(out.headers['cache-control']).toBe('no-store')
     expect(JSON.parse(out.body).ok).toBe(false)
+    expect(vi.mocked(runCore)).not.toHaveBeenCalled()
+  })
+
+  it('refuses a cross-site Origin even when the Host is a rebinding name', async () => {
+    const out = await post('{"name":"a.md"}', 'POST', '127.0.0.1', {
+      origin: 'https://evil.example.com',
+      host: 'evil.example.com',
+    })
+
+    expect(out.code).toBe(403)
     expect(vi.mocked(runCore)).not.toHaveBeenCalled()
   })
 
@@ -245,6 +263,75 @@ describe('POST /dismiss route', () => {
     expect(vi.mocked(runCore)).not.toHaveBeenCalled()
   })
 
+  it('refuses a DNS-rebinding request whose Origin and Host both say evil.com', async () => {
+    // The bypass this round fixes: after the DNS answer flips to 127.0.0.1 the
+    // page and the target look same-origin, so Origin == Host == evil.com and a
+    // same-origin compare passes. Host must be loopback, independent of Origin.
+    const out = await post('{"name":"a.md"}', 'POST', '127.0.0.1', {
+      origin: 'http://evil.com',
+      host: 'evil.com',
+    })
+
+    expect(out.code).toBe(403)
+    expect(out.headers['cache-control']).toBe('no-store')
+    expect(vi.mocked(runCore)).not.toHaveBeenCalled()
+  })
+
+  it('refuses a rebinding request with no Sec-Fetch-Site', async () => {
+    const out = await post('{"name":"a.md"}', 'POST', '127.0.0.1', {
+      origin: 'http://evil.com',
+      host: 'evil.com',
+    })
+
+    expect(out.code).toBe(403)
+    expect(vi.mocked(runCore)).not.toHaveBeenCalled()
+  })
+
+  it('refuses a bare rebinding request carrying only a foreign Host', async () => {
+    const out = await post('{"name":"a.md"}', 'POST', '127.0.0.1', { host: 'evil.com' })
+
+    expect(out.code).toBe(403)
+    expect(vi.mocked(runCore)).not.toHaveBeenCalled()
+  })
+
+  it('refuses a rebinding request that claims Sec-Fetch-Site: same-origin', async () => {
+    const out = await post('{"name":"a.md"}', 'POST', '127.0.0.1', {
+      host: 'evil.com',
+      'sec-fetch-site': 'same-origin',
+    })
+
+    expect(out.code).toBe(403)
+    expect(vi.mocked(runCore)).not.toHaveBeenCalled()
+  })
+
+  it('allows a localhost Host with a matching Origin', async () => {
+    vi.mocked(runCore).mockResolvedValue({ ok: true, output: JSON.stringify({
+      ok: true, command: 'dismiss',
+      data: { ok: true, name: 'a.md', movedTo: '已处理/a.md', reason: null } }) })
+
+    const out = await post('{"name":"a.md"}', 'POST', '127.0.0.1', {
+      host: 'localhost:3081',
+      origin: 'http://localhost:3081',
+    })
+
+    expect(out.code).toBe(200)
+    expect(vi.mocked(runCore)).toHaveBeenCalledTimes(1)
+  })
+
+  it('allows the IPv6 loopback Host spelling with a matching Origin', async () => {
+    vi.mocked(runCore).mockResolvedValue({ ok: true, output: JSON.stringify({
+      ok: true, command: 'dismiss',
+      data: { ok: true, name: 'a.md', movedTo: '已处理/a.md', reason: null } }) })
+
+    const out = await post('{"name":"a.md"}', 'POST', '127.0.0.1', {
+      host: '[::1]:3081',
+      origin: 'http://[::1]:3081',
+    })
+
+    expect(out.code).toBe(200)
+    expect(vi.mocked(runCore)).toHaveBeenCalledTimes(1)
+  })
+
   it('refuses Sec-Fetch-Site: cross-site with no Origin', async () => {
     const out = await post('{"name":"a.md"}', 'POST', '127.0.0.1', {
       'sec-fetch-site': 'cross-site',
@@ -270,16 +357,26 @@ describe('POST /dismiss route', () => {
   })
 
   it('allows a headerless local CLI caller', async () => {
-    // curl and the other agents send neither header. Keeping this working is a
-    // deliberate product decision; see the guardWrite comment for its ceiling.
+    // curl and the other agents send Host (curl sends `127.0.0.1:3081`) but no
+    // Origin / Sec-Fetch-Site / Referer. Keeping that working is a deliberate
+    // product decision; see the guardWrite comment for its ceiling.
     vi.mocked(runCore).mockResolvedValue({ ok: true, output: JSON.stringify({
       ok: true, command: 'dismiss',
       data: { ok: true, name: 'a.md', movedTo: '已处理/a.md', reason: null } }) })
 
-    const out = await post('{"name":"a.md"}')
+    const out = await post('{"name":"a.md"}', 'POST', '127.0.0.1', { host: '127.0.0.1:3081' })
 
     expect(out.code).toBe(200)
     expect(vi.mocked(runCore)).toHaveBeenCalledTimes(1)
+  })
+
+  it('answers 400 for a request with no Host at all, never spawning the core', async () => {
+    // HTTP/1.1 requires Host, so a request without one is malformed. The write
+    // fence refuses it rather than treating "no Host" as permission.
+    const out = await post('{"name":"a.md"}', 'POST', '127.0.0.1', { host: '' })
+
+    expect(out.code).toBe(403)
+    expect(vi.mocked(runCore)).not.toHaveBeenCalled()
   })
 
   it('answers 413 for a body over the 2048-byte cap', async () => {
