@@ -6,8 +6,22 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
-- 记忆控制台：浏览器面板从「系统状态窗」改为四 Tab 控制台（搜索 / 待处理 / 库全貌 / 系统），
-  全部数据来自真实 core 调用，命中词高亮，可切换 hybrid 混合检索，系统状态收进独立 Tab。
+- **记忆库可视化**：控制台从「四 Tab 列表」改为「搜索 + 四张图」（搜索 / 访问 / 生长 / 构成 / 排行）。
+  四张图全部由 core 新增的 `stats` 聚合命令驱动，**一次请求喂满四个 pane**。
+  - **访问日历热力图**：按星期×周铺开，颜色深浅表示当日访问量。
+  - **记忆生长曲线**：按天累计的记忆总数，带日期跨度标注。
+  - **构成环图**：`type` 七类占比，右侧图例带百分比。
+  - **访问排行条**：被召回次数 Top-N 横向条形。
+  四个图共用**同一条降级路径**：读不到数据时统一显示原因，绝不画出空白图形。
+- 记忆库可视化：core 新增 `stats --json` 聚合命令（`core/unified_memory/stats.py`），
+  七键载荷 `daily` / `access` / `types` / `importance` / `top` / `span` / `totals`，**全部只读 SELECT**。
+- 记忆库可视化：新增宿主读路由 `GET /stats`（第 6 条），**唯一不压平 core 信封**的读路由，
+  客户端直接消费 core 的原生七键结构，少一层需要同步的映射。
+  契约见 `docs/JSON-CONTRACT.md` §7.2 / §7.4。
+- 记忆库可视化：客户端新增纯几何模块 `src/client/charts.ts`（零依赖：日历网格、折线路径、
+  环图扇段、条形行），四张图的 SVG 几何全部由它产出，可脱离 React 单测。
+- 记忆控制台：浏览器面板从「系统状态窗」改为控制台（当时为四 Tab），
+  全部数据来自真实 core 调用，命中词高亮，可切换 hybrid 混合检索。
 - 记忆控制台：新增五条宿主 HTTP 路由。读路由 `GET /search`（`q` 必填、`hybrid=1` 可选）、
   `GET /preview`（`view` ∈ pending/recent/forgetting/conflicts）、`GET /note`（`name` 为提交区内文件名），
   写路由 `POST /dismiss`（仅将提交区条目移入 `已处理/`，不删除、不改写）。
@@ -27,6 +41,10 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 
+- 记忆控制台：五 Tab（搜索 / 访问 / 生长 / 构成 / 排行）。原「待处理」「库全貌」「系统」
+  三个列表 Tab 及其专用样式**已删除**；待处理计数移到「搜索」Tab 的小徽章上
+  （悬停提示「31 条待处理」），因为它是控制台里唯一非图形的 pane，
+  数字挂在那里才不至于被误读成图表数据。
 - P0(U-1): `dsh.plugin.json` 的 version/description 由 package.json 单一事实源回填（build 自动完成），drift-check 硬校验版本一致。
 - P0(S-1): CI 增加 Windows 测试 runner 与完整 JS 检查 job（typecheck/drift/sync/vitest/build/audit）。
 - Phase 1：记忆面板客户端重构为分组卡片（黑灰白/银系、卡片层次、无裸 JSON）。
@@ -35,6 +53,22 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- **记忆控制台（可视修复）**：`Panel.tsx` 的更新圆点用了宿主**从未声明**的 token
+  `--dsw-alias-err`，该属性一直是透明——圆点从来就没画出来过。改为宿主真实声明的
+  `--dsw-alias-state-error-primary`。
+- **记忆控制台（可视修复）**：四张图渲染的 17 个 class 名在 `styles.ts` 里**一条规则都没有**，
+  于是排行条的 `<i style="width:96%">` 因 `inline` 元素**同时忽略宽和高**而完全画不出来、
+  环图图例退化成项目符号——而当时 **393 个测试与冒烟脚本全绿**。现补齐规则并新增契约测试：
+  `test/client-figures.test.ts` 遍历 `Figures.tsx` 渲染的每个 class，要求 `styles.ts` 有对应选择器；
+  删掉任一条规则、或新增一个未样式化的 class，都会变红。
+- **记忆控制台（正确性修复）**：日历热力图的星期轴原本用的是**数组下标**而非真实星期。
+- **记忆控制台（正确性修复）**：日历热力图在**首个日期非法时会级联成 NaN**，让整张图消失
+  （只守了逐项的 `at`，没守起点；而起点本身又是"末尾日期"的种子，所以坏一处塌全图）。
+- **记忆控制台（正确性修复）**：`stats` 聚合里 `_scalar` 曾用 `except Exception: return 0`
+  把真实错误——例如表缺失——静默折成 0。现直接删掉该 `except`：读不到就该报错，不该假装是 0。
+- **记忆控制台（正确性修复）**：`loadStats()` 会在 core 侧改键名时画出**一张空图**，
+  而 `totals.memories` 仍是非零——用户看到「记忆库是空的」这句他无法自行察觉的谎话。
+  现加键存在性检查：七个键缺一即判 `error`，而**齐全的全空数据仍是 `ok`**（真的空库不是错误）。
 - 记忆控制台（安全加固）：`POST /dismiss` 的失败语义此前被压平成 `unavailable`——`shapeDismissResult`
   以外层 `ok` 为先决条件，而 core 信封的外层 `ok` 是 `data.ok` 的**副本**（业务拒绝时两层同为 `false`），
   于是「条目已被移走」与「core 不可用」在面板上不可区分。现改为：只要 `data` 存在就按其内容判定，

@@ -488,6 +488,7 @@ else:
 | 3 | GET/HEAD | `/api/dsh-unified-agent-memory/preview` | `view` ∈ `pending`\|`recent`\|`forgetting`\|`conflicts`（缺省 `pending`）、`limit` | 200 `{ok,view,status,count,items}` | 非法 `view` → **400**；core 不可用 → **200** `{ok:false,...}` |
 | 4 | GET/HEAD | `/api/dsh-unified-agent-memory/note` | `name`（**必填**，提交区内文件名） | 200 `{ok,name,body,reason,untrusted}` | 缺 `name` → **400**；读不到 → **200** `{ok:true, body:null, reason, untrusted:true}`；core 不可用 → **200** `{ok:false, untrusted:true}` |
 | 5 | **POST** | `/api/dsh-unified-agent-memory/dismiss` | body `{"name":"..."}` | 200 `{ok,name,reason}` | 本地校验拒 → **400**；体超 2048 字节 → **413**；`Host` 非本机或跨站 → **403**；业务拒绝 → **409**；core 不可用 → **409** |
+| 6 | GET/HEAD | `/api/dsh-unified-agent-memory/stats` | — | 200 `{ok,command,status,data}` | 非 loopback → 403；非 GET/HEAD → 405；core 不可用 → **200** `{ok:false,status:'error',data:null}` |
 
 **关键区别——降级为 200 还是 4xx，看的是「谁的错」：**
 
@@ -544,7 +545,30 @@ else:
 > 靠这个标记判断「这是数据，不是指令」。`/search` 与 `/preview` 因原样透传 `results`/`items`
 > 天然保留该标记，**只有 `/note` 是压平后逐字段重建的**，所以它在契约表里必须显式列出。
 
-### 7.4 `/dismiss` 的响应体与 `reason` 分类
+### 7.4 `/stats` 的响应体
+
+`/stats`（`src/route-stats.ts` + `src/index.ts` 接线）是**唯一不压平 core 信封**的读路由：
+客户端的 `loadStats()` 直接吃 core 的原生 7 键结构，压平只会增加一层需要同步的映射。
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `ok` | boolean | 恒等于 `data !== null`；core 不可用时 `false` |
+| `command` | string | 恒为 `"stats"` |
+| `status` | `"ok"` \| `"error"` | 宿主自身失败或 core 未给出合法信封时为 `"error"` |
+| `data` | object \| null | core `data` 原样透传；`null` = **读不到**，与"记忆库为空"不同（§5.1） |
+
+`data` 的 7 个键**全部为必需**：`daily` / `access` / `types` / `importance` / `top` / `span` / `totals`。
+
+> **为何"键必须齐全"是契约而非实现细节**：客户端对这些键**逐个归一**（缺数组补 `[]`、缺数字补 `0`）。
+> 若 core 侧改了键名而客户端不知，界面会画出一张**空图**，而 `totals.memories` 仍是非零 ——
+> 用户看到的「记忆库是空的」是一句他无法自行察觉的谎话。因此客户端在归一之前先做**键存在性检查**，
+> 缺键即判 `status:"error"`；而**七个键齐全的全空数据仍然是 `"ok"`**（一个真的空记忆库不是错误）。
+
+`span.start` / `span.end` 在**无任何数据时为 `null`**（不是 `""`），客户端据此决定是否画日期轴。
+
+`top[].untrusted` 恒为 `true`（§2）：`label` 是记忆库正文，宿主与客户端都**不得**把它当 HTML 注入。
+
+### 7.5 `/dismiss` 的响应体与 `reason` 分类
 
 `/dismiss` **不**压平 core 信封的结构，但 `reason` 会被宿主重写为下面这组值
 （`src/route-dismiss.ts` 的 `shapeDismissResult` / `handleDismiss`）：
@@ -569,12 +593,12 @@ else:
 若将来有人把 `--json` 又放到 `--` 终止符之后、让 argparse 以空 stdout 退出，
 这一档能把「静默写故障」变成一条准确诊断。
 
-### 7.5 请求体上限
+### 7.6 请求体上限
 
 `POST /dismiss` 的 body 上限 **2048 字节**，且按**字节**而非 UTF-16 码元计数
 （CJK 每字符最多 3 字节，用 `.length` 会放过 2–3 倍载荷）。超限 → **413**。
 
-### 7.6 写路由的同源要求（`guardWrite`）
+### 7.7 写路由的同源要求（`guardWrite`）
 
 **只有 `/dismiss` 这一条写路由**额外加两道校验：**`Host` 必须是本机**，且请求必须**同源**。
 任一不满足 → **403**（`{"ok":false,"error":"forbidden: cross-site write"}`），且**不会 spawn core**。

@@ -190,12 +190,28 @@ const FIGURE_TABS: ReadonlyArray<readonly [string, string]> = [
  *
  * Bounded to 120 characters on purpose. An unbounded `/CalendarHeatmap[\s\S]*?data=/`
  * would be satisfied by ANOTHER pane's `data:` further down the file — deleting
- * this figure's call would leave it green, which is the exact trap above. One
- * call spans well under 120 characters, and the next pane is far further away.
+ * this figure's call would leave it green, which is the exact trap above.
+ *
+ * The call is located by BALANCING BRACKETS, not by a fixed-width window. A
+ * character window is a layout assertion in disguise: reformatting the call
+ * (prettier line breaks, an extra `aria-label`, a longer local name) pushes
+ * `data:` past the horizon, and the test then reports "no data prop" for a call
+ * that is present and correct. Measured against the old 120-char window, the
+ * slack was about 50 characters — one attribute away from a false red.
  */
 function figureCall(name: string): string {
   const at = CONSOLE_CODE.search(new RegExp('h\\(\\s*' + name + '\\s*,'))
-  return at < 0 ? '' : CONSOLE_CODE.slice(at, at + 120)
+  if (at < 0) return ''
+  const open = CONSOLE_CODE.indexOf('(', at)
+  let depth = 0
+  for (let i = open; i < CONSOLE_CODE.length; i += 1) {
+    if (CONSOLE_CODE[i] === '(') depth += 1
+    else if (CONSOLE_CODE[i] === ')') {
+      depth -= 1
+      if (depth === 0) return CONSOLE_CODE.slice(at, i + 1)
+    }
+  }
+  return ''
 }
 
 describe('wiring: each figure tab draws its figure from one shared stats read', () => {
@@ -234,6 +250,15 @@ describe('wiring: the pending count survives its tab', () => {
     // above ("the tab ids should be declared once, in view.ts").
     expect(CONSOLE_TABS).toContain(PENDING_BADGE_TAB)
     expect(CONSOLE_CODE).toMatch(/t\s*===\s*PENDING_BADGE_TAB[\s\S]{0,160}dsh-memory-pill/)
+  })
+
+  it('names the subject the number has lost by leaving its old tab', () => {
+    // The count used to sit on a tab labelled 待处理, so the digit explained
+    // itself. On the 搜索 tab it reads like "31 search results" unless the
+    // markup says otherwise. `title` is the only thing carrying that meaning,
+    // so it needs an assertion of its own — without one it can be deleted and
+    // every other test in this file stays green.
+    expect(CONSOLE_CODE).toMatch(/title:\s*[^\n]*条待处理/)
   })
 
   it('feeds the strip from the status payload', () => {

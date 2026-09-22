@@ -1,7 +1,7 @@
 /**
  * dsh-unified-agent-memory — console display logic.
  *
- * The decisions the four-tab console makes about *what to show* live here,
+ * The decisions the console makes about *what to show* live here,
  * apart from `Console.tsx`, for one concrete reason: the component imports
  * `../deps.ts` (React) and cannot be loaded by the Node test runner. Anything
  * left inside the component is only reachable by asserting on source strings,
