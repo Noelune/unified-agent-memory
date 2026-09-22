@@ -74,6 +74,37 @@ describe('calendarGrid', () => {
   it('returns an empty array for no data', () => {
     expect(calendarGrid([])).toEqual([])
   })
+
+  it('does not let an unparseable first date cascade into the later cells', () => {
+    // The first stamp seeds the origin. If it is NaN the origin is NaN, so
+    // every `at - start` is NaN and the whole heatmap collapses. The later,
+    // perfectly valid days must keep their real geometry.
+    const days = [
+      { date: '', count: 0 }, // unparseable
+      { date: '2026-08-17', count: 1 }, // Monday
+      { date: '2026-08-18', count: 2 }, // Tuesday
+    ]
+    const cells = calendarGrid(days)
+    // The origin falls back to 2026-08-17 (the first parseable stamp), so the
+    // valid days keep consecutive weekdays instead of collapsing to NaN.
+    expect(cells[1]).toMatchObject({ x: 0, y: 0 }) // origin day 08-17
+    expect(cells[2]).toMatchObject({ x: 0, y: 1 }) // 08-18 is the next weekday
+    expect(cells[2].y - cells[1].y).toBe(1)
+    // And the geometry is self-consistent with the fallback origin.
+    expect(cells[2].y).toBe(new Date('2026-08-18T00:00:00Z').getUTCDay() - 1)
+  })
+
+  it('never emits NaN coordinates when the first date is unparseable', () => {
+    const days = [
+      { date: 'garbage', count: 0 },
+      { date: '2026-08-17', count: 1 },
+      { date: '2026-08-18', count: 2 },
+    ]
+    for (const cell of calendarGrid(days)) {
+      expect(Number.isFinite(cell.x)).toBe(true)
+      expect(Number.isFinite(cell.y)).toBe(true)
+    }
+  })
 })
 
 describe('linePath', () => {
@@ -90,6 +121,14 @@ describe('linePath', () => {
   it('treats a flat series as a horizontal line, never NaN', () => {
     const d = linePath([{ date: '2026-01-01', count: 7 }, { date: '2026-01-02', count: 7 }], 100, 50)
     expect(d).not.toContain('NaN')
+  })
+
+  it('pins an all-zero series to the baseline instead of dividing by zero', () => {
+    // `max === 0` is the only input that reaches the `max <= 0` guard: a
+    // non-zero flat series has `max > 0` and never exercises it.
+    const d = linePath([{ date: '2026-01-01', count: 0 }, { date: '2026-01-02', count: 0 }], 100, 50)
+    expect(d).not.toContain('NaN')
+    expect(d).toBe('M0.00,50.00 L100.00,50.00')
   })
 })
 

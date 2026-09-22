@@ -41,8 +41,17 @@ function dayMs(date: string): number {
 export function calendarGrid(days: DayCount[]): Cell[] {
   if (days.length === 0) return []
   const max = days.reduce((m, d) => Math.max(m, d.count), 0)
-  const start = dayMs(days[0].date)
-  let last = start
+  // Both ends of the offset must be finite. The origin cannot blindly trust
+  // `days[0].date`: one bad first stamp makes every `at - start` NaN and
+  // collapses the whole grid, valid later days included. Fall back to the
+  // first parseable stamp (or, if there is none, treat the origin as 0).
+  let last = dayMs(days[0].date)
+  let start = last
+  if (!Number.isFinite(start)) {
+    const first = days.find((d) => Number.isFinite(dayMs(d.date)))
+    start = first ? dayMs(first.date) : 0
+  }
+  if (!Number.isFinite(last)) last = start
   return days.map((d) => {
     const ms = dayMs(d.date)
     // `ms - start` is a whole number of days for any real date; keep the last
