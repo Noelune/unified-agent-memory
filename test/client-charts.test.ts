@@ -1,29 +1,78 @@
 import { describe, it, expect } from 'vitest'
 import { calendarGrid, linePath, donutSegments, barRows } from '../src/client/charts.ts'
 
+// Production callers slice the time window before calling; the geometry here
+// only maps `{date,count}` onto a grid. See task-6 fix round 1 for why the
+// dead `weeksBack` parameter was removed instead of implemented.
+//
+// `y` is the weekday, fixed as `0=Sunday .. 6=Saturday` (JavaScript `getDay()`
+// numbering), so a heatmap row always means the same weekday. `x` is the index
+// of the week relative to the first day in the array, so a gap in the data
+// widens a column instead of silently shifting every later day left.
+
 describe('calendarGrid', () => {
-  it('lays days out in columns of seven, oldest first', () => {
-    const days = Array.from({ length: 14 }, (_, i) => ({
-      date: `2026-01-${String(i + 1).padStart(2, '0')}`, count: i,
-    }))
-    const cells = calendarGrid(days, 2)
-    expect(cells).toHaveLength(14)
+  it('places a known span on the weekday row, not the array index row', () => {
+    // 2026-08-16 is a Sunday: the row must come from the date, never from `i`.
+    const days = [
+      { date: '2026-08-16', count: 0 }, // Sunday
+      { date: '2026-08-17', count: 1 }, // Monday
+      { date: '2026-08-18', count: 2 }, // Tuesday
+      { date: '2026-08-19', count: 3 }, // Wednesday
+      { date: '2026-08-20', count: 4 }, // Thursday
+      { date: '2026-08-21', count: 5 }, // Friday
+      { date: '2026-08-22', count: 6 }, // Saturday
+    ]
+    const cells = calendarGrid(days)
+    expect(cells[0].y).toBe(0) // Sunday
+    expect(cells[1].y).toBe(1) // Monday, one row below the day before
+    expect(cells[1].y - cells[0].y).toBe(1)
+    for (const cell of cells) {
+      // 0=Sunday numbering, matching `Date#getUTCDay()`.
+      expect(cell.y).toBe(new Date(`${cell.date}T00:00:00Z`).getUTCDay())
+    }
+    // Seven consecutive days fill the first column and reach the next one.
     expect(cells[0].x).toBe(0)
-    expect(cells[0].y).toBe(0)
-    expect(cells[7].x).toBe(1)   // second week -> next column
-    expect(cells[7].y).toBe(0)
-    expect(cells[8].y).toBe(1)
+    expect(cells[6].x).toBe(0)
+  })
+
+  it('widens the columns across a gap instead of shifting the rows', () => {
+    // Hand-built gapped data: Sunday, Monday, then the following Wednesday.
+    const days = [
+      { date: '2026-08-16', count: 0 }, // Sunday of week 0
+      { date: '2026-08-17', count: 1 }, // Monday of week 0
+      { date: '2026-08-26', count: 2 }, // Wednesday of week 1 (nine-day gap)
+    ]
+    const cells = calendarGrid(days)
+    expect(cells.map((c) => c.y)).toEqual([0, 1, 3])
+    expect(cells.map((c) => c.x)).toEqual([0, 0, 1])
+    // The gap must not drag the third day into Wednesday of the first column.
+    expect(cells[2].x).toBe(1)
+    expect(cells[2].y).toBe(3)
+  })
+
+  it('advances x by one per week even when weeks are skipped', () => {
+    const days = [
+      { date: '2026-08-16', count: 0 }, // week 0
+      { date: '2026-08-24', count: 1 }, // week 1 (Monday)
+      { date: '2026-09-09', count: 2 }, // week 3 (Wednesday), week 2 skipped
+    ]
+    const cells = calendarGrid(days)
+    expect(cells[0].x).toBe(0)
+    expect(cells[1].x).toBe(1)
+    expect(cells[2].x).toBe(3)
+    expect(cells[2].x).toBeGreaterThan(cells[1].x)
+    expect(cells.map((c) => c.y)).toEqual([0, 1, 3])
   })
 
   it('maps counts onto discrete intensity levels', () => {
     const days = [{ date: '2026-01-01', count: 0 }, { date: '2026-01-02', count: 100 }]
-    const cells = calendarGrid(days, 1)
+    const cells = calendarGrid(days)
     expect(cells[0].level).toBe(0)
     expect(cells[1].level).toBeGreaterThan(0)
   })
 
   it('returns an empty array for no data', () => {
-    expect(calendarGrid([], 1)).toEqual([])
+    expect(calendarGrid([])).toEqual([])
   })
 })
 

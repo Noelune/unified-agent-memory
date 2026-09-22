@@ -20,20 +20,44 @@ function levelOf(count: number, max: number): number {
   return Math.max(1, Math.min(LEVELS, Math.ceil((count / max) * LEVELS)))
 }
 
+const DAY_MS = 86_400_000
+
+/** Midnight UTC of a `YYYY-MM-DD` day, in ms. NaN for an unparseable date. */
+function dayMs(date: string): number {
+  return new Date(`${date}T00:00:00Z`).getTime()
+}
+
 /**
  * GitHub-style calendar: one column per week, seven rows per week.
  * Oldest day first, so the grid reads left-to-right like a calendar.
+ *
+ * `y` is the weekday with JavaScript's `getDay()` numbering — `0` is Sunday and
+ * `6` is Saturday — so a row always means the same weekday. `x` is the week
+ * index relative to the first day in `days`, so a gap in the data widens a
+ * column instead of shifting every later day one row left.
+ *
+ * The time window is the caller's business: slice `days` before calling.
  */
-export function calendarGrid(days: DayCount[], _weeksBack: number): Cell[] {
+export function calendarGrid(days: DayCount[]): Cell[] {
   if (days.length === 0) return []
   const max = days.reduce((m, d) => Math.max(m, d.count), 0)
-  return days.map((d, i) => ({
-    x: Math.floor(i / 7),
-    y: i % 7,
-    level: levelOf(d.count, max),
-    date: d.date,
-    count: d.count,
-  }))
+  const start = dayMs(days[0].date)
+  let last = start
+  return days.map((d) => {
+    const ms = dayMs(d.date)
+    // `ms - start` is a whole number of days for any real date; keep the last
+    // valid stamp for an unparseable one so the geometry stays finite.
+    const at = Number.isFinite(ms) ? ms : last
+    last = at
+    const offset = Math.round((at - start) / DAY_MS)
+    return {
+      x: Math.floor(offset / 7),
+      y: ((offset % 7) + 7) % 7,
+      level: levelOf(d.count, max),
+      date: d.date,
+      count: d.count,
+    }
+  })
 }
 
 /** Cumulative growth as an SVG path (straight segments; area fill is the caller's job). */
