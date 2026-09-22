@@ -43,6 +43,7 @@ interface FakeRoute {
       socket?: { remoteAddress?: string }
       method?: string
       url?: string
+      headers?: Record<string, string>
       on?: (ev: string, cb: (chunk?: unknown) => void) => void
     },
     res: { writeHead: (code: number, headers: Record<string, string>) => void; end: (body: string) => void },
@@ -77,10 +78,16 @@ function capture() {
 }
 
 /** A request whose `on` replays `body` as one data chunk then ends. */
-function reqWithBody(body: string, method = 'POST', remoteAddress = '127.0.0.1') {
+function reqWithBody(
+  body: string,
+  method = 'POST',
+  remoteAddress = '127.0.0.1',
+  headers: Record<string, string> = {},
+) {
   return {
     socket: { remoteAddress },
     method,
+    headers,
     on(ev: string, cb: (chunk?: unknown) => void) {
       if (ev === 'data') cb(body)
       if (ev === 'end') cb()
@@ -94,10 +101,15 @@ function dismissRoute() {
   return routes.find((r) => r.path === DISMISS_PATH)!
 }
 
-async function post(body: string, method = 'POST', remoteAddress = '127.0.0.1') {
+async function post(
+  body: string,
+  method = 'POST',
+  remoteAddress = '127.0.0.1',
+  headers: Record<string, string> = {},
+) {
   const route = dismissRoute()
   const { res, out } = capture()
-  await route.handler(reqWithBody(body, method, remoteAddress), res)
+  await route.handler(reqWithBody(body, method, remoteAddress, headers), res)
   return out
 }
 
@@ -186,6 +198,88 @@ describe('POST /dismiss route', () => {
     const out = await post('{"name":"a.md"}', 'POST', '203.0.113.7')
     expect(out.code).toBe(403)
     expect(vi.mocked(runCore)).not.toHaveBeenCalled()
+  })
+
+  // ---- cross-site write guard (H-1) ----
+  //
+  // The exact route bypasses the host's `/api` prefix auth, so a hostile page
+  // reaches this handler with `remoteAddress` still 127.0.0.1. These cases pin
+  // the Origin/Sec-Fetch-Site check that closes it — and each asserts the core
+  // was never spawned, because "refused late, after the move" is not a fix.
+
+  it('refuses a cross-site Origin with 403 and never spawns the core', async () => {
+    const out = await post('{"name":"a.md"}', 'POST', '127.0.0.1', {
+      origin: 'https://evil.example.com',
+      host: '127.0.0.1:3081',
+    })
+
+    expect(out.code).toBe(403)
+    expect(out.headers['cache-control']).toBe('no-store')
+    expect(JSON.parse(out.body).ok).toBe(false)
+    expect(vi.mocked(runCore)).not.toHaveBeenCalled()
+  })
+
+  it('allows a same-origin local write through to the core', async () => {
+    vi.mocked(runCore).mockResolvedValue({ ok: true, output: JSON.stringify({
+      ok: true, command: 'dismiss',
+      data: { ok: true, name: 'a.md', movedTo: '已处理/a.md', reason: null } }) })
+
+    const out = await post('{"name":"a.md"}', 'POST', '127.0.0.1', {
+      origin: 'http://127.0.0.1:3081',
+      host: '127.0.0.1:3081',
+    })
+
+    expect(out.code).toBe(200)
+    expect(vi.mocked(runCore)).toHaveBeenCalledTimes(1)
+  })
+
+  it('refuses a DNS-rebinding request: loopback Origin, foreign Host', async () => {
+    // The browser believes the page is on 127.0.0.1 (so Origin says so), but the
+    // attacker's own name is in Host. Origin != Host fails it closed.
+    const out = await post('{"name":"a.md"}', 'POST', '127.0.0.1', {
+      origin: 'http://127.0.0.1:3081',
+      host: 'evil.example.com',
+    })
+
+    expect(out.code).toBe(403)
+    expect(vi.mocked(runCore)).not.toHaveBeenCalled()
+  })
+
+  it('refuses Sec-Fetch-Site: cross-site with no Origin', async () => {
+    const out = await post('{"name":"a.md"}', 'POST', '127.0.0.1', {
+      'sec-fetch-site': 'cross-site',
+      host: '127.0.0.1:3081',
+    })
+
+    expect(out.code).toBe(403)
+    expect(vi.mocked(runCore)).not.toHaveBeenCalled()
+  })
+
+  it('allows Sec-Fetch-Site: same-origin with no Origin', async () => {
+    vi.mocked(runCore).mockResolvedValue({ ok: true, output: JSON.stringify({
+      ok: true, command: 'dismiss',
+      data: { ok: true, name: 'a.md', movedTo: '已处理/a.md', reason: null } }) })
+
+    const out = await post('{"name":"a.md"}', 'POST', '127.0.0.1', {
+      'sec-fetch-site': 'same-origin',
+      host: '127.0.0.1:3081',
+    })
+
+    expect(out.code).toBe(200)
+    expect(vi.mocked(runCore)).toHaveBeenCalledTimes(1)
+  })
+
+  it('allows a headerless local CLI caller', async () => {
+    // curl and the other agents send neither header. Keeping this working is a
+    // deliberate product decision; see the guardWrite comment for its ceiling.
+    vi.mocked(runCore).mockResolvedValue({ ok: true, output: JSON.stringify({
+      ok: true, command: 'dismiss',
+      data: { ok: true, name: 'a.md', movedTo: '已处理/a.md', reason: null } }) })
+
+    const out = await post('{"name":"a.md"}')
+
+    expect(out.code).toBe(200)
+    expect(vi.mocked(runCore)).toHaveBeenCalledTimes(1)
   })
 
   it('answers 413 for a body over the 2048-byte cap', async () => {

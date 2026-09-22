@@ -11,6 +11,7 @@ export interface RouteReq {
   socket?: { remoteAddress?: string }
   method?: string
   url?: string
+  headers?: Record<string, string | string[] | undefined>
   on?: (ev: string, cb: (chunk?: unknown) => void) => void
 }
 
@@ -54,6 +55,91 @@ export function guard(req: RouteReq, res: RouteRes, allowed: readonly string[]):
     res.end('{"ok":false,"error":"method not allowed"}')
     return false
   }
+  return true
+}
+
+/**
+ * Same-origin extraction for one header value, or null when it is unusable.
+ *
+ * Used for `Origin` and `Referer` alike: both are `scheme://host[:port]/...`, so
+ * the same parse answers both. A *malformed* value yields null, which the caller
+ * treats as a rejection — fail-closed, because an attacker fully controls the
+ * bytes of both headers and a parse failure is their best way to slip past.
+ */
+function originHost(value: string): string | null {
+  const match = /^[a-z][a-z0-9+.-]*:\/\/([^/?#]+)/i.exec(value.trim())
+  if (!match) return null
+  try {
+    return new URL(value.trim()).host.toLowerCase()
+  } catch {
+    return null
+  }
+}
+
+/** The first value when a header arrives duplicated; Node may hand over an array. */
+function headerValue(req: RouteReq, name: string): string | undefined {
+  const raw = req.headers?.[name]
+  const value = Array.isArray(raw) ? raw[0] : raw
+  return typeof value === 'string' && value !== '' ? value : undefined
+}
+
+/**
+ * `guard` plus a cross-site check, for the ONE mutating route.
+ *
+ * Why the extra check exists: our routes are registered `kind: 'exact'` and the
+ * host's `match()` consults the exact table *before* its `/api` prefix, so an
+ * exact route never reaches the host's own Host-fence + cookie auth. A hostile
+ * page therefore reaches this handler with `remoteAddress` still `127.0.0.1`,
+ * which `guard` alone waves through — the loopback check was never a CSRF
+ * defence, and DNS rebinding defeats even a Host check on the *name*, not the
+ * address. Read routes deliberately keep `guard` only: an agent running curl
+ * against the local memory store is a supported use, and nothing there writes.
+ *
+ * Decision order (fail-closed throughout):
+ *
+ *   1. `Origin` present -> must be same-origin with the request's own Host.
+ *      Cross-site, unparseable, or a rebinding mismatch (loopback Origin with a
+ *      foreign Host) is a 403.
+ *   2. No `Origin` -> `Sec-Fetch-Site`. `same-origin` / `none` pass; everything
+ *      else (`cross-site`, `same-site`) is a 403.
+ *   3. Neither present -> allowed. This is the deliberate carve-out: no browser
+ *      has sent either header, so the caller is a local CLI (curl, another
+ *      agent) and refusing would break the documented read/write tooling.
+ *      `ponytail:` the ceiling is exactly that — a minimal hand-rolled HTTP
+ *      client that sends neither header is indistinguishable from curl and gets
+ *      through. Closing it needs a shared secret between plugin and browser
+ *      client, which the CLI path cannot supply.
+ *   4. `Referer` is consulted only when `Origin` is absent: present and
+ *      off-host is a 403 (a supplement, never the sole basis for admission).
+ */
+export function guardWrite(req: RouteReq, res: RouteRes, allowed: readonly string[] = ['POST']): boolean {
+  if (!guard(req, res, allowed)) return false
+
+  const deny = () => {
+    res.writeHead(403, JSON_HEADERS)
+    res.end('{"ok":false,"error":"forbidden: cross-site write"}')
+    return false
+  }
+
+  const host = headerValue(req, 'host')
+  const origin = headerValue(req, 'origin')
+  if (origin !== undefined) {
+    const from = originHost(origin)
+    if (from === null || host === undefined) return deny()
+    return from === host.toLowerCase() ? true : deny()
+  }
+
+  const site = headerValue(req, 'sec-fetch-site')?.toLowerCase()
+  if (site !== undefined) return site === 'same-origin' || site === 'none' ? true : deny()
+
+  const referer = headerValue(req, 'referer')
+  if (referer !== undefined) {
+    const from = originHost(referer)
+    if (from === null || host === undefined || from !== host.toLowerCase()) return deny()
+  }
+
+  // No Origin, no Sec-Fetch-Site (and no usable Referer): local non-browser
+  // client. Fail-open here, by explicit product decision — see the ceiling note.
   return true
 }
 

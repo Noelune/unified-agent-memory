@@ -45,7 +45,7 @@ import { resolveConfig, runCore } from './utils.ts'
 import { registerAll } from './tools.ts'
 import { checkForUpdate, getUpdateInfo } from './updater.ts'
 import { buildStatusPayload } from './status-payload.ts'
-import { guard, queryParam, readBody, sendJson } from './routes.ts'
+import { guard, guardWrite, queryParam, readBody, sendJson } from './routes.ts'
 import type { RouteReq, RouteRes } from './routes.ts'
 import { SEARCH_PATH, handleSearch } from './route-search.ts'
 import {
@@ -254,11 +254,16 @@ export function apply(ctx: Context, config: Record<string, unknown> = {}): void 
   // carried out. 400 is reserved for a body this layer itself rejects, and a
   // failed core call degrades to `{ok:false}` inside handleDismiss rather than
   // becoming a 500; only a serialisation failure in sendJson can 500.
+  //
+  // `guardWrite`, not `guard`: this is the only route that writes, and an exact
+  // route never reaches the host's `/api` prefix auth, so loopback alone would
+  // let a hostile page drive it (CSRF / DNS rebinding). Cross-site → 403 before
+  // the core is ever spawned.
   ws.webServer.register({
     kind: 'exact',
     path: DISMISS_PATH,
     handler(req, res) {
-      if (!guard(req, res, ['POST'])) return
+      if (!guardWrite(req, res)) return
       return (async () => {
         let raw: string
         try {

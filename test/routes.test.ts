@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { guard, isLoopback, queryParam, readBody, sendJson } from '../src/routes.ts'
+import { guard, guardWrite, isLoopback, queryParam, readBody, sendJson } from '../src/routes.ts'
 
 function fakeRes() {
   const calls: { code?: number; headers?: Record<string, string>; body?: string } = {}
@@ -78,6 +78,132 @@ describe('guard', () => {
     const res = fakeRes()
     guard({ socket: { remoteAddress: '10.0.0.9' }, method: 'GET' }, res, ['GET'])
     expect(res.calls.headers?.['cache-control']).toBe('no-store')
+  })
+})
+
+describe('guardWrite', () => {
+  /** A loopback POST carrying exactly the headers under test. */
+  function writeReq(headers: Record<string, string>, method = 'POST') {
+    return { socket: { remoteAddress: '127.0.0.1' }, method, headers }
+  }
+
+  it('allows a same-origin localhost write', () => {
+    const res = fakeRes()
+    const ok = guardWrite(
+      writeReq({ origin: 'http://127.0.0.1:3081', host: '127.0.0.1:3081' }),
+      res,
+    )
+    expect(ok).toBe(true)
+  })
+
+  it('allows the localhost and [::1] spellings when they match the Host', () => {
+    expect(
+      guardWrite(
+        writeReq({ origin: 'http://localhost:3081', host: 'localhost:3081' }),
+        fakeRes(),
+      ),
+    ).toBe(true)
+    expect(
+      guardWrite(writeReq({ origin: 'http://[::1]:3081', host: '[::1]:3081' }), fakeRes()),
+    ).toBe(true)
+  })
+
+  it('403s when the Origin names a different local spelling than the Host', () => {
+    // `127.0.0.1` and `localhost` are different origins even though both are
+    // loopback: an exact compare is what makes the rebinding case below work.
+    const res = fakeRes()
+    expect(
+      guardWrite(
+        writeReq({ origin: 'http://localhost:3081', host: '127.0.0.1:3081' }),
+        res,
+      ),
+    ).toBe(false)
+    expect(res.calls.code).toBe(403)
+  })
+
+  it('403s a cross-site Origin and reports handled', () => {
+    const res = fakeRes()
+    const ok = guardWrite(writeReq({ origin: 'https://evil.example.com' }), res)
+    expect(ok).toBe(false)
+    expect(res.calls.code).toBe(403)
+    expect(res.calls.headers?.['cache-control']).toBe('no-store')
+  })
+
+  it('403s when Origin is local but the Host is a rebinding name', () => {
+    // DNS rebinding: the browser is told the page IS on 127.0.0.1, so it sends
+    // `Origin: http://127.0.0.1:3081`, but the attacker's own DNS name rides in
+    // the Host header. Comparing the two catches it.
+    const res = fakeRes()
+    const ok = guardWrite(
+      writeReq({ origin: 'http://127.0.0.1:3081', host: 'evil.example.com' }),
+      res,
+    )
+    expect(ok).toBe(false)
+    expect(res.calls.code).toBe(403)
+  })
+
+  it('allows Origin that matches the Host it was sent to', () => {
+    const res = fakeRes()
+    const ok = guardWrite(
+      writeReq({ origin: 'http://127.0.0.1:3081', host: '127.0.0.1:3081' }),
+      res,
+    )
+    expect(ok).toBe(true)
+  })
+
+  it('403s a cross-site Sec-Fetch-Site when Origin is absent', () => {
+    const res = fakeRes()
+    const ok = guardWrite(writeReq({ 'sec-fetch-site': 'cross-site' }), res)
+    expect(ok).toBe(false)
+    expect(res.calls.code).toBe(403)
+  })
+
+  it.each(['same-origin', 'none', 'SAME-ORIGIN'])(
+    'allows Sec-Fetch-Site: %s when Origin is absent',
+    (site) => {
+      expect(guardWrite(writeReq({ 'sec-fetch-site': site }), fakeRes())).toBe(true)
+    },
+  )
+
+  it('allows a headerless caller — the local CLI shape', () => {
+    expect(guardWrite(writeReq({}), fakeRes())).toBe(true)
+  })
+
+  it('403s a same-site (not same-origin) fetch', () => {
+    // `same-site` means a different origin on the same registrable domain: a
+    // sibling subdomain can still be attacker-controlled, so it is not enough.
+    const res = fakeRes()
+    expect(guardWrite(writeReq({ 'sec-fetch-site': 'same-site' }), res)).toBe(false)
+    expect(res.calls.code).toBe(403)
+  })
+
+  it('fails closed on an unparseable Origin', () => {
+    const res = fakeRes()
+    expect(guardWrite(writeReq({ origin: 'not a url' }), res)).toBe(false)
+    expect(res.calls.code).toBe(403)
+  })
+
+  it('rejects a cross-site Referer when Origin is absent but Referer points off-host', () => {
+    // Referer is a supplementary signal only: absent is fine, but a Referer that
+    // is present and demonstrably cross-site is a rejection, not a pass.
+    const res = fakeRes()
+    expect(guardWrite(writeReq({ referer: 'https://evil.example.com/page' }), res)).toBe(false)
+    expect(res.calls.code).toBe(403)
+  })
+
+  it('still applies the loopback and method checks it inherits from guard', () => {
+    const remote = fakeRes()
+    expect(
+      guardWrite(
+        { socket: { remoteAddress: '203.0.113.7' }, method: 'POST', headers: {} },
+        remote,
+      ),
+    ).toBe(false)
+    expect(remote.calls.code).toBe(403)
+
+    const method = fakeRes()
+    expect(guardWrite(writeReq({}, 'GET'), method)).toBe(false)
+    expect(method.calls.code).toBe(405)
   })
 })
 

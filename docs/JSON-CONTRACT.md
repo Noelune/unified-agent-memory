@@ -476,6 +476,9 @@ else:
 | `cache-control` | 恒为 `no-store` |
 | 失败降级 | core 不可用一律 `{ok:false}`，**不产生 500**；仅序列化失败（循环引用等）才 500 |
 
+> 写路由 `/dismiss` 在 `guard()` 之上**再加一道同源校验**（`guardWrite`，见 §7.6）；
+> 四条读路由**只用** `guard()`，行为未变。
+
 ### 7.2 路由总表
 
 | # | 方法 | 路径 | 参数 | 成功 | 失败语义 |
@@ -483,8 +486,8 @@ else:
 | 1 | GET/HEAD | `/api/dsh-unified-agent-memory/status` | — | 200（§6） | 非 loopback → 403；非 GET/HEAD → 405 |
 | 2 | GET/HEAD | `/api/dsh-unified-agent-memory/search` | `q`（**必填**）、`hybrid=1` | 200 `{ok,query,count,results}` | 缺 `q`/`q` 空 → **400**；core 不可用 → **200** `{ok:false,...}` |
 | 3 | GET/HEAD | `/api/dsh-unified-agent-memory/preview` | `view` ∈ `pending`\|`recent`\|`forgetting`\|`conflicts`（缺省 `pending`）、`limit` | 200 `{ok,view,status,count,items}` | 非法 `view` → **400**；core 不可用 → **200** `{ok:false,...}` |
-| 4 | GET/HEAD | `/api/dsh-unified-agent-memory/note` | `name`（**必填**，提交区内文件名） | 200 `{ok,name,body,reason}` | 缺 `name` → **400**；读不到 → **200** `{ok:true, body:null, reason}` |
-| 5 | **POST** | `/api/dsh-unified-agent-memory/dismiss` | body `{"name":"..."}` | 200 `{ok,name,reason}` | 本地校验拒 → **400**；体超 2048 字节 → **413**；业务拒绝 → **409**；core 不可用 → **409** |
+| 4 | GET/HEAD | `/api/dsh-unified-agent-memory/note` | `name`（**必填**，提交区内文件名） | 200 `{ok,name,body,reason}` | 缺 `name` → **400**；读不到 → **200** `{ok:true, body:null, reason}`；core 不可用 → **200** `{ok:false}` |
+| 5 | **POST** | `/api/dsh-unified-agent-memory/dismiss` | body `{"name":"..."}` | 200 `{ok,name,reason}` | 本地校验拒 → **400**；体超 2048 字节 → **413**；跨站 `Origin` → **403**；业务拒绝 → **409**；core 不可用 → **409** |
 
 **关键区别——降级为 200 还是 4xx，看的是「谁的错」：**
 
@@ -524,7 +527,7 @@ else:
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `ok` | boolean | 读不到时仍为 `true`（core 的 `cmd_note` 恒成功） |
+| `ok` | boolean | 读不到时仍为 `true`；**core 给出答复时**才成立（core 不可用时为 `false`） |
 | `name` | string | 回显 |
 | `body` | string \| null | `null` = 读不到，与 `""` 不同（§5.2） |
 | `reason` | string \| null | **宿主新增的透传字段**，见下 |
@@ -563,6 +566,32 @@ else:
 
 `POST /dismiss` 的 body 上限 **2048 字节**，且按**字节**而非 UTF-16 码元计数
 （CJK 每字符最多 3 字节，用 `.length` 会放过 2–3 倍载荷）。超限 → **413**。
+
+### 7.6 写路由的同源要求（`guardWrite`）
+
+**只有 `/dismiss` 这一条写路由**额外要求**同源**：跨站请求一律 **403**
+（`{"ok":false,"error":"forbidden: cross-site write"}`），且**不会 spawn core**。
+
+判定顺序（全程 fail-closed）：
+
+| 情形 | 结果 |
+|---|---|
+| `Origin` 存在 | 必须与请求自身的 `Host` 同源；跨站、不可解析、或 `Origin` 与本请求 `Host` 不一致（DNS rebinding）→ **403** |
+| `Origin` 缺失、`Sec-Fetch-Site` 存在 | `same-origin` / `none` → 放行；其余（含 `cross-site`、`same-site`）→ **403** |
+| 两者都缺失 | **放行**——这是**本机非浏览器客户端**（curl、其他 Agent）的典型形态，刻意保留 |
+| `Origin` 缺失但有 `Referer` | 仅作**补充**信号：存在且跨站 → **403**；不单独构成放行依据 |
+
+**为什么需要这一层**：五条路由都注册为 `kind: 'exact'`，而宿主的 `match()` **先查 exact 表、
+命中即返回**，之后才走 `/api` prefix——因此 exact 路由**完全绕过**宿主注册在 `/api` 上的
+鉴权层（Host 围栏 + cookie 鉴权）。此时 `remoteAddress` 仍是 `127.0.0.1`，
+插件自己的 `guard()` 只校验 loopback，**不足以阻止** CSRF / DNS-rebinding 场景下的静默写入。
+
+**读路由（`/status`、`/search`、`/preview`、`/note`）刻意不加这一层**：
+本机其他 Agent 用 curl 直读记忆库是正常用法，且它们不写。`guard()` 的既有签名与读路由行为均未改动。
+
+> **已知上限（`ponytail:` 记录）**：`Origin` 与 `Sec-Fetch-Site` 都缺失时放行，
+> 因此一个**不发送任何这两个头**的最小化 HTTP 客户端与 curl 不可区分，会被放行。
+> 要彻底封闭需要插件与浏览器客户端之间的共享密钥，而 CLI 路径无法提供该密钥。
 
 ---
 
