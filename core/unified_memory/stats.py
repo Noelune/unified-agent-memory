@@ -141,11 +141,17 @@ def build(vault: Path) -> dict:
 
 
 def _scalar(vault: Path, sql: str) -> int:
+    """One-column count of a query this module owns.
+
+    No exception is swallowed. The previous ``except Exception: return 0``
+    turned a broken index (missing table, corrupt file, locked db) into a
+    plausible "0 vectors", which a user cannot tell apart from a genuinely
+    empty table — a hidden error, not a graceful fallback. The SQL here is a
+    module-owned literal, so any failure is a real defect and must surface.
+    """
     conn = index_mod.get_conn(vault)
     try:
         row = conn.execute(sql).fetchone()
-    except Exception:  # noqa: BLE001 — a missing table must not blank the console
-        return 0
     finally:
         conn.close()
     return int(row["n"]) if row else 0

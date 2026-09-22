@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 import json
+import sqlite3
 import sys
 import unittest
+import unittest.mock
 import tempfile
 from pathlib import Path
 
@@ -247,16 +249,20 @@ class BuildTest(_ScratchIndexTest):
                          ["accesses", "inbox", "memories", "vectors"])
         self.assertEqual(totals["memories"], sum(t["count"] for t in got["types"]))
         self.assertEqual(totals["accesses"], sum(a["count"] for a in got["access"]))
-        self.assertEqual(totals["memories"], 3)  # base fixture: m1, m2, m3
+        # Pinned so a drifted base-class fixture is caught here rather than
+        # silently redefining what "derived from the same aggregates" means.
+        self.assertEqual(totals["memories"], 3)  # base fixture seeds 3 active rows
         for key in totals:
             self.assertIsInstance(totals[key], int)
 
-    def test_memories_total_counts_superseded_rows_daily_does_not(self):
+    def test_memories_total_counts_undated_active_rows_daily_does_not(self):
         # memories = SUM(type_counts) covers every ACTIVE row; daily_counts also
         # filters to active, so the two only diverge on an undated row. Add one
-        # whose created_at has no usable date: it must still count in the total
-        # even though it contributes no day. This is what separates "sum of
-        # type_counts" from "sum of daily" (a silently surviving mutation).
+        # ACTIVE row whose created_at has no usable date (it is not superseded —
+        # the point is the missing date, not the status): it must still count in
+        # the total even though it contributes no day. This is what separates
+        # "sum of type_counts" from "sum of daily" (a silently surviving
+        # mutation).
         conn = index_mod.get_conn(self.vault)
         conn.execute(
             "INSERT INTO memories (id, doc, line, type, importance, status,"
@@ -286,6 +292,29 @@ class BuildTest(_ScratchIndexTest):
         totals = stats_mod.build(self.vault)["totals"]
         self.assertEqual(totals["vectors"], 1)
         self.assertEqual(totals["inbox"], 2)  # *.md only
+
+    def test_missing_table_raises_instead_of_reporting_zero(self):
+        # _scalar must not turn "the index is broken" into a plausible "0".
+        # get_conn() re-runs CREATE TABLE IF NOT EXISTS on every open, so a
+        # merely dropped table is silently rebuilt and never reaches _scalar's
+        # except (measured: sqlite 3.53.1). To exercise the real failure we hand
+        # _scalar a connection that skipped the schema step, which is what a
+        # damaged/older index looks like to the query.
+        sql = "SELECT COUNT(*) AS n FROM embeddings"
+        conn = index_mod.get_conn(self.vault)
+        conn.execute("DROP TABLE embeddings")
+        conn.commit()
+        conn.close()
+
+        raw = sqlite3.connect(str(index_mod.index_db_for(self.vault)))
+        raw.row_factory = sqlite3.Row
+        with unittest.mock.patch.object(index_mod, "get_conn", return_value=raw):
+            # Sanity: this connection really has no embeddings table, so the
+            # assertion below cannot pass for the wrong reason.
+            with self.assertRaises(sqlite3.OperationalError):
+                raw.execute(sql).fetchone()
+            self.assertRaises(sqlite3.OperationalError, stats_mod._scalar,
+                              self.vault, sql)
 
     def test_build_is_read_only(self):
         # The console's read path must not change the data it draws. Asserting
