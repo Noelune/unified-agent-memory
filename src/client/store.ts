@@ -276,6 +276,10 @@ export function useSearch(): {
  * A view that is not implemented yet still answers `ok:true` with
  * `status:"unsupported"` — that travels through untouched, because the panel
  * must render it differently from a view that is implemented and empty.
+ *
+ * ponytail: unreachable from the UI since the list tabs were retired; the only
+ * caller is `usePreview` below, which itself has no caller. See the note on
+ * `previewEmptyText` in view.ts for why this is kept rather than deleted.
  */
 export async function loadPreview(
   view: PreviewView, limit: number = PREVIEW_LIMIT,
@@ -339,6 +343,10 @@ export function previewEffectKey(view: PreviewView, nonce: number): string {
  *
  * `busy` starts true because the effect's first act is to load, so the tab
  * renders its spinner on mount instead of a flash of "nothing here".
+ *
+ * ponytail: no caller since the list tabs were retired. Kept with `loadPreview`
+ * and `dismissItem` so the preview/dismiss contract keeps its client-side tests;
+ * see `previewEmptyText` in view.ts. Ceiling: delete as a set.
  */
 export function usePreview(view: PreviewView): {
   data: PreviewData | null
@@ -372,6 +380,11 @@ export function usePreview(view: PreviewView): {
  * The route answers 200 *or* 409 and either can carry `ok:false`, so the HTTP
  * status is not the verdict — `body.ok === true` is. A 200 with `ok:false` is a
  * refusal (e.g. `outside-inbox`), not a success.
+ *
+ * ponytail: no caller since the list tabs were retired. This is the CLIENT half
+ * of the write contract; the server half is covered independently by
+ * route-dismiss*.test.ts. Both halves are kept on purpose — see
+ * `previewEmptyText` in view.ts. Ceiling: delete as a set.
  */
 export async function dismissItem(name: string): Promise<boolean> {
   try {

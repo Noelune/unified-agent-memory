@@ -70,6 +70,13 @@ export interface EmptyText {
  *
  * A null payload is "still loading or the transport failed", which the console
  * renders as its error/loading state, so this returns null and leaves it alone.
+ *
+ * ponytail: NO production caller right now — the list tabs that consumed this
+ * were retired when the console became search + four figures. Kept rather than
+ * deleted because it is contract knowledge (unsupported ≠ empty) with 15 test
+ * assertions behind it, and the same facts are re-asserted server-side by
+ * route-preview tests. Ceiling: if no pane ever renders previews again, delete
+ * this together with its block in client-console.test.ts, not before.
  */
 export function previewEmptyText(data: PreviewData | null): EmptyText | null {
   if (!data) return null
@@ -86,6 +93,11 @@ export function previewEmptyText(data: PreviewData | null): EmptyText | null {
  * `dismissItem` resolves a reason ∈ `invalid-name` / `not-found` /
  * `outside-inbox` / `io-error:*` / `unavailable`. Showing the raw token makes
  * the user read the machine's vocabulary; this maps it to theirs.
+ *
+ * ponytail: NO production caller right now — same retirement as
+ * `previewEmptyText` above, and the same reason for keeping it: 17 assertions
+ * encode the server's `reason` enum, which is a security-relevant contract.
+ * Ceiling: delete with its test block if the console never dismisses again.
  */
 export function dismissReasonText(reason: string | null | undefined): string {
   const r = String(reason ?? '')

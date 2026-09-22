@@ -272,22 +272,27 @@ describe('figures structure', () => {
     // empty vs populated decision lives there exactly once. That is the point:
     // four separate copies of the decision are four chances to forget one, and a
     // figure that silently draws nothing on a failed read is the bug this pins.
+    //
+    // ponytail: the call-site count below is an INDICATOR, not the invariant --
+    // a refactor that names `figureEmptyText` once and calls the local twice is
+    // behaviourally identical yet fails it. The real invariant ("every figure
+    // goes through Frame") is asserted right after, and the four figures are
+    // additionally executed for real in the degrade block above. If this count
+    // ever becomes the thing that breaks, replace it rather than reflow to suit it.
     expect(CODE).toMatch(/function Frame\(/)
-    // `export function figureEmptyText` is itself one hit; strip it so what is
-    // counted is call sites only, and require exactly ONE of them (inside
-    // `Frame`) rather than one per figure.
     const callSites = CODE.replace(/export function figureEmptyText\(/, '')
     expect(
       (callSites.match(/figureEmptyText\(/g) ?? []).length,
       'the degradation decision should live in Frame, not be copied per figure',
     ).toBe(2)
-    // ...and all four figures must go THROUGH it.
-    const frames = CODE.match(/h\(Frame,\s*\{/g) ?? []
-    expect(frames.length).toBe(4)
+    // The invariant the count is a proxy for: all four figures go THROUGH Frame.
+    // Match on the identifier, not on `h(Frame, {` -- the latter grades spacing.
+    const frames = CODE.match(/h\(Frame\b/g) ?? []
+    expect(frames.length, 'every figure must render through the shared Frame').toBe(4)
     for (const name of ['CalendarHeatmap', 'GrowthChart', 'BreakdownDonut', 'TopBars']) {
       const body = CODE.slice(CODE.indexOf(`export function ${name}`))
       const next = body.indexOf('\nexport function ', 1)
-      expect(body.slice(0, next < 0 ? body.length : next)).toContain('h(Frame, {')
+      expect(body.slice(0, next < 0 ? body.length : next)).toMatch(/h\(Frame\b/)
     }
   })
 })
