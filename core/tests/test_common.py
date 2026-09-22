@@ -4,6 +4,7 @@
 The real ~/.unified-memory.yaml and index.db are NEVER touched: both the
 config path and the index path are redirected into the scratch dir.
 """
+import hashlib
 import io
 import os
 import shutil
@@ -19,6 +20,16 @@ from unified_memory import memory as mem_mod
 from unified_memory import common
 
 
+def index_db_name_for(vault: Path) -> str:
+    """The per-vault DB filename schema.index_db_for() derives from ``vault``.
+
+    Mirrored here instead of imported so the tests keep working even when the
+    helper moves; ``vault`` must be resolved exactly as schema.py resolves it.
+    """
+    key = hashlib.sha256(str(Path(vault).resolve()).encode("utf-8")).hexdigest()[:16]
+    return f"index-{key}.db"
+
+
 def make_scratch_vault() -> Path:
     root = Path(tempfile.mkdtemp(prefix="um-test-"))
     vault = root / "vault"
@@ -27,6 +38,11 @@ def make_scratch_vault() -> Path:
     mem_mod.CONFIG_PATH = common.CONFIG_PATH
     mem_mod.INDEX_DB = root / "index.db"
     os.environ["UNIFIED_MEMORY_VAULT"] = str(vault)
+    # The parent-process rebind above cannot reach a child process: a spawned
+    # script re-imports memory.py and would rebuild INDEX_DB under the real
+    # ~/.unified-memory/. Exporting the env override here means EVERY test that
+    # spawns a child inherits the scratch redirect for free.
+    os.environ["UNIFIED_MEMORY_INDEX_DB"] = str(mem_mod.INDEX_DB)
     mem_mod.init_vault(vault)
     return vault
 
@@ -34,6 +50,7 @@ def make_scratch_vault() -> Path:
 def destroy_scratch(vault: Path) -> None:
     shutil.rmtree(vault.parent, ignore_errors=True)
     os.environ.pop("UNIFIED_MEMORY_VAULT", None)
+    os.environ.pop("UNIFIED_MEMORY_INDEX_DB", None)
 
 
 class RedactTest(unittest.TestCase):

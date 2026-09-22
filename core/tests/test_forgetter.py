@@ -9,7 +9,7 @@ from unittest.mock import patch
 from unified_memory import forgetter, index
 from unified_memory.common import canonical_path, forget_dir, read_maybe
 
-from test_common import destroy_scratch, make_scratch_vault
+from test_common import destroy_scratch, index_db_name_for, make_scratch_vault
 
 
 class ForgetterScoreTest(unittest.TestCase):
@@ -83,12 +83,20 @@ class ForgetterScheduleTest(unittest.TestCase):
         env = os.environ.copy()
         env["PYTHONPATH"] = repo_core + os.pathsep + env.get("PYTHONPATH", "")
         # The .bat runs as a child process, so it cannot see the in-process
-        # memory.INDEX_DB redirect done by make_scratch_vault(); without this the
-        # child would create index-*.db in the real ~/.unified-memory/.
-        env["UNIFIED_MEMORY_INDEX_DB"] = str(Path(self.vault).parent / "child-index" / "index.db")
+        # memory.INDEX_DB redirect done by make_scratch_vault(); the factory also
+        # exports UNIFIED_MEMORY_INDEX_DB so the child lands in the scratch dir.
+        projected = Path(env.get("UNIFIED_MEMORY_INDEX_DB", ""))
+        self.assertTrue(projected.name, "make_scratch_vault() must export UNIFIED_MEMORY_INDEX_DB")
         completed = subprocess.run(["cmd.exe", "/c", str(bat)], env=env, capture_output=True, text=False, timeout=30)
         stderr = (completed.stderr or b"").decode(errors="replace")
         self.assertEqual(completed.returncode, 0, stderr)
+        # The child must honor the injected redirect. Without it the .bat builds
+        # its index under the real ~/.unified-memory/, so the leak comes back
+        # silently; asserting on the injected path is what turns that red.
+        self.assertTrue(
+            (projected.parent / index_db_name_for(self.vault)).is_file(),
+            "the .bat child ignored UNIFIED_MEMORY_INDEX_DB and indexed elsewhere",
+        )
         self.assertNotIn(stale.rstrip(), read_maybe(ui))
         self.assertIn(stale.rstrip(), read_maybe(forget_dir(self.vault) / ui.name))
         self.assertIn("demoted 1 line(s)", read_maybe(self.vault / "forget_weekly.log"))
