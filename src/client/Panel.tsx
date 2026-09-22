@@ -37,7 +37,7 @@ function MemoryGlyph({ size = 16, hasUpdate = false }: { size?: number; hasUpdat
           style: {
             position: 'absolute', top: '-1px', right: '-2px',
             width: '6px', height: '6px', borderRadius: '50%',
-            background: 'var(--dsw-alias-err)',
+            background: 'var(--dsw-alias-state-error-primary)',
           },
         })
       : null,
