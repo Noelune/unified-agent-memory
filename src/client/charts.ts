@@ -45,6 +45,14 @@ export function calendarGrid(days: DayCount[]): Cell[] {
   // `days[0].date`: one bad first stamp makes every `at - start` NaN and
   // collapses the whole grid, valid later days included. Fall back to the
   // first parseable stamp (or, if there is none, treat the origin as 0).
+  //
+  // ponytail: when the fallback fires, the origin day lands on `y = 0` even if
+  // it is not really a Sunday — the true weekday of the origin is unknowable
+  // once the stamp is gone. The grid therefore keeps every day's *relative*
+  // position correct but may sit a few rows above where a calendar would put
+  // it. Closing this needs a caller-supplied origin (or a validated date), not
+  // more guessing here; `Cell.date` is passed through intact so a caller can
+  // still re-align.
   let last = dayMs(days[0].date)
   let start = last
   if (!Number.isFinite(start)) {
