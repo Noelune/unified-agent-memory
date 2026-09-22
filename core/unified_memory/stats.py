@@ -10,11 +10,13 @@ every writer in this codebase emits as local time with a 'T' separator.
 """
 from __future__ import annotations
 
+import json
 from datetime import date, timedelta
 from pathlib import Path
 
 from . import index as index_mod
 from .common import redact
+from .preview import INBOX_REL
 
 
 def _day(value: str | None) -> str:
@@ -114,3 +116,48 @@ def access_counts(vault: Path) -> list[dict]:
         if d:
             seen[d] = seen.get(d, 0) + 1
     return [{"date": d, "count": seen.get(d, 0)} for d in _span(list(seen))]
+
+
+def build(vault: Path) -> dict:
+    """Every aggregate the console draws. One round trip, all read-only."""
+    daily = daily_counts(vault)
+    access = access_counts(vault)
+    types = type_counts(vault)
+    importance = importance_counts(vault)
+    top = top_accessed(vault)
+
+    all_days = [d["date"] for d in daily] + [d["date"] for d in access]
+    span = {"start": min(all_days) if all_days else None,
+            "end": max(all_days) if all_days else None}
+
+    totals = {
+        "memories": sum(t["count"] for t in types),
+        "vectors": _scalar(vault, "SELECT COUNT(*) AS n FROM embeddings"),
+        "accesses": sum(a["count"] for a in access),
+        "inbox": _inbox_count(vault),
+    }
+    return {"daily": daily, "access": access, "types": types,
+            "importance": importance, "top": top, "span": span, "totals": totals}
+
+
+def _scalar(vault: Path, sql: str) -> int:
+    conn = index_mod.get_conn(vault)
+    try:
+        row = conn.execute(sql).fetchone()
+    except Exception:  # noqa: BLE001 — a missing table must not blank the console
+        return 0
+    finally:
+        conn.close()
+    return int(row["n"]) if row else 0
+
+
+def _inbox_count(vault: Path) -> int:
+    inbox = Path(vault) / INBOX_REL
+    if not inbox.is_dir():
+        return 0
+    return sum(1 for _ in inbox.glob("*.md"))
+
+
+def envelope(data: dict) -> str:
+    """Wrap in the same JSON envelope every other CLI command uses."""
+    return json.dumps({"ok": True, "command": "stats", "data": data}, ensure_ascii=False)

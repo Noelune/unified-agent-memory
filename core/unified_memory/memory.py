@@ -431,6 +431,19 @@ def cmd_dismiss_cli(args: argparse.Namespace) -> None:
     print(cmd_dismiss(vault=str(vault), name=args.name, as_json=args.json))
 
 
+def cmd_stats_cli(args: argparse.Namespace) -> None:
+    """CLI adapter for stats: resolves the vault and prints the result."""
+    from . import stats as stats_mod
+
+    vault = resolve_vault()
+    ensure_vault(vault)
+    data = stats_mod.build(vault)
+    if getattr(args, "json", False):
+        print(stats_mod.envelope(data))
+        return
+    print(f"memories={data['totals']['memories']} accesses={data['totals']['accesses']}")
+
+
 def cmd_graph(args: argparse.Namespace) -> None:
     vault = resolve_vault()
     ensure_vault(vault)
@@ -582,6 +595,10 @@ def main(argv: list[str] | None = None) -> None:
     p_dismiss.add_argument("name")
     p_dismiss.add_argument("--json", action="store_true", help="emit a machine-readable JSON envelope")
     p_dismiss.set_defaults(fn=cmd_dismiss_cli)
+
+    p_stats = sub.add_parser("stats", help="read-only aggregates for the memory console")
+    p_stats.add_argument("--json", action="store_true", help="emit the JSON envelope")
+    p_stats.set_defaults(fn=cmd_stats_cli)
 
     p_drift = sub.add_parser("drift", help="detect code-memory synchronization drift")
     p_drift.add_argument("--vault", "-v", help="path to the vault (default: UNIFIED_MEMORY_VAULT env)")

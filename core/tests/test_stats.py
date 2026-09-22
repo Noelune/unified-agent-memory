@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import json
 import sys
 import unittest
 import tempfile
@@ -10,6 +11,7 @@ from test_common import _GUARD_INDEX_DB, assert_guard_intact  # arms the isolati
 from unified_memory import index as index_mod
 from unified_memory import memory as mem_mod
 from unified_memory import stats as stats_mod
+from unified_memory.preview import INBOX_REL as INBOX_REL_FOR_TEST
 
 
 class _ScratchIndexTest(unittest.TestCase):
@@ -208,6 +210,104 @@ class BreakdownTest(_ScratchIndexTest):
 
     def test_top_accessed_respects_limit(self):
         self.assertEqual(len(stats_mod.top_accessed(self.vault, limit=1)), 1)
+
+
+class BuildTest(_ScratchIndexTest):
+    scratch_dir = "build-index"
+
+    def test_build_returns_every_key(self):
+        got = stats_mod.build(self.vault)
+        self.assertEqual(
+            sorted(got.keys()),
+            ["access", "daily", "importance", "span", "top", "totals", "types"],
+        )
+
+    def test_span_null_when_no_data(self):
+        # The base fixture seeds 3 memories, so "no data" needs a vault of its
+        # own; None (not "") is the contract callers branch on.
+        empty = Path(self.tmp.name) / "empty"
+        index_mod.get_conn(empty).close()
+        got = stats_mod.build(empty)
+        self.assertIsNone(got["span"]["start"])
+        self.assertIsNone(got["span"]["end"])
+
+    def test_envelope_is_parseable_and_ok(self):
+        data = stats_mod.build(self.vault)
+        parsed = json.loads(stats_mod.envelope(data))
+        self.assertIs(parsed["ok"], True)
+        self.assertEqual(parsed["command"], "stats")
+        self.assertIn("daily", parsed["data"])
+
+    def test_totals_are_derived_from_the_same_aggregates(self):
+        # memories/accesses must equal the sums build() already returned above,
+        # so a console never shows a total that disagrees with its own chart.
+        got = stats_mod.build(self.vault)
+        totals = got["totals"]
+        self.assertEqual(sorted(totals),
+                         ["accesses", "inbox", "memories", "vectors"])
+        self.assertEqual(totals["memories"], sum(t["count"] for t in got["types"]))
+        self.assertEqual(totals["accesses"], sum(a["count"] for a in got["access"]))
+        self.assertEqual(totals["memories"], 3)  # base fixture: m1, m2, m3
+        for key in totals:
+            self.assertIsInstance(totals[key], int)
+
+    def test_memories_total_counts_superseded_rows_daily_does_not(self):
+        # memories = SUM(type_counts) covers every ACTIVE row; daily_counts also
+        # filters to active, so the two only diverge on an undated row. Add one
+        # whose created_at has no usable date: it must still count in the total
+        # even though it contributes no day. This is what separates "sum of
+        # type_counts" from "sum of daily" (a silently surviving mutation).
+        conn = index_mod.get_conn(self.vault)
+        conn.execute(
+            "INSERT INTO memories (id, doc, line, type, importance, status,"
+            " created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+            ("m-undated", "a.md", "l4", "bug", 0.5, "active", "", ""),
+        )
+        conn.commit()
+        conn.close()
+        got = stats_mod.build(self.vault)
+        self.assertEqual(sum(t["count"] for t in got["types"]), 4)
+        self.assertEqual(sum(d["count"] for d in got["daily"]), 3)
+        self.assertEqual(got["totals"]["memories"], 4)
+
+    def test_totals_count_vectors_and_inbox(self):
+        conn = index_mod.get_conn(self.vault)
+        conn.execute(
+            "INSERT INTO embeddings (memory_id, dim, vector)"
+            " VALUES (?,?,?)", ("m1", 3, b"xyz")
+        )
+        conn.commit()
+        conn.close()
+        inbox = Path(self.vault) / INBOX_REL_FOR_TEST
+        inbox.mkdir(parents=True, exist_ok=True)
+        (inbox / "dsh-1.md").write_text("- a fact\n", encoding="utf-8")
+        (inbox / "dsh-2.md").write_text("- another\n", encoding="utf-8")
+        (inbox / "not-markdown.txt").write_text("ignored\n", encoding="utf-8")
+        totals = stats_mod.build(self.vault)["totals"]
+        self.assertEqual(totals["vectors"], 1)
+        self.assertEqual(totals["inbox"], 2)  # *.md only
+
+    def test_build_is_read_only(self):
+        # The console's read path must not change the data it draws. Asserting
+        # row counts rather than file bytes is deliberate: get_conn() re-runs
+        # its CREATE TABLE IF NOT EXISTS pragmas on every open, so the file's
+        # bytes move even for a pure SELECT (measured: sqlite 3.53.1). Byte
+        # identity would fail for every reader in this module and tell us
+        # nothing about whether a write happened.
+        def snapshot(vault):
+            conn = index_mod.get_conn(vault)
+            try:
+                return {
+                    t: conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+                    for t in ("memories", "access_log", "embeddings")
+                }
+            finally:
+                conn.close()
+
+        before = snapshot(self.vault)
+        stats_mod.build(self.vault)
+        self.assertEqual(before, snapshot(self.vault))
+        self.assertEqual(before["memories"], 3)  # fixture actually loaded
 
 
 if __name__ == "__main__":
