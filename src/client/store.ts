@@ -23,7 +23,15 @@ export const SEARCH_URL = `${BASE_URL}/search`
 export const PREVIEW_URL = `${BASE_URL}/preview`
 export const DISMISS_URL = `${BASE_URL}/dismiss`
 
-/** Default cap on a preview list, matching the host route. */
+/**
+ * Default cap on a preview list, matching the host route.
+ *
+ * MUST stay equal to `PREVIEW_LIMIT` in `src/route-preview.ts`. This file is
+ * bundled for the browser (React arrives via `../deps.ts`) and the route is
+ * host-side Node ESM, so they cannot share the constant and it is duplicated by
+ * necessity. Drift means the console asks for one page size and the route
+ * serves another, silently. Change both, or neither.
+ */
 export const PREVIEW_LIMIT = 20
 
 export interface MemoryState {

@@ -87,6 +87,23 @@ describe('shapeNoteResult', () => {
       data: { name: 'gone.md', body: null, reason: 'not-found', untrusted: true } })
     expect(shapeNoteResult(raw).reason).toBe('not-found')
   })
+
+  it('carries the core untrusted marker onto the readable record', () => {
+    // §2/§5.2: `/note` is the one free-text downstream channel, so the marker
+    // the core puts on `data.untrusted` must survive the flatten. Mutation-proof:
+    // dropping `untrusted` from the reshaped object must break this.
+    const raw = JSON.stringify({ ok: true, command: 'note',
+      data: { name: 'a.md', body: '- user controlled free text\n', untrusted: true } })
+    expect(shapeNoteResult(raw).untrusted).toBe(true)
+  })
+
+  it('carries the untrusted marker on an unreadable record too', () => {
+    // The core marks the refusal record too (`preview.py:175`), and the marker
+    // is per-record, not per-body: a refused name is still vault-adjacent data.
+    const raw = JSON.stringify({ ok: true, command: 'note',
+      data: { name: '../evil.md', body: null, reason: 'invalid-name', untrusted: true } })
+    expect(shapeNoteResult(raw).untrusted).toBe(true)
+  })
 })
 
 describe('clampPreviewLimit', () => {

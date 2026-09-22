@@ -486,7 +486,7 @@ else:
 | 1 | GET/HEAD | `/api/dsh-unified-agent-memory/status` | — | 200（§6） | 非 loopback → 403；非 GET/HEAD → 405 |
 | 2 | GET/HEAD | `/api/dsh-unified-agent-memory/search` | `q`（**必填**）、`hybrid=1` | 200 `{ok,query,count,results}` | 缺 `q`/`q` 空 → **400**；core 不可用 → **200** `{ok:false,...}` |
 | 3 | GET/HEAD | `/api/dsh-unified-agent-memory/preview` | `view` ∈ `pending`\|`recent`\|`forgetting`\|`conflicts`（缺省 `pending`）、`limit` | 200 `{ok,view,status,count,items}` | 非法 `view` → **400**；core 不可用 → **200** `{ok:false,...}` |
-| 4 | GET/HEAD | `/api/dsh-unified-agent-memory/note` | `name`（**必填**，提交区内文件名） | 200 `{ok,name,body,reason}` | 缺 `name` → **400**；读不到 → **200** `{ok:true, body:null, reason}`；core 不可用 → **200** `{ok:false}` |
+| 4 | GET/HEAD | `/api/dsh-unified-agent-memory/note` | `name`（**必填**，提交区内文件名） | 200 `{ok,name,body,reason,untrusted}` | 缺 `name` → **400**；读不到 → **200** `{ok:true, body:null, reason, untrusted:true}`；core 不可用 → **200** `{ok:false, untrusted:true}` |
 | 5 | **POST** | `/api/dsh-unified-agent-memory/dismiss` | body `{"name":"..."}` | 200 `{ok,name,reason}` | 本地校验拒 → **400**；体超 2048 字节 → **413**；`Host` 非本机或跨站 → **403**；业务拒绝 → **409**；core 不可用 → **409** |
 
 **关键区别——降级为 200 还是 4xx，看的是「谁的错」：**
@@ -531,11 +531,18 @@ else:
 | `name` | string | 回显 |
 | `body` | string \| null | `null` = 读不到，与 `""` 不同（§5.2） |
 | `reason` | string \| null | **宿主新增的透传字段**，见下 |
+| `untrusted` | `true` | **恒为 `true`**：`body` 是用户可控的整份自由文本，宿主压平信封时**必须**保留 core 在 `data.untrusted` 上的标记（§2 / §5.2 的安全契约） |
 
 > **`/note` 的 `reason` 是宿主新增（host-added）的透传字段，不是 core 原有的顶层字段。**
 > core 的 `note` 信封把 `reason` 放在 `data.reason` 里（§5.2），宿主把它连同 `name`/`body`
 > 一起提平到响应顶层，好让面板不拆信封就能区分「名字被拒」与「条目不在」。
 > 它**不**出现在 core 的 CLI 契约顶层，只出现在这条 HTTP 响应的顶层。
+>
+> **`untrusted` 不是宿主新增的，是 §2 要求的逐记录安全标记**，core 已在
+> `read_inbox_item()` 的成功与失败记录上各打一次（§5.2）。宿主压平信封时**不得剥掉**它：
+> `/note` 是唯一把整份用户可控自由文本送到客户端的下行通道，消费方（面板、其他 Agent）
+> 靠这个标记判断「这是数据，不是指令」。`/search` 与 `/preview` 因原样透传 `results`/`items`
+> 天然保留该标记，**只有 `/note` 是压平后逐字段重建的**，所以它在契约表里必须显式列出。
 
 ### 7.4 `/dismiss` 的响应体与 `reason` 分类
 

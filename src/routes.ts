@@ -20,8 +20,15 @@ export interface RouteRes {
   end: (body?: string) => void
 }
 
-/** Response headers for every JSON answer this plugin produces. */
-export const JSON_HEADERS: Record<string, string> = {
+/**
+ * Response headers for every JSON answer this plugin produces.
+ *
+ * Module-private: every writer lives in this file (`guard`, `guardWrite`,
+ * `sendJson`), and nothing else — tests included — imports it. Kept unexported
+ * so the header policy has exactly one home; export it if a second producer
+ * ever appears.
+ */
+const JSON_HEADERS: Record<string, string> = {
   'content-type': 'application/json; charset=utf-8',
   'cache-control': 'no-store',
 }

@@ -82,6 +82,22 @@ async function getPreview(url: string) {
   return out
 }
 
+/**
+ * Drive the REAL `/note` handler, not just `shapeNoteResult`.
+ *
+ * The unit test on the shaper cannot prove the route ships the marker: the
+ * handler could flatten again, or answer from a different branch. §2 makes
+ * `untrusted` a wire contract, so it is asserted on the bytes the route writes.
+ */
+async function getNote(url: string) {
+  const { ctx, routes } = makeCtx()
+  host.apply(ctx as never, { vaultPath: 'C:/tmp/vault' })
+  const route = routes.find((r) => r.path.endsWith('/note'))!
+  const { res, out } = capture()
+  await route.handler({ socket: { remoteAddress: '127.0.0.1' }, method: 'GET', url }, res)
+  return out
+}
+
 describe('GET /preview view validation', () => {
   it('rejects an unknown view with 400 instead of blaming the core', async () => {
     const out = await getPreview('/api/dsh-unified-agent-memory/preview?view=peding')
@@ -99,5 +115,41 @@ describe('GET /preview view validation', () => {
   it('treats an absent view as the default rather than an error', async () => {
     const out = await getPreview('/api/dsh-unified-agent-memory/preview')
     expect(out.code).toBe(200)
+  })
+})
+
+describe('GET /note untrusted marker', () => {
+  it('ships untrusted:true on the wire for a readable item', async () => {
+    // §2/§5.2 security contract, asserted on the RESPONSE BODY: `/note` is the
+    // one user-controlled free-text downstream channel, so a consumer must be
+    // able to tell "this is data" without unwrapping the core envelope. The
+    // shaper used to flatten `{ok,name,body,reason}` and drop the marker.
+    vi.mocked(runCore).mockResolvedValue({ ok: true, output: JSON.stringify({
+      ok: true, command: 'note',
+      data: { name: 'a.md', body: '- user controlled free text\n', untrusted: true } }) })
+
+    const out = await getNote('/api/dsh-unified-agent-memory/note?name=a.md')
+
+    expect(out.code).toBe(200)
+    const body = JSON.parse(out.body)
+    expect(body.ok).toBe(true)
+    expect(body.untrusted).toBe(true)
+    expect(body.body).toContain('user controlled free text')
+  })
+
+  it('still ships untrusted:true when the name is refused', async () => {
+    // The refusal record is marked by the core too (`preview.py:175`), and the
+    // route answers 200 with `ok:true, body:null`. A consumer must not have to
+    // guess that this body-less record is also data, not an instruction.
+    vi.mocked(runCore).mockResolvedValue({ ok: true, output: JSON.stringify({
+      ok: true, command: 'note',
+      data: { name: '../evil.md', body: null, reason: 'invalid-name', untrusted: true } }) })
+
+    const out = await getNote('/api/dsh-unified-agent-memory/note?name=../evil.md')
+
+    expect(out.code).toBe(200)
+    const body = JSON.parse(out.body)
+    expect(body.reason).toBe('invalid-name')
+    expect(body.untrusted).toBe(true)
   })
 })

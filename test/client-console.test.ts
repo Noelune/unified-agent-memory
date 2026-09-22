@@ -43,6 +43,58 @@ const CONSOLE = readFileSync(new URL('../src/client/Console.tsx', import.meta.ur
 const STYLES = readFileSync(new URL('../src/client/styles.ts', import.meta.url), 'utf8')
 const INDEX = readFileSync(new URL('../src/client/index.ts', import.meta.url), 'utf8')
 
+/**
+ * Strip `/* … *\/` block comments and `// …` line comments from a source file.
+ *
+ * Why this exists: the "wiring" assertions below are source-string checks, and
+ * a bare `expect(src).toContain('useSearch')` is satisfied by a *mention* in a
+ * comment just as well as by a real call. The header comment of `Console.tsx`
+ * literally lists `useSearch` / `usePreview(…)` / `dismissItem`, so the three
+ * hook assertions could never go red — deleting the call, and even the import,
+ * left them green (verified by mutation). Asserting against the comment-stripped
+ * source is what makes "the call is wired" mean "there is code, not prose".
+ *
+ * This is a line-based scanner rather than one regex because `/* … *\/` and
+ * `//` interact: a `//` inside a block comment is not a line comment, and a
+ * string literal containing `//` (a URL) must not be truncated. The scanner
+ * tracks block-comment depth and leaves everything else byte-identical, so
+ * offsets in the result still line up with the original for line counting.
+ *
+ * CEILING: it does not parse string literals, so a `//` inside a *string*
+ * (e.g. `'https://x'`) is treated as a line comment and the rest of that line
+ * is dropped. No assertion below depends on text after such a literal, so this
+ * is safe here; a future assertion that does would need a real tokenizer.
+ * ponytail: upgrade path is esbuild's tokenizer, already a devDependency.
+ */
+function stripComments(src: string): string {
+  const out: string[] = []
+  let inBlock = false
+  for (const line of src.split('\n')) {
+    let kept = ''
+    let i = 0
+    while (i < line.length) {
+      const rest = line.slice(i)
+      if (inBlock) {
+        const end = rest.indexOf('*/')
+        if (end < 0) { i = line.length; continue }
+        inBlock = false
+        i += end + 2
+        continue
+      }
+      if (rest.startsWith('/*')) { inBlock = true; i += 2; continue }
+      if (rest.startsWith('//')) break
+      kept += line[i]
+      i += 1
+    }
+    // A line that opened a block comment still contributes its kept prefix; a
+    // line that is entirely inside one contributes nothing.
+    out.push(kept)
+  }
+  return out.join('\n')
+}
+
+const CONSOLE_CODE = stripComments(CONSOLE)
+
 /** Build a PreviewData with the fields the display logic reads. */
 function preview(over: Partial<PreviewData>): PreviewData {
   return { view: 'pending', status: 'ok', count: 0, items: [], ...over }
@@ -58,31 +110,41 @@ describe('console structure', () => {
   })
 
   it('renders the console, not just a bare constant', () => {
-    expect(CONSOLE).toContain('export function Console')
-    expect(CONSOLE).toContain('CONSOLE_TABS')
+    // Against the comment-stripped source: "renders the console" must mean the
+    // export exists in code, not that the header comment says "console".
+    expect(CONSOLE_CODE).toContain('export function Console')
+    expect(CONSOLE_CODE).toContain('CONSOLE_TABS')
   })
 
   it('uses the store hooks, not ad-hoc fetching', () => {
-    expect(CONSOLE).toContain('useSearch')
-    expect(CONSOLE).toContain('usePreview')
-    expect(CONSOLE).toContain('dismissItem')
-    expect(CONSOLE).not.toMatch(/fetch\(/)
+    // Assert the CALL FORM, against the comment-stripped source.
+    //
+    // The original `expect(CONSOLE).toContain('useSearch')` was decorative: the
+    // header comment names all three hooks, so the assertion was satisfied by
+    // prose. Mutation-verified — deleting `useSearch()` *and* its import left
+    // the whole file green. So: strip comments, then require each hook to be
+    // INVOKED (an assignment/expression `useSearch(`, not a bare mention in an
+    // import list). Deleting either the call or the import now fails here.
+    expect(CONSOLE_CODE).toMatch(/\bconst\s+\w+\s*=\s*useSearch\(/)
+    expect(CONSOLE_CODE).toMatch(/\bconst\s+\{[^}]*\}\s*=\s*usePreview\(/)
+    expect(CONSOLE_CODE).toMatch(/[^.\w]dismissItem\(/)
+    expect(CONSOLE_CODE).not.toMatch(/fetch\(/)
   })
 
   it('imports react api from deps only', () => {
-    expect(CONSOLE).toContain("from '../deps.ts'")
-    expect(CONSOLE).not.toMatch(/from\s+['"]react['"]/)
+    expect(CONSOLE_CODE).toContain("from '../deps.ts'")
+    expect(CONSOLE_CODE).not.toMatch(/from\s+['"]react['"]/)
   })
 
   it('marks search hits with a highlight element', () => {
-    expect(CONSOLE).toContain("'mark'")
+    expect(CONSOLE_CODE).toContain("'mark'")
   })
 
   it('gates dismiss on the ok flag, not the http status', () => {
     // dismissItem resolves false on a 200-with-ok:false refusal, so the reload
     // must key off the boolean, never off a response status.
-    expect(CONSOLE).toMatch(/dismissItem[\s\S]{0,200}?\bok\b/)
-    expect(CONSOLE).not.toMatch(/status\s*===?\s*200/)
+    expect(CONSOLE_CODE).toMatch(/dismissItem[\s\S]{0,200}?\bok\b/)
+    expect(CONSOLE_CODE).not.toMatch(/status\s*===?\s*200/)
   })
 
   it('keeps the registrations the host contract needs', () => {
@@ -687,20 +749,28 @@ describe('contrast: the card boundary is visible against the page', () => {
 // prove the wiring EXISTS, not that React renders it in a particular order.
 //
 // They are still worth having, because the failure they catch is the one that
-// escapes: a helper that is tested, correct, and never called. Each assertion
-// below is written to go red the moment the call is deleted.
+// escapes: a helper that is tested, correct, and never called.
+//
+// These assertions read `CONSOLE_CODE` / `PANEL_CODE` — the comment-stripped
+// source — not the raw file. That is not cosmetic: the earlier revision read
+// the raw file with bare `toContain('useSearch')`, and `Console.tsx`'s own
+// header comment lists the hook names, so the assertion was satisfied by prose
+// and could never go red. Stripping comments means "the call is wired" is a
+// claim about code. Assertions that name a call site additionally match the
+// call FORM (`useSearch(`), so a mere import mention is not enough either.
 
 const PANEL = readFileSync(new URL('../src/client/Panel.tsx', import.meta.url), 'utf8')
+const PANEL_CODE = stripComments(PANEL)
 
 describe('wiring: MemorySheet renders the Console', () => {
   it('imports Console from the component module, not from view', () => {
-    expect(PANEL).toMatch(/import\s*\{\s*Console\s*\}\s*from\s*['"]\.\/Console\.tsx['"]/)
+    expect(PANEL_CODE).toMatch(/import\s*\{\s*Console\s*\}\s*from\s*['"]\.\/Console\.tsx['"]/)
   })
 
   it('passes the live status payload into it', () => {
     // Not merely `h(Console, null)` — the sheet must forward the store data,
     // or the system tab shows "—" for a vault that is actually connected.
-    const call = PANEL.slice(PANEL.indexOf('h(Console'))
+    const call = PANEL_CODE.slice(PANEL_CODE.indexOf('h(Console'))
     expect(call.slice(0, call.indexOf(')'))).toMatch(/status\s*:/)
   })
 
@@ -708,8 +778,8 @@ describe('wiring: MemorySheet renders the Console', () => {
     // MemoryOverlay is the registered shell.overlay occupant; the sheet inside
     // it is what a user sees. If `MemorySheet` stops reaching `Console`, the
     // console never appears even though every unit test above still passes.
-    expect(PANEL).toMatch(/export function MemorySheet\(\)/)
-    expect(PANEL).toMatch(/h\(MemorySheet,\s*null\)/)
+    expect(PANEL_CODE).toMatch(/export function MemorySheet\(\)/)
+    expect(PANEL_CODE).toMatch(/h\(MemorySheet,\s*null\)/)
   })
 })
 
@@ -719,19 +789,19 @@ describe('wiring: the four tabs come from CONSOLE_TABS', () => {
     // hand-written buttons. That would still render four tabs and still pass
     // the value test on CONSOLE_TABS itself — the array would simply stop
     // driving anything.
-    expect(CONSOLE).toMatch(/CONSOLE_TABS\.map\(/)
+    expect(CONSOLE_CODE).toMatch(/CONSOLE_TABS\.map\(/)
   })
 
   it('does not hardcode the tab list a second time', () => {
     // Exactly one occurrence of the tab-id tuple: the one inside the
     // CONSOLE_TABS declaration. A second copy in the render path means the
     // constant can drift away from what is drawn.
-    const literals = CONSOLE.match(/'search'|"search"/g) ?? []
+    const literals = CONSOLE_CODE.match(/'search'|"search"/g) ?? []
     expect(literals.length, 'the tab ids should be declared once, in view.ts').toBe(0)
   })
 
   it('keeps the labels keyed by tab so no tab can be added without copy', () => {
-    expect(CONSOLE).toMatch(/TAB_LABEL\[t\]/)
+    expect(CONSOLE_CODE).toMatch(/TAB_LABEL\[t\]/)
   })
 })
 
@@ -739,24 +809,24 @@ describe('wiring: a dismiss refusal is turned into a sentence', () => {
   it('routes the reason through dismissReasonText', () => {
     // The mutation to catch: `dismissItem(name).then(ok => { if (ok) reload() })`
     // — the refusal is dropped on the floor and the user sees nothing happen.
-    expect(CONSOLE).toMatch(/dismissReasonText\(/)
+    expect(CONSOLE_CODE).toMatch(/dismissReasonText\(/)
   })
 
   it('stores the mapped text in state that the render path reads', () => {
-    const handler = CONSOLE.slice(CONSOLE.indexOf('function onDismiss'))
+    const handler = CONSOLE_CODE.slice(CONSOLE_CODE.indexOf('function onDismiss'))
     const body = handler.slice(0, handler.indexOf('const items'))
     // The mapped sentence must reach a setter...
     expect(body).toMatch(/set[A-Za-z]+\(dismissReasonText\(/)
     // ...and the value that setter owns must be rendered, not merely stored.
     const stateName = (body.match(/set([A-Za-z]+)\(/) ?? [])[1]
     const varName = stateName.charAt(0).toLowerCase() + stateName.slice(1)
-    expect(CONSOLE).toMatch(new RegExp(varName + '\\s*\\?\\s*h\\(Failure'))
+    expect(CONSOLE_CODE).toMatch(new RegExp(varName + '\\s*\\?\\s*h\\(Failure'))
   })
 
   it('does not discard the verdict with an empty branch', () => {
     // A plausible "simplification": `if (!ok) return`. That is the exact shape
     // of silently doing nothing on refusal.
-    expect(CONSOLE).not.toMatch(/then\(function \(ok[^)]*\) \{\s*if \(!ok\) return/)
+    expect(CONSOLE_CODE).not.toMatch(/then\(function \(ok[^)]*\) \{\s*if \(!ok\) return/)
   })
 })
 
