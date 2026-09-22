@@ -30,15 +30,28 @@ import { dirname, join } from 'node:path'
 import { execSync } from 'node:child_process'
 
 import {
+  BreakdownDonut,
+  CalendarHeatmap,
+  GrowthChart,
   HEATMAP_OPACITY,
+  TopBars,
   WEEKDAY_LABEL,
   figureEmptyText,
   levelOpacity,
   spanText,
   truncateLabel,
 } from '../src/client/Figures.tsx'
+import type { StatsData } from '../src/client/types.ts'
 
 const SRC = readFileSync(new URL('../src/client/Figures.tsx', import.meta.url), 'utf8')
+/**
+ * The stylesheet, read as CSS TEXT.
+ *
+ * `styles.ts` is just an exported template literal, so importing the module
+ * would give the same string — but reading the file keeps this suite's contract
+ * identical to `client-console.test.ts`, which scans the source.
+ */
+const CSS = readFileSync(new URL('../src/client/styles.ts', import.meta.url), 'utf8')
 
 /**
  * Strip `/* … *\/` block comments and `// …` line comments.
@@ -394,6 +407,203 @@ describe('mutation: token check', () => {
       const theme = readFileSync(HOST_THEME, 'utf8')
       expect(declares(theme, '--dsw-alias-accent')).toBe(false)
       expect(declares(theme, '--dsw-alias-brand-primary')).toBe(true)
+    }
+  })
+})
+
+// ── Contract: every className has a rule ───────────────────────────
+//
+// The escape this closes (C-1): all 17 classes `Figures.tsx` renders were
+// defined in NO stylesheet. `npm run test:js` was 393/393 green and
+// `figures-smoke.mjs` 20/20 green while the ranking bars rendered as plain
+// text, because both layers only ever asked "does the component produce
+// geometry" — neither asked "does the stylesheet style what it produces".
+//
+// The two directions are complementary and both are needed:
+//   * here (Figures side): every class the component RENDERS is defined;
+//   * `client-console.test.ts` (styles side): every class the sheet DEFINES is
+//     rendered by some component.
+//
+// The check reads the SOURCE TEXT on both sides, so it cannot be satisfied by a
+// component that computes a class name at runtime and never renders it.
+
+/** The `className: '…'` literals in the comment-stripped Figures source. */
+function renderedClassNames(): string[] {
+  const found: string[] = []
+  for (const m of CODE.matchAll(/className:\s*'([^']+)'/g)) found.push(m[1])
+  return [...new Set(found)].sort()
+}
+
+/**
+ * True when the sheet declares a rule for `cls`.
+ *
+ * The trailing `(?![\w-])` matters: without it `dsh-memory-figure` would be
+ * "declared" by the selector `.dsh-memory-figure-bar-fill`, so the parent
+ * container could stay unstyled while this test stayed green.
+ */
+function cssDefines(cls: string): boolean {
+  return new RegExp('\\.' + cls + '(?![\\w-])').test(CSS)
+}
+
+describe('figure class/style contract', () => {
+  it('styles every class Figures.tsx renders', () => {
+    const classNames = renderedClassNames()
+    // Guard the guard: an empty list would make the assertion below vacuous.
+    expect(classNames.length, 'no className literals found in Figures.tsx')
+      .toBeGreaterThan(0)
+
+    const undefinedClasses = classNames.filter((c) => !cssDefines(c))
+    expect(
+      undefinedClasses,
+      'Figures.tsx renders classes with no rule in styles.ts (they render as ' +
+      'unstyled inline elements — the ranking bars vanish): ' +
+      undefinedClasses.join(', '),
+    ).toEqual([])
+  })
+
+  it('gives the ranking bar a fill that can actually draw a bar', () => {
+    // The C-1 defect in one assertion: `<i class="…-bar-fill">` is inline by
+    // default, and inline elements ignore width/height. Without a `display`,
+    // a `height` and a `background`, `style="width:96%"` is inert and the bar
+    // is invisible no matter how correct the geometry is.
+    const at = CSS.indexOf('.dsh-memory-figure-bar-fill')
+    expect(at, '.dsh-memory-figure-bar-fill rule missing').toBeGreaterThanOrEqual(0)
+    const rule = CSS.slice(at, CSS.indexOf('}', at))
+    expect(rule).toMatch(/display:\s*(block|flex|inline-block)/)
+    expect(rule).toMatch(/height:/)
+    expect(rule).toMatch(/background:\s*var\(--dsw-alias-brand-primary\)/)
+  })
+
+  it('gives the bar a track to be a share OF', () => {
+    // A 96%-wide fill is meaningless unless the 100% it is a fraction of is a
+    // visible element; the track also has to clip the fill to its radius.
+    const at = CSS.indexOf('.dsh-memory-figure-bar-track')
+    expect(at, '.dsh-memory-figure-bar-track rule missing').toBeGreaterThanOrEqual(0)
+    const rule = CSS.slice(at, CSS.indexOf('}', at))
+    expect(rule).toMatch(/display:\s*block/)
+    expect(rule).toMatch(/height:\s*\d/)
+    expect(rule).toMatch(/width:\s*\d/)
+  })
+
+  it('strips the list markers off the donut legend', () => {
+    // Measured in the review: without this the legend degraded to a <ul>
+    // bulleted list, which reads as prose, not as a colour key.
+    const at = CSS.indexOf('.dsh-memory-legend')
+    expect(at, '.dsh-memory-legend rule missing').toBeGreaterThanOrEqual(0)
+    const rule = CSS.slice(at, CSS.indexOf('}', at))
+    expect(rule).toMatch(/list-style:\s*none/)
+  })
+})
+
+// ── Rendering: the four figures, actually executed ─────────────────
+//
+// `environment: 'node'` has no DOM and no react-dom, so nothing here mounts.
+// But React IS installed as a devDependency and `h` is bare `createElement`, so
+// calling a component returns a plain element tree (`type` / `props` /
+// `props.children`). Walking that tree and INVOKING the function components is
+// what a renderer does between `<Component/>` and the host nodes, and it is
+// enough to observe which nodes a figure emits.
+//
+// Why this layer is required for the degradation guard: with `data:null` three
+// of the four figures produce zero geometry whether or not `Frame` degrades, so
+// "Frame silently stopped degrading" is unobservable for them. `status:'error'`
+// with NON-EMPTY data is the only input under which all four figures have
+// something to draw and therefore a visible decision to make.
+
+interface El { type: unknown; props: Record<string, unknown> }
+
+/** Render a component tree, calling function components, as a renderer does. */
+function renderTree(node: unknown): unknown {
+  if (Array.isArray(node)) {
+    return node.map(renderTree).filter((c) => c !== null && c !== undefined)
+  }
+  if (node === null || node === undefined || typeof node !== 'object') return node
+  const el = node as El
+  if (typeof el.type === 'function') {
+    const fn = el.type as (p: Record<string, unknown>) => unknown
+    return renderTree(fn(el.props))
+  }
+  return { type: el.type, props: { ...el.props, children: renderTree(el.props.children) } }
+}
+
+/** Every host element in a rendered tree. */
+function elements(node: unknown): El[] {
+  if (node === null || node === undefined) return []
+  if (Array.isArray(node)) return node.flatMap(elements)
+  if (typeof node !== 'object') return []
+  const el = node as El
+  return [el, ...elements(el.props.children)]
+}
+
+/** Every string in a rendered tree, concatenated. */
+function textOf(node: unknown): string {
+  if (typeof node === 'string') return node
+  if (typeof node === 'number') return String(node)
+  if (Array.isArray(node)) return node.map(textOf).join('')
+  if (node && typeof node === 'object') return textOf((node as El).props.children)
+  return ''
+}
+
+/** Non-empty data for ALL FOUR figures — the point of the block above. */
+const FULL: StatsData = {
+  daily: [{ date: '2026-09-01', count: 2 }, { date: '2026-09-02', count: 5 }],
+  access: [{ date: '2026-09-01', count: 3 }, { date: '2026-09-02', count: 7 }],
+  types: [{ type: 'fact', count: 4 }, { type: 'pattern', count: 2 }],
+  importance: [{ value: 0.9, count: 3 }],
+  top: [{ id: 'a', label: '记忆库入口', count: 9, untrusted: true }],
+  span: { start: '2026-09-01', end: '2026-09-02' },
+  totals: { memories: 6, vectors: 6, accesses: 10, inbox: 0 },
+}
+
+/**
+ * Each figure, with the one host node that proves it actually drew something.
+ *
+ * Three figures draw SVG; `TopBars` is DOM markup (a track + fill pair per
+ * row), so a `<svg>` assertion would be wrong for it — the marker differs per
+ * figure on purpose.
+ */
+const FIGURES = [
+  ['CalendarHeatmap', CalendarHeatmap, { tag: 'svg' }],
+  ['GrowthChart', GrowthChart, { tag: 'svg' }],
+  ['BreakdownDonut', BreakdownDonut, { tag: 'svg' }],
+  ['TopBars', TopBars, { cls: 'dsh-memory-figure-bar-fill' }],
+] as const
+
+describe('degradation is observable for every figure', () => {
+  it('draws geometry for all four when the read succeeded', () => {
+    // Guard the guard: if the walker produced an empty tree, the block below
+    // would pass vacuously — "nothing is drawn" is trivially true of nothing.
+    for (const [name, Figure, marker] of FIGURES) {
+      const nodes = elements(renderTree(Figure({ status: 'ok', data: FULL })))
+      const cls = nodes.map((n) => String(n.props.className ?? ''))
+      const drew = 'tag' in marker
+        ? nodes.some((n) => String(n.type) === marker.tag)
+        : cls.some((c) => c.includes(marker.cls))
+      expect(drew, `${name} drew nothing on populated data`).toBe(true)
+      expect(textOf(renderTree(Figure({ status: 'ok', data: FULL }))), name)
+        .not.toContain('读取失败')
+    }
+  })
+
+  it('degrades all four on a failed read even when data is non-empty', () => {
+    // The specific hole I-3 names: `status:'error'` is the degradation signal
+    // and it must win over a non-empty `data` — the contract is that a failed
+    // read is never drawn as if it were a successful one.
+    for (const [name, Figure] of FIGURES) {
+      const tree = renderTree(Figure({ status: 'error', data: FULL }))
+      const nodes = elements(tree)
+      const tags = nodes.map((n) => String(n.type))
+
+      expect(textOf(tree), `${name} shows no degradation notice`).toContain('读取失败')
+      expect(textOf(tree), `${name} claims the vault is empty`).not.toContain('暂无数据')
+
+      for (const tag of ['svg', 'rect', 'path', 'ul']) {
+        expect(tags, `${name} still drew <${tag}> on a failed read`).not.toContain(tag)
+      }
+      const barClasses = nodes
+        .map((n) => String(n.props.className ?? ''))
+        .filter((c) => c.includes('dsh-memory-figure-bar'))
+      expect(barClasses, `${name} still drew ranking bars on a failed read`).toEqual([])
     }
   })
 })

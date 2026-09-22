@@ -324,6 +324,111 @@ export const PANEL_CSS = `
   opacity: 1; color: var(--dsw-alias-state-error-primary);
   border-color: var(--dsw-alias-state-error-primary);
 }
+
+/* ── Four figures (Figures.tsx) ─────────────────────────────────────
+   Round 1 shipped the four figures with NO rules at all: all 17 class names
+   below were rendered by Figures.tsx and defined nowhere, so every shape fell
+   back to its default display. The visible collapse: '-bar-fill' is an <i>
+   (inline, no height, no background), so the ranking chart rendered as bare
+   text with an inert width:96%; the donut legend rendered as a bulleted list.
+   Every geometry, token and degradation assertion was green throughout —
+   none of them asked whether the classes had rules. That contract now lives in
+   test/client-figures.test.ts, in both directions.
+
+   Tokens: only the aliases the host ACTUALLY declares (see the token block in
+   test/client-console). Text greys use 'secondary' where the text is a real
+   notice, 'tertiary' only for the small axis/meta hints. */
+.dsh-memory-figure {
+  display: flex; flex-direction: column; gap: 6px;
+  margin: 0; min-width: 0;
+}
+.dsh-memory-figure-cap {
+  display: flex; align-items: baseline; gap: 6px;
+  font-size: 10.5px; line-height: 1.3;
+  color: var(--dsw-alias-label-tertiary);
+}
+.dsh-memory-figure-cap b {
+  font-size: 11.5px; font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+.dsh-memory-figure-range {
+  font-size: 10px; letter-spacing: .02em;
+  color: var(--dsw-alias-label-tertiary);
+}
+.dsh-memory-figure-note {
+  /* secondary, not tertiary: this is the degradation notice ("读取失败…")
+     and it is the ONLY thing the figure shows when the core could not be read,
+     so it has to clear AA on a light card as well (tertiary is 3.71:1 there). */
+  font-size: 10.5px; color: var(--dsw-alias-label-secondary);
+}
+/* SVG weekday axis labels. fill, not color — these are SVG <text>. */
+.dsh-memory-figure-tick {
+  font-size: 9px; fill: var(--dsw-alias-label-tertiary);
+}
+/* Donut: the ring and its legend sit side by side. */
+.dsh-memory-figure-split {
+  display: flex; align-items: center; gap: 10px; min-width: 0;
+}
+.dsh-memory-legend {
+  /* Without this the legend degrades to a bulleted <ul>, which reads as prose
+     rather than as the colour key a donut cannot do without. */
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: 3px;
+  min-width: 0; flex: 1;
+}
+.dsh-memory-legend-item {
+  display: flex; align-items: center; gap: 6px; min-width: 0;
+}
+.dsh-memory-legend-swatch {
+  /* An <i>; the colour arrives inline (brand-primary at the slice's alpha),
+     so this only has to give it a box. */
+  display: block; flex: none;
+  width: 8px; height: 8px; border-radius: 2px;
+}
+.dsh-memory-legend-name {
+  flex: 1; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+  font-size: 10.5px; color: var(--dsw-alias-label-secondary);
+}
+.dsh-memory-legend-val {
+  flex: none; font-size: 10px; letter-spacing: .02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-label-tertiary);
+}
+.dsh-memory-figure-bars {
+  display: flex; flex-direction: column; gap: 5px;
+}
+.dsh-memory-figure-bar {
+  display: flex; align-items: center; gap: 8px; min-width: 0;
+}
+.dsh-memory-figure-bar-name {
+  /* The label is already truncated to 18 code points by the component; this
+     keeps a long one from pushing the track off the sheet. */
+  flex: 1; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+  font-size: 10.5px; color: var(--dsw-alias-label-primary);
+}
+.dsh-memory-figure-bar-track {
+  /* The visible 100% the fill is a fraction OF. overflow: hidden clips the
+     fill to the track's radius so a rounded bar cannot square off at the end. */
+  display: block; flex: none;
+  width: 96px; height: 8px;
+  background: var(--dsw-alias-bg-layer-3);
+  border-radius: 4px; overflow: hidden;
+}
+.dsh-memory-figure-bar-fill {
+  /* THE C-1 FIX. <i> is inline, and an inline box ignores both width and
+     height — so style="width:96%" drew nothing and the bars vanished.
+     display: block makes the percentage apply; the height and background
+     make it a bar rather than nothing. */
+  display: block; height: 100%;
+  background: var(--dsw-alias-brand-primary);
+}
+.dsh-memory-figure-bar-val {
+  flex: none; font-size: 10.5px; letter-spacing: .02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-label-secondary);
+}
 `
 
 let styleSeq = 0

@@ -1,11 +1,28 @@
 /**
- * Render smoke for the four figures — NOT part of the node suite.
+ * Render smoke for the four figures — a LOCAL DEBUGGING PROBE, not evidence.
  *
- * `environment: 'node'` has no DOM, and React is not loadable in this repo's
- * test runner. So this script substitutes a minimal `h()` (a plain object
+ * WHAT IT PROVES: the four components execute on a real `/stats` payload and
+ * produce geometry. `environment: 'node'` has no DOM and React is not loadable
+ * in the test runner, so this substitutes a minimal `h()` (a plain object
  * builder) via a loader hook and calls the REAL components, then walks the
- * returned tree. That proves the components execute on a real `/stats` payload
- * and produce geometry — which source-string assertions cannot.
+ * returned tree. That is genuinely more than a source-string assertion can do,
+ * and it is why the shim is worth keeping.
+ *
+ * WHAT IT DOES NOT PROVE, and must never be cited as proving:
+ *   - It is NOT in CI. `vitest.config.ts` sets `include: ['test/**\/*.test.ts']`,
+ *     so neither `npm run test:js` nor `npm run check` ever runs this file. A
+ *     green run here says nothing about the suite.
+ *   - It checks NO stylesheet contract. Measured in the fix-round-1 review:
+ *     deleting the ranking bar's `className` outright still printed SMOKE OK
+ *     and vitest still reported 25 passed. It cannot see CSS at all.
+ *   - It renders NO real browser, so it cannot see layout, sizing, or colour.
+ *
+ * The lesson it now carries: round 1 shipped four figures whose 17 class names
+ * were defined in no stylesheet — the bars rendered as bare text — while this
+ * probe and all 393 vitest tests were green. "The component runs" is not "the
+ * figure is visible". The style contract is asserted in
+ * test/client-figures.test.ts (every rendered className must have a rule);
+ * visual confirmation lives in the fix report, via a rendered screenshot.
  *
  * Usage: node scripts/figures-smoke.mjs
  */

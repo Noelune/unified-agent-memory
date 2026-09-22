@@ -355,9 +355,18 @@ describe('console styles', () => {
   it('only references classes that Console.tsx or Panel.tsx actually define', () => {
     // Guards the reverse drift: a style rule for a class nothing renders is
     // dead weight, and a class the component renders with no rule is naked.
+    //
+    // Figures.tsx joined the renderer set in fix round 1. It is a third client
+    // component with its own class names, so leaving it out made this test
+    // report "dsh-memory-figure is styled but never rendered" for all 17 of the
+    // figure classes. The assertion is unchanged — the set of components that
+    // can render a class was simply incomplete. The opposite direction (a class
+    // Figures.tsx RENDERS with no rule) is pinned in
+    // test/client-figures.test.ts, which is the test that would have caught C-1.
     const panel = readFileSync(new URL('../src/client/Panel.tsx', import.meta.url), 'utf8')
+    const figures = readFileSync(new URL('../src/client/Figures.tsx', import.meta.url), 'utf8')
     const used = new Set<string>()
-    for (const src of [CONSOLE, panel]) {
+    for (const src of [CONSOLE, panel, figures]) {
       for (const m of src.matchAll(/dsh-memory-[a-z0-9-]+/g)) used.add(m[0])
     }
     const declared = new Set<string>()
