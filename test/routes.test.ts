@@ -4,6 +4,7 @@ import {
   guardWrite,
   isLoopback,
   isLoopbackHost,
+  originHost,
   queryParam,
   readBody,
   sendJson,
@@ -90,6 +91,28 @@ describe('isLoopbackHost', () => {
     expect(isLoopbackHost('10.0.0.9')).toBe(false)
     expect(isLoopbackHost('10.0.0.9:3081')).toBe(false)
     expect(isLoopbackHost('[::2]:3081')).toBe(false)
+  })
+})
+
+describe('originHost', () => {
+  it('reads the host of a well-formed origin, lower-cased and port included', () => {
+    expect(originHost('http://127.0.0.1:3081')).toBe('127.0.0.1:3081')
+    expect(originHost('https://EVIL.example.com/page')).toBe('evil.example.com')
+    expect(originHost('http://[::1]:3081')).toBe('[::1]:3081')
+  })
+
+  it('returns null for a malformed value rather than a guess', () => {
+    expect(originHost('not a url')).toBeNull()
+    expect(originHost('')).toBeNull()
+  })
+
+  it('does not fold a backslash into the authority (F-1)', () => {
+    // WHATWG URL treats `\` as `/` under http(s), so `...:3081\.evil.com` parses
+    // to host `127.0.0.1:3081` — the loopback authority — even though the raw
+    // value names another host. The prefilter that used to guard this let the
+    // backslash through, so a same-origin compare was satisfied and the write
+    // was admitted. The parse must never present that value as the loopback host.
+    expect(originHost('http://127.0.0.1:3081\\.evil.com')).not.toBe('127.0.0.1:3081')
   })
 })
 

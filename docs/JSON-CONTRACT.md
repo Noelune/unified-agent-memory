@@ -582,6 +582,14 @@ else:
 | 4 | `Host` 本机 + `Origin`、`Sec-Fetch-Site` 都缺失 | **放行**——本机非浏览器客户端（curl、其他 Agent）的典型形态，刻意保留 |
 | 5 | `Host` 本机 + `Origin` 缺失但有 `Referer` | 仅作**补充**信号：存在且跨站 → **403** |
 
+**`Origin` / `Referer` 的解析（`originHost`）**：取 `new URL(value).host` 小写化，**解析失败即 `null`（fail-closed）**。
+**任何含反斜杠 `\` 的值直接判为不可解析**：WHATWG `URL` 在 `http(s)` 下把 `\` 视同 `/`，因此
+`http://127.0.0.1:3081\.evil.com` 会被解析成 host `127.0.0.1:3081`（它并未声明的权威），
+从而在「与本机 `Host` 同源」的比对中被放行。浏览器不可达（`\` 在计算 origin 前已被归一化，
+且 `Origin` 属 forbidden header），但**手写 HTTP 客户端可达**，故在解析前显式拒绝。
+**不再使用正则预过滤**：早期版本用 `^[a-z][a-z0-9+.-]*:\/\/([^/?#]+)` 做前置过滤，其字符类**放行 `\`**，
+是全函数中**唯一 fail-open** 的一步，且不提供 `try`/`catch` 之外的任何安全价值（正则拒的值 `new URL` 同样拒）。
+
 **为什么第 1 条单独就够挡 DNS rebinding，而第 2 条的「Origin 等于 Host」不行**：
 DNS rebinding 的本质是**攻击者页面与目标看起来同源**。浏览器从 `http://evil.com` 发请求 →
 `Origin: http://evil.com`；因 DNS 已重绑定到 `127.0.0.1`，请求打到本机，**但 `Host` 头仍是 `evil.com`**。

@@ -379,6 +379,45 @@ describe('POST /dismiss route', () => {
     expect(vi.mocked(runCore)).not.toHaveBeenCalled()
   })
 
+  it('refuses an Origin that hides a foreign host behind a backslash (F-1)', async () => {
+    // `Origin: http://127.0.0.1:3081\.evil.com` with a loopback Host. The regex
+    // prefilter let the backslash through to WHATWG URL, which folds it to `/`
+    // and reports host `127.0.0.1:3081` — same-origin with the Host, so the write
+    // was admitted. Unreachable from a browser (Edge normalises `\` and Origin is
+    // a forbidden header) but live for a hand-rolled HTTP client. Must be 403.
+    const out = await post('{"name":"a.md"}', 'POST', '127.0.0.1', {
+      origin: 'http://127.0.0.1:3081\\.evil.com',
+      host: '127.0.0.1:3081',
+    })
+
+    expect(out.code).toBe(403)
+    expect(out.headers['cache-control']).toBe('no-store')
+    expect(vi.mocked(runCore)).not.toHaveBeenCalled()
+  })
+
+  it('refuses a Host that only starts with a loopback spelling (F-2)', async () => {
+    // The exact-match in `isLoopbackHost` is a single point of protection: relax
+    // it to `startsWith('127.0.0.1')` and a rebinding name slips through. A Host
+    // that merely begins with the loopback name is a foreign origin, not us.
+    const out = await post('{"name":"a.md"}', 'POST', '127.0.0.1', {
+      origin: 'http://127.0.0.1.evil.com',
+      host: '127.0.0.1.evil.com',
+    })
+
+    expect(out.code).toBe(403)
+    expect(vi.mocked(runCore)).not.toHaveBeenCalled()
+  })
+
+  it('refuses a Host that only starts with localhost (F-2)', async () => {
+    const out = await post('{"name":"a.md"}', 'POST', '127.0.0.1', {
+      origin: 'http://localhost.evil.com',
+      host: 'localhost.evil.com',
+    })
+
+    expect(out.code).toBe(403)
+    expect(vi.mocked(runCore)).not.toHaveBeenCalled()
+  })
+
   it('answers 413 for a body over the 2048-byte cap', async () => {
     const out = await post(JSON.stringify({ name: 'a'.repeat(4096) }))
 

@@ -91,12 +91,30 @@ export function guard(req: RouteReq, res: RouteRes, allowed: readonly string[]):
  * the same parse answers both. A *malformed* value yields null, which the caller
  * treats as a rejection — fail-closed, because an attacker fully controls the
  * bytes of both headers and a parse failure is their best way to slip past.
+ *
+ * Two defences, and the order matters:
+ *
+ *   1. A backslash anywhere in the value is rejected outright. WHATWG `URL`
+ *      folds `\` to `/` under http(s), so `http://127.0.0.1:3081\.evil.com`
+ *      parses to host `127.0.0.1:3081` — an authority it does not name — and a
+ *      same-origin compare against a loopback `Host` then succeeds. A browser
+ *      cannot send that value (`\` is normalised before the origin is computed
+ *      and `Origin` is a forbidden header), but a hand-rolled HTTP client can,
+ *      so the parse is not allowed to launder it.
+ *   2. Everything else goes through `new URL` and a `try`/`catch`. There is
+ *      deliberately no regex prefilter in front: an earlier
+ *      `^[a-z][a-z0-9+.-]*:\/\/([^/?#]+)` admitted `\` and so was the only
+ *      fail-OPEN step in an otherwise fail-closed function, while providing no
+ *      safety the `try`/`catch` does not already give (anything the regex
+ *      rejects, `new URL` rejects too).
  */
-function originHost(value: string): string | null {
-  const match = /^[a-z][a-z0-9+.-]*:\/\/([^/?#]+)/i.exec(value.trim())
-  if (!match) return null
+export function originHost(value: string): string | null {
+  const raw = value.trim()
+  // A `\` is never valid in a serialized origin or referer authority; refuse it
+  // rather than let `URL` rewrite it into a `/` path separator.
+  if (raw.includes('\\')) return null
   try {
-    return new URL(value.trim()).host.toLowerCase()
+    return new URL(raw).host.toLowerCase()
   } catch {
     return null
   }
