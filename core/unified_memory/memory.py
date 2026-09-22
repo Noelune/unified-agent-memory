@@ -45,7 +45,14 @@ from .common import (
     resolve_vault,
 )
 
-INDEX_DB = Path.home() / ".unified-memory" / "index.db"
+# Single redirectable base path for every per-vault index DB (see
+# schema.index_db_for). The env override exists because a test that spawns a
+# child process (forgetter's generated .bat) cannot patch this in-process, so
+# the child would otherwise write index-*.db into the real home directory.
+INDEX_DB = Path(
+    os.environ.get("UNIFIED_MEMORY_INDEX_DB")
+    or Path.home() / ".unified-memory" / "index.db"
+)
 
 
 def is_agent_file_prefix(value: str) -> bool:

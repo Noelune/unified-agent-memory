@@ -82,6 +82,10 @@ class ForgetterScheduleTest(unittest.TestCase):
         repo_core = str(Path(__file__).resolve().parents[1])
         env = os.environ.copy()
         env["PYTHONPATH"] = repo_core + os.pathsep + env.get("PYTHONPATH", "")
+        # The .bat runs as a child process, so it cannot see the in-process
+        # memory.INDEX_DB redirect done by make_scratch_vault(); without this the
+        # child would create index-*.db in the real ~/.unified-memory/.
+        env["UNIFIED_MEMORY_INDEX_DB"] = str(Path(self.vault).parent / "child-index" / "index.db")
         completed = subprocess.run(["cmd.exe", "/c", str(bat)], env=env, capture_output=True, text=False, timeout=30)
         stderr = (completed.stderr or b"").decode(errors="replace")
         self.assertEqual(completed.returncode, 0, stderr)
