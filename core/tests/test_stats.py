@@ -95,5 +95,66 @@ class AccessCountsTest(_ScratchIndexTest):
         self.assertEqual(stats_mod.access_counts(empty), [])
 
 
+class BreakdownTest(_ScratchIndexTest):
+    scratch_dir = "breakdown-index"
+
+    def setUp(self):
+        super().setUp()
+        conn = index_mod.get_conn(self.vault)
+        # The base class seeds m1/m2/m3 as a shared fixture; this class needs its
+        # own breakdown rows, so drop those instead of colliding on the id PK.
+        conn.execute("DELETE FROM memories")
+        rows = [
+            ("m1", "fact", 0.5, 3, "memory one"),
+            ("m2", "fact", 0.9, 0, "memory two"),
+            ("m3", "bug", 0.9, 7, "memory three"),
+        ]
+        for mid, typ, imp, ac, line in rows:
+            conn.execute(
+                "INSERT INTO memories (id, doc, line, type, importance, status,"
+                " access_count, created_at, updated_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?)",
+                (mid, "a.md", line, typ, imp, "active", ac,
+                 "2026-01-01T00:00:00", "2026-01-01T00:00:00"),
+            )
+        conn.commit()
+        conn.close()
+
+    def test_type_counts_descending(self):
+        self.assertEqual(
+            stats_mod.type_counts(self.vault),
+            [{"type": "fact", "count": 2}, {"type": "bug", "count": 1}],
+        )
+
+    def test_importance_counts_descending_by_value(self):
+        self.assertEqual(
+            stats_mod.importance_counts(self.vault),
+            [{"value": 0.9, "count": 2}, {"value": 0.5, "count": 1}],
+        )
+
+    def test_top_accessed_excludes_zero_and_is_redacted(self):
+        got = stats_mod.top_accessed(self.vault)
+        self.assertEqual([g["count"] for g in got], [7, 3])
+        for g in got:
+            self.assertIs(g["untrusted"], True)
+
+    def test_top_accessed_label_is_redacted(self):
+        # redact() is a secret scrubber, not a content stripper (see
+        # common.SECRET_PATTERNS): a credential-shaped line in vault content
+        # must come back scrubbed, since memory text is untrusted data.
+        conn = index_mod.get_conn(self.vault)
+        conn.execute(
+            "UPDATE memories SET line = ? WHERE id = ?",
+            ("api_key=abcdef123456", "m3"),
+        )
+        conn.commit()
+        conn.close()
+        self.assertEqual(stats_mod.top_accessed(self.vault)[0]["label"],
+                         "api_key=<REDACTED>")
+
+    def test_top_accessed_respects_limit(self):
+        self.assertEqual(len(stats_mod.top_accessed(self.vault, limit=1)), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
