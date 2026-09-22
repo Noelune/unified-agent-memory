@@ -352,7 +352,7 @@ describe('console styles', () => {
     expect(STYLES).toContain('pointer-events: auto')
   })
 
-  it('only references classes that Console.tsx or Panel.tsx actually define', () => {
+  it('only references classes that Console.tsx, Panel.tsx or Figures.tsx actually define', () => {
     // Guards the reverse drift: a style rule for a class nothing renders is
     // dead weight, and a class the component renders with no rule is naked.
     //

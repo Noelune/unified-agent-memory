@@ -50,8 +50,13 @@ const SRC = readFileSync(new URL('../src/client/Figures.tsx', import.meta.url), 
  * `styles.ts` is just an exported template literal, so importing the module
  * would give the same string — but reading the file keeps this suite's contract
  * identical to `client-console.test.ts`, which scans the source.
+ *
+ * Comments are stripped for the same reason as in the JSX source below: a class
+ * name that appears ONLY inside a CSS comment is not a rule, and without this a
+ * comment mention would satisfy `cssDefines` and the contract could pass while
+ * every shape stayed unstyled.
  */
-const CSS = readFileSync(new URL('../src/client/styles.ts', import.meta.url), 'utf8')
+const CSS = stripComments(readFileSync(new URL('../src/client/styles.ts', import.meta.url), 'utf8'))
 
 /**
  * Strip `/* … *\/` block comments and `// …` line comments.
