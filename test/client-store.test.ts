@@ -447,6 +447,10 @@ describe('usePreview effect decision (pure, no renderer)', () => {
 // the vault genuinely has nothing): both used to collapse into a zeroed chart.
 
 describe('loadStats', () => {
+  // Every fixture below carries the FULL top-level key set, because a missing
+  // key is now an error (see the omission test further down). These cases are
+  // about malformed VALUES / empty data, and an incidental omitted key would
+  // turn them into error-payload assertions by accident.
   const statsData = (over: Record<string, unknown> = {}) => ({
     daily: [{ date: '2026-01-01', count: 1 }],
     access: [],
@@ -514,16 +518,16 @@ describe('loadStats', () => {
     expect(JSON.stringify(calls[0].init?.headers)).toContain('application/json')
   })
 
-  it('normalizes a missing or malformed series instead of leaking undefined', async () => {
-    // The route's contract is the shape the brief documents, but "field missing"
-    // is an explicit requirement: the console must get renderable arrays, not
-    // `undefined`. Geometry that reads `.length` on undefined crashes the pane.
+  it('normalizes a malformed series instead of leaking undefined', async () => {
+    // The console must get renderable arrays, not `undefined`: geometry that
+    // reads `.length` on undefined crashes the pane. The keys are all present —
+    // a PRESENT `daily: 'nope'` is a wrong value, not a missing field.
     stubFetch({
       body: {
         ok: true,
         command: 'stats',
         status: 'ok',
-        data: { daily: 'nope', top: [{ id: 'a' }], totals: { memories: 5 } },
+        data: statsData({ daily: 'nope', top: [{ id: 'a' }], totals: { memories: 5 } }),
       },
     })
     const got = await loadStats()
@@ -541,10 +545,10 @@ describe('loadStats', () => {
       body: {
         ok: true,
         command: 'stats',
-        data: {
+        data: statsData({
           daily: [{ date: '2026-01-01', count: 2 }, null, 'x'],
           types: [{ type: 'fact', count: 3 }, 7],
-        },
+        }),
       },
     })
     const got = await loadStats()
@@ -560,11 +564,61 @@ describe('loadStats', () => {
       body: {
         ok: true,
         command: 'stats',
-        data: { top: [{ id: 'a', label: '<script>', count: 1, untrusted: false }] },
+        data: statsData({ top: [{ id: 'a', label: '<script>', count: 1, untrusted: false }] }),
       },
     })
     const got = await loadStats()
     expect(got.data?.top[0].untrusted).toBe(true)
+  })
+
+  it('degrades when the payload omits an expected top-level key', async () => {
+    // The gap this closes: `shapeStats` normalized a MISSING field into an empty
+    // series / 0, so renaming a core-side key (`daily` → `days`) rendered a
+    // blank heatmap next to a non-zero `totals` — the console *saying* the vault
+    // is empty. "Field missing" is a contract break, not an empty vault.
+    //
+    // These per-key cases lock the exact key set: a one-key guard would pass the
+    // first and only. Each fixture is spelled out in full and then has ONE key
+    // deleted, because `{ daily: undefined }` does not mean "no daily key" — the
+    // key is still there, and `'daily' in data` is true.
+    const base = statsData()
+    const broken = [
+      ['daily', 'daily'],
+      ['access', 'access'],
+      ['types', 'types'],
+      ['importance', 'importance'],
+      ['top', 'top'],
+      ['span', 'span'],
+      ['totals', 'totals'],
+    ] as const
+    for (const [key, drop] of broken) {
+      const data: Record<string, unknown> = { ...base }
+      delete data[drop]
+      stubFetch({ body: { ok: true, command: 'stats', status: 'ok', data } })
+      await expect(loadStats(), `missing ${key}`).resolves.toEqual({ status: 'error', data: null })
+    }
+  })
+
+  it('still reports ok when the vault is genuinely empty (every key present)', async () => {
+    // The boundary that makes the guard above safe. All-empty arrays plus zeros
+    // is a REAL answer from an empty vault, so it must stay `ok` — treating it
+    // as an error would make the console cry "degraded core" on a fresh install.
+    stubFetch({
+      body: {
+        ok: true,
+        command: 'stats',
+        status: 'ok',
+        data: {
+          daily: [], access: [], types: [], importance: [], top: [],
+          span: { start: null, end: null },
+          totals: { memories: 0, vectors: 0, accesses: 0, inbox: 0 },
+        },
+      },
+    })
+    const got = await loadStats()
+    expect(got.status).toBe('ok')
+    expect(got.data?.daily).toEqual([])
+    expect(got.data?.totals.memories).toBe(0)
   })
 })
 

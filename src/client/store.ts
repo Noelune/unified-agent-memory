@@ -417,11 +417,25 @@ function nullableStr(v: unknown): string | null {
 }
 
 /**
+ * The top-level keys `shapeStats` renders. A payload missing any of them is a
+ * contract break, not an empty vault.
+ *
+ * MUST stay equal to the key set `stats.build()` returns in
+ * `core/unified_memory/stats.py`. This is deliberately a key-EXISTENCE check,
+ * not a per-field type check: rename `daily` → `days` core-side and the old
+ * normalizer turned the missing series into `[]`, so the console drew a blank
+ * heatmap beside a non-zero `totals` — a UI that lies about an empty vault. The
+ * value shapes are still normalized by `shapeStats` (an empty array, a 0 and a
+ * `''` are legitimate answers from a real, empty vault).
+ */
+const STATS_KEYS = ['daily', 'access', 'types', 'importance', 'top', 'span', 'totals'] as const
+
+/**
  * Normalize whatever the route sent into the renderable shape.
  *
- * The route's contract is the shape the brief documents, but "field missing" has
- * an explicit behaviour here rather than a crash: every series becomes an array,
- * every number becomes a number, and every label a string.
+ * Every key in `STATS_KEYS` must be PRESENT (see the ceiling on that list); the
+ * values within it are normalized rather than validated: every series becomes an
+ * array, every number a number, every label a string.
  */
 function shapeStats(d: Record<string, unknown>): StatsData {
   const span = (typeof d.span === 'object' && d.span !== null ? d.span : {}) as Record<string, unknown>
@@ -449,17 +463,22 @@ function shapeStats(d: Record<string, unknown>): StatsData {
 /**
  * Read the aggregate feed for the console figures.
  *
- * Two independent gates, exactly like `dismissItem`:
+ * The route's contract is the shape the brief documents. Three independent
+ * gates, exactly like `dismissItem`:
  *
  *  - the HTTP status must be ok, because a 500 body is not ours to trust;
  *  - `body.ok === true` must hold, because the route answers **200 with
- *    `ok:false`,`data:null`** when the core is degraded.
+ *    `ok:false`,`data:null`** when the core is degraded;
+ *  - every key in `STATS_KEYS` must be PRESENT, because a renamed core-side field
+ *    would otherwise normalize into an empty series and the console would draw a
+ *    blank figure beside a non-zero total — "your vault is empty" is a lie the
+ *    user cannot detect.
  *
  * `data:null` is reported as `status:'error'`, never normalized into an empty
  * dataset: "the core could not be read" and "the vault has nothing in it" are
  * different facts and the console renders them differently. Every failure — a
- * non-JSON body (`res.json()` rejects), an aborted transport, a missing field —
- * resolves to an error payload. This function never rejects.
+ * non-JSON body (`res.json()` rejects), an aborted transport, a missing top-level
+ * key — resolves to an error payload. This function never rejects.
  */
 export async function loadStats(): Promise<StatsPayload> {
   try {
@@ -471,7 +490,9 @@ export async function loadStats(): Promise<StatsPayload> {
     const body = (await r.json()) as { ok?: boolean; data?: unknown } | null
     if (!body || body.ok !== true) return { status: 'error', data: null }
     if (typeof body.data !== 'object' || body.data === null) return { status: 'error', data: null }
-    return { status: 'ok', data: shapeStats(body.data as Record<string, unknown>) }
+    const data = body.data as Record<string, unknown>
+    if (!STATS_KEYS.every(function (k) { return k in data })) return { status: 'error', data: null }
+    return { status: 'ok', data: shapeStats(data) }
   } catch {
     return { status: 'error', data: null }
   }
