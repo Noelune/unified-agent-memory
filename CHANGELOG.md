@@ -64,6 +64,12 @@ DSH `0.2.0-rc.2` 上会被宿主整体跳过（工具与路由都不注册）。
   不应卡住 CI）。
 - `package.json` 新增 `prepack`，使从干净 checkout 发布时必定带上 `lib/` 产物
   （此前无任何 prepare/prepack 脚本，直接 `npm publish` 会发出不含构建产物的包）。
+- **CI 的 `npm ci` 修复**：`vitest` 内嵌的 `vite@8` 把 `esbuild` 声明为**可选 peer**
+  （`^0.27.0 || ^0.28.0`），npm 11 生成的锁文件因此留下了 26 个 `@esbuild/*@0.28.2`
+  平台包、却没有对应的 `esbuild@0.28.2` 本体条目；npm 10（CI 版本）据此判定锁文件不一致，
+  报 `Missing: esbuild@0.28.2 from lock file` 并直接失败——这正是上一次 v0.6.0 提交
+  CI 变红的原因。现将根 `esbuild` 升到 `^0.28.2`，让根依赖与 vite 的 peer 由同一版本满足，
+  悬空条目消失。已用 **npm 10.9.9 实际复现并验证** `npm ci` 通过。
 
 ### Notes — DSH 0.2.0 / 桌面端适配
 
