@@ -79,37 +79,63 @@ naming the package, version, runtime version and unsatisfied peers. Two options:
 
 ## 3. Install into Desktop
 
-### Option A — the Desktop plugin manager (recommended)
+### Option A — the Desktop plugin manager (the only supported way)
 
 The Desktop app manages its own profile's packages from inside the app (its
 plugin page, backed by `dsh-plugin-manager`). Install `dsh-unified-agent-memory`
 from there, then add the vault configuration described in step 4.
 
-This is the path the harness documents for Desktop: *"Desktop package operations
-remain the responsibility of the Desktop shell."* Diagnostics for each operation
-land in `profiles/desktop/.plugin-manager/logs/operation-*/pnpm.log`.
+This is not merely the recommended route — it is the **only** one. The `dsh`
+CLI refuses the desktop profile outright:
 
-### Option B — the CLI, with the app fully quit
+```
+$ dsh plugin --profile desktop add dsh-unified-agent-memory
+error: profile "desktop" is managed exclusively by the Electron application
+```
 
-1. **Fully quit DeepSeek Harness Desktop.** Windows holds locks on the profile's
-   `node_modules`, so an install attempted while the app runs will fail or hang.
-2. Install into the desktop profile:
+The refusal is deliberate and cannot be bypassed from the command line. The
+check is `rejectElectronProfile()` in the CLI's argument parser, and the escape
+hatch that skips it (`manageDesktopProfile`) is a programmatic option that only
+the Desktop application itself passes — there is no flag, environment variable,
+or config key that enables it.
 
-   ```sh
-   dsh plugin --profile desktop add dsh-unified-agent-memory
-   ```
+**Install an exact version, not the bare name.** The desktop profile's `.npmrc`
+may point at a mirror, and a mirror lags the canonical registry: its
+`dist-tags` can still advertise an older `latest` long after the new version's
+tarball is available. Requesting the bare name then resolves to the stale
+version. Ask for the version explicitly:
 
-   From a source checkout, use a local path instead of the registry name:
+```
+dsh-unified-agent-memory@0.7.0
+```
 
-   ```sh
-   dsh plugin --profile desktop add link:/absolute/path/to/unified-agent-memory
-   ```
+Check what a mirror currently serves before blaming the plugin:
 
-3. Restart the app.
+```sh
+curl -s https://registry.npmmirror.com/dsh-unified-agent-memory/dist-tags
+curl -s -o /dev/null -w '%{http_code}\n' https://registry.npmmirror.com/dsh-unified-agent-memory/0.7.0
+```
 
-Both options register the package in the profile's `dsh.profile.bundles` list,
-which is what makes the harness apply the plugin's own `cordis.patch.yml` and
-mount the tools.
+Diagnostics for each operation land in
+`profiles/desktop/.plugin-manager/logs/operation-*/pnpm.log`.
+
+> **If an install appears to hang with no output**, the profile write lock is
+> stuck behind a pnpm process that never exited — not a problem with the plugin.
+> See [Troubleshooting a stuck install](#6-troubleshooting-a-stuck-install).
+
+### Option B — a local checkout (development only)
+
+To iterate on the plugin source, link your checkout into the desktop profile
+instead of publishing. This still has to go through the Desktop plugin manager;
+from a local path it accepts the directory directly:
+
+```
+link:C:/path/to/unified-agent-memory
+```
+
+Because the profile is `patchReload`-capable, rebuild with `npm run build` after
+each source change — never while an install is running (see the troubleshooting
+section for why).
 
 ---
 
@@ -153,12 +179,57 @@ section 2.
 
 ---
 
-## 6. Desktop vs Web: what differs
+## 6. Troubleshooting a stuck install
+
+**Symptom:** the plugin page shows an install "in progress" indefinitely, with
+no output and no error.
+
+This is not the plugin and not the compatibility gate. The profile has a write
+lock (`profiles/desktop/package.json.lock`) plus a run record
+(`profiles/desktop/.plugin-manager/run.json`). The manager refuses to start a
+second pnpm while `run.json` names a live run, so if a pnpm process finished its
+work but never exited, every later install waits on that lock forever.
+
+Diagnose by comparing three things:
+
+| Check | Healthy | Stuck |
+|---|---|---|
+| `package.json.lock` holder | absent, or a live *host* pid | present, unchanged for minutes |
+| `.plugin-manager/run.json` | absent | present, naming a pid |
+| A `pnpm` process actually running | yes, while installing | **none** |
+
+If the lock names a pid that is alive but `run.json` points at a pnpm process
+that is **not** consuming CPU, the recorded run is a zombie.
+
+To confirm before acting, sample its CPU twice ~20 s apart: a genuinely working
+process advances; a zombie reports an identical value.
+
+**Recovery:** end the stuck pnpm child — not the Desktop host — then leave the
+app alone. The host releases the lock and clears `run.json` by itself within
+seconds, because it was only waiting on that child:
+
+```powershell
+Stop-Process -Id <pnpm-pid> -Force
+```
+
+Verify `package.json.lock` and `run.json` have both disappeared before retrying.
+Do not delete them while the host is alive and waiting: the host legitimately
+holds the lock for the duration of a run, and removing it mid-flight can let two
+pnpm processes write the same profile concurrently.
+
+**Avoiding it:** let an install finish before starting another, and never run a
+build (`npm run build`) in a linked checkout while an install is in progress —
+a `link:` profile rebuilds in place, and a half-written `lib/index.js` is exactly
+what produces `invalid plugin, expect function or object with an "apply" method`.
+
+---
+
+## 7. Desktop vs Web: what differs
 
 | | Web (`profiles/web`) | Desktop (`profiles/desktop`) |
 |---|---|---|
 | Profile directory | `<harness home>/profiles/web` | `<harness home>/profiles/desktop` |
-| Who manages packages | `dsh plugin --profile web` / the Web plugin page | The Desktop shell / `dsh plugin --profile desktop` (app must be quit) |
+| Who manages packages | `dsh plugin --profile web` / the Web plugin page | **The Desktop shell only** — the CLI refuses this profile |
 | Client half | sidebar footer action + overlay | identical — the plugin declares `platform: "web"`, which is what Desktop consumes |
 | Host tools and HTTP routes | identical | identical |
 

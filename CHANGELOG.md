@@ -10,9 +10,11 @@ DSH `0.2.0-rc.2` 上会被宿主整体跳过（工具与路由都不注册）。
 ### Added — DSH 0.2.0 / 桌面端适配
 
 - **桌面端支持（DeepSeek Harness Desktop）**：新增 `docs/DESKTOP.md`，说明桌面端使用
-  **独立的 `desktop` profile**（而非 `profiles/web`），因此 Web 端装的插件在桌面端不可见；
-  给出两条受支持的安装路径（桌面端自带插件管理器 / 退出应用后用
-  `dsh plugin --profile desktop add`）、`vaultPath` 配置位置与验证步骤。
+  **独立的 `desktop` profile**（而非 `profiles/web`），因此 Web 端装的插件在桌面端不可见。
+  安装**只能走桌面端自带的插件管理器**：`dsh plugin --profile desktop …` 会被 CLI 直接拒绝
+  （`profile "desktop" is managed exclusively by the Electron application`），该拒绝不可用
+  命令行绕过（`manageDesktopProfile` 是仅桌面端载体可传的程序化参数，无对应旗标或环境变量）。
+  文档另含 `vaultPath` 配置、验证步骤与「安装卡死」的排查手册。
 - DSH `0.2.0` 兼容性闸门说明：宿主在**导入插件前**校验其 `@deepseek-ai/dsh*` peer 范围，
   不匹配的组合包会被**整体跳过**（工具与路由都不注册，UI 无任何报错）。该机制与
   `compatibility.json` 精确版本豁免的用法一并记录在 `docs/DESKTOP.md`。

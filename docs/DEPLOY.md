@@ -45,9 +45,10 @@ deployer reads the task book and writes each file itself.
 1. `dsh plugin --profile web add dsh-unified-agent-memory`
 
    Using the **Desktop** app instead? It runs its own `desktop` profile, so the
-   command above has no effect there. See [DESKTOP.md](DESKTOP.md) — the short
-   version is `dsh plugin --profile desktop add dsh-unified-agent-memory`, run
-   with the app fully quit, plus the same `vaultPath` configuration.
+   command above has no effect there — and the CLI **cannot** manage that
+   profile: `dsh plugin --profile desktop …` is refused with *"profile "desktop"
+   is managed exclusively by the Electron application"*. Install from the
+   Desktop app's own plugin page instead. See [DESKTOP.md](DESKTOP.md).
 2. In the next DSH session, call `memory_status` — on a fresh install it
    prints a deployment notice pointing to `docs/AGENT-DEPLOY.md`.
 3. Have DSH read **`docs/AGENT-DEPLOY.md`** and follow it end-to-end. It:
