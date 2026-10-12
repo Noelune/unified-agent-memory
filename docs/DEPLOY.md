@@ -43,6 +43,11 @@ agent's global instruction file has its own format and conventions, so the
 deployer reads the task book and writes each file itself.
 
 1. `dsh plugin --profile web add dsh-unified-agent-memory`
+
+   Using the **Desktop** app instead? It runs its own `desktop` profile, so the
+   command above has no effect there. See [DESKTOP.md](DESKTOP.md) — the short
+   version is `dsh plugin --profile desktop add dsh-unified-agent-memory`, run
+   with the app fully quit, plus the same `vaultPath` configuration.
 2. In the next DSH session, call `memory_status` — on a fresh install it
    prints a deployment notice pointing to `docs/AGENT-DEPLOY.md`.
 3. Have DSH read **`docs/AGENT-DEPLOY.md`** and follow it end-to-end. It:
@@ -168,9 +173,11 @@ unless you configure a remote endpoint yourself.
 ## Upgrading
 
 - Core CLI is versioned; check CHANGELOG.md for changes.
-- The DSH plugin's primary compatibility target is DSH `0.1.5-rc.2` / npm
-  `next`. The stable `latest` tag is a separately validated boundary; do not
-  assume candidate and stable host APIs are interchangeable.
+- The DSH plugin targets DSH `0.1.5-rc.2` and `0.2.0-rc.2` (CLI/Web and
+  Desktop). Since DSH `0.2.0` the host validates the plugin's
+  `@deepseek-ai/dsh*` peer ranges *before* importing it and skips a bundle whose
+  peers do not match, so a DSH upgrade can remove the tools without any error in
+  the UI. Check the version line first; see [DESKTOP.md](DESKTOP.md#2-the-compatibility-gate-read-this-before-upgrading-dsh).
 - For global instruction deployment, use `python setup/deploy.py preview`
   first, then `apply` only after reviewing the diff. The deployer recognizes
   only existing allowlisted instruction files, writes one marker-delimited

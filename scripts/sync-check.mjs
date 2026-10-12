@@ -25,9 +25,14 @@ const LOCAL_VER = PKG.version
 
 let exitCode = 0
 
+// Counted separately from the exit flag: `error()` also sets exitCode, so
+// reporting `exitCode` as the issue count printed "1 issue(s)" for two errors.
+let issueCount = 0
+
 function error(msg) {
   console.error(`❌ [sync] ${msg}`)
   exitCode = 1
+  issueCount += 1
 }
 
 function ok(msg) {
@@ -116,7 +121,7 @@ try {
 if (exitCode === 0) {
   console.log('\n✅ [sync] All in sync — local, remote, and npm are aligned.')
 } else {
-  console.error(`\n❌ [sync] ${exitCode} issue(s) found — run the suggested fixes.`)
+  console.error(`\n❌ [sync] ${issueCount} issue(s) found — run the suggested fixes.`)
 }
 
 // The registry lookup above is awaited at module scope, so calling

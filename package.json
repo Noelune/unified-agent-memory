@@ -1,6 +1,6 @@
 {
   "name": "dsh-unified-agent-memory",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Unified agent memory for DeepSeek Harness — one shared Obsidian vault for every agent (dsh, Codex, Claude, Hermes). Ships the dependency-free Python core (search/promote/adjudicate/forget), a vault template, and a dsh plugin with memory_search / memory_show / memory_submit / memory_status tools. · 统一 Agent 记忆系统：多 Agent 共享一个 Obsidian vault，附零依赖 Python core 与 dsh 插件。",
   "type": "module",
   "main": "lib/index.js",
@@ -34,6 +34,7 @@
   "sideEffects": false,
   "scripts": {
     "build": "node build.mjs",
+    "prepack": "node build.mjs",
     "typecheck": "tsc --noEmit",
     "drift:check": "node scripts/drift-check.mjs",
     "drift:python": "node scripts/drift-python.mjs",
@@ -42,17 +43,18 @@
     "setup-hooks": "node scripts/install-hooks.mjs",
     "test": "python -m unittest discover -s core/tests",
     "test:js": "vitest run",
-    "check": "npm run typecheck && npm run drift:check && npm run sync:check && npm run test:js && npm run test && npm run build && npm run drift:python"
+    "test:node": "node --test test/*.test.mjs",
+    "check": "npm run typecheck && npm run drift:check && npm run sync:check && npm run test:js && npm run test && npm run build && npm run test:node && npm run drift:python"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-host-webserver": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6"
+    "@deepseek-ai/dsh-host-webserver": "^0.1.0-rc.6 || >=0.2.0-rc.1 <0.3.0-0",
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6 || >=0.2.0-rc.1 <0.3.0-0"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-host-webserver": "0.1.5-rc.2",
-    "@deepseek-ai/dsh-tools": "0.1.5-rc.2",
+    "@deepseek-ai/cordis": "^4.0.4",
+    "@deepseek-ai/dsh-host-webserver": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-tools": "0.2.0-rc.2",
     "@types/node": "^24.13.4",
     "@types/react": "^18.3.31",
     "esbuild": "^0.25.12",
@@ -61,15 +63,18 @@
     "vitest": "^4.1.11"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20",
+    "dsh": "^0.1.0-rc.6 || >=0.2.0-rc.1 <0.3.0-0"
   },
   "dsh": {
+    "manifestVersion": 1,
     "compatibility": {
       "node": ">=20",
       "dshReleases": {
         "0.1.5-alpha.2": "unknown",
         "0.1.5-rc.1": "compatible",
-        "0.1.5-rc.2": "compatible"
+        "0.1.5-rc.2": "compatible",
+        "0.2.0-rc.2": "compatible"
       }
     },
     "bundle": {

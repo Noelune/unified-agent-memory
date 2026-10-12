@@ -32,18 +32,75 @@ const STRICT = process.argv.includes('--strict') || process.env.CI === 'true'
 
 mkdirSync('lib', { recursive: true })
 
-// ── Manifest backfill: keep dsh.plugin.json version/description in sync ──
-// package.json is the single source of truth; the plugin manifest is derived.
+// ── Manifest generation: dsh.plugin.json is DERIVED, never hand-edited ──
+//
+// package.json is the single source of truth. dsh.plugin.json used to be a
+// hand-maintained twin of it, which is exactly how it drifted: its
+// `compatibility.dshReleases` and `entry.inject` had gone stale against the
+// real host contract, and nothing noticed because no gate compared them.
+//
+// On DSH 0.2.0 nothing reads this file at all — the host validates
+// `peerDependencies` instead. It is still generated so that older harness
+// builds and third-party marketplace readers that do look for it receive
+// values that agree with package.json.
 {
   const pkg = JSON.parse(readFileSync('package.json', 'utf-8'))
   const manifestPath = 'dsh.plugin.json'
-  const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'))
-  manifest.version = pkg.version
-  if (!manifest.description && pkg.description) {
-    manifest.description = pkg.description.split(' · ')[0].trim()
+
+  // `entry.inject` must match `export const inject` in src/index.ts. Read it
+  // from the source rather than restating it here, so the two cannot diverge.
+  const hostSource = readFileSync('src/index.ts', 'utf-8')
+  const injectMatch = hostSource.match(
+    /export const inject[^=]*=\s*\[([^\]]*)\]/,
+  )
+  if (!injectMatch) {
+    throw new Error(
+      'src/index.ts no longer declares `export const inject = [...]`; ' +
+      'the dsh.plugin.json entry.inject derivation needs updating.',
+    )
   }
-  writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n', 'utf-8')
-  console.log(`[build] manifest version backfilled to ${manifest.version}`)
+  const hostInject = injectMatch[1]
+    .split(',')
+    .map((part) => part.trim().replace(/^['"]|['"]$/g, ''))
+    .filter(Boolean)
+
+  const clientSource = readFileSync('src/client/index.ts', 'utf-8')
+  const clientInjectMatch = clientSource.match(
+    /export const inject[^=]*=\s*\[([^\]]*)\]/,
+  )
+  const clientInject = clientInjectMatch
+    ? clientInjectMatch[1]
+        .split(',')
+        .map((part) => part.trim().replace(/^['"]|['"]$/g, ''))
+        .filter(Boolean)
+    : []
+
+  const manifest = {
+    name: pkg.name,
+    description: pkg.description.split(' · ')[0].trim(),
+    version: pkg.version,
+    compatibility: pkg.dsh.compatibility,
+    entry: {
+      name: pkg.name,
+      inject: hostInject,
+    },
+    client: {
+      platform: pkg.dsh.client.platform,
+      inject: clientInject,
+    },
+  }
+
+  const serialised = JSON.stringify(manifest, null, 2) + '\n'
+  let previous = null
+  try {
+    previous = readFileSync(manifestPath, 'utf-8')
+  } catch {
+    // First generation — nothing to compare against.
+  }
+  if (previous !== serialised) {
+    atomicWrite(manifestPath, serialised)
+    note(`[build] dsh.plugin.json regenerated from package.json (v${pkg.version})`)
+  }
 }
 
 const DSH_EXTERNAL = ['@deepseek-ai/*']
@@ -137,15 +194,29 @@ const clientConfig = {
   logLevel: 'info',
 }
 
+// ── Progress logging ───────────────────────────────────────────────
+//
+// Progress goes to stderr, not stdout. `npm pack --json` is consumed by
+// scripts/audit-package.mjs, which parses this process's stdout as JSON — and
+// since the build also runs automatically via the `prepack` script, anything
+// this file prints to stdout lands in front of that JSON and breaks the parse.
+// Warnings and the failure summary stay on stdout below, where a human (or CI)
+// reads them and where a failure must be visible.
+
+/** Progress note for humans; never part of a machine-readable contract. */
+function note(message) {
+  process.stderr.write(`${message}\n`)
+}
+
 // ── Execute builds ─────────────────────────────────────────────────
 
-console.log('[build] Building host entry…')
+note('[build] Building host entry…')
 await emit(hostConfig)
 
-console.log('[build] Building utils…')
+note('[build] Building utils…')
 await emit(utilsConfig)
 
-console.log('[build] Building client UI…')
+note('[build] Building client UI…')
 await emit(clientConfig)
 
 // ── Guard: the client bundle must expose a Cordis plugin shape ─────
@@ -176,14 +247,26 @@ try {
 }
 
 if (tscBin) {
-  console.log('[build] Generating type declarations…')
+  note('[build] Generating type declarations…')
   try {
-    execFileSync(process.execPath, [tscBin, '-p', 'tsconfig.json'], { stdio: 'inherit' })
+    // tsc output is CAPTURED and forwarded to stderr rather than inherited.
+    // With `stdio: 'inherit'`, a type error goes to this process's stdout — and
+    // since the build also runs via `prepack`, that lands in front of the JSON
+    // `npm pack --json` prints, breaking scripts/audit-package.mjs with a
+    // confusing parse error instead of the real type error.
+    execFileSync(process.execPath, [tscBin, '-p', 'tsconfig.json'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
     declarations = existsSync(resolve('lib/types/index.d.ts'))
     if (!declarations) {
       console.warn('[build] tsc ran but lib/types/index.d.ts is missing — declarations NOT emitted.')
     }
   } catch (err) {
+    const stdout = String(err.stdout ?? '').trim()
+    const stderr = String(err.stderr ?? '').trim()
+    if (stdout) process.stderr.write(stdout + '\n')
+    if (stderr) process.stderr.write(stderr + '\n')
     console.warn(`[build] tsc declaration emit failed: ${err.message}`)
   }
 }
@@ -191,12 +274,12 @@ if (tscBin) {
 // ── Summary ────────────────────────────────────────────────────────
 
 if (declarations) {
-  console.log('[build] Done — bundles and type declarations are up to date.')
+  note('[build] Done — bundles and type declarations are up to date.')
 } else {
-  console.log('[build] Done — bundles only. TYPE DECLARATIONS SKIPPED.')
-  console.log('[build]   Install devDependencies (`npm install`) to emit lib/types/**.')
+  note('[build] Done — bundles only. TYPE DECLARATIONS SKIPPED.')
+  note('[build]   Install devDependencies (`npm install`) to emit lib/types/**.')
   if (STRICT) {
-    console.error('[build] Failing under --strict/CI: a published package must carry declarations.')
+    process.stderr.write('[build] Failing under --strict/CI: a published package must carry declarations.\n')
     process.exit(1)
   }
 }

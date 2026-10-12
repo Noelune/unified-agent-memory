@@ -28,7 +28,31 @@ const raw = execFileSync(command, args, {
   // Only the bare-Windows fallback needs the shell (.cmd cannot spawn directly).
   shell: process.platform === 'win32' && !npmCli,
 })
-const reports = JSON.parse(raw)
+const reports = (() => {
+  // `npm pack --json` prints one JSON document, but `prepack` runs the build
+  // first, and anything the build writes to stdout would be concatenated in
+  // front of it. That failure mode is nasty — it surfaces as
+  // "Unexpected token 'b', "[build] man"... is not valid JSON" and points at
+  // this line rather than at the real culprit. Build progress now goes to
+  // stderr, and this guards the remaining case: skip any leading non-JSON noise
+  // and, if there is still no parseable document, say so plainly.
+  const text = String(raw).trim()
+  const start = text.search(/[[{]/)
+  if (start === -1) {
+    throw new Error(
+      `npm pack --json produced no JSON document (${text.length} bytes of output). ` +
+        `Output began with: ${JSON.stringify(text.slice(0, 120))}`,
+    )
+  }
+  try {
+    return JSON.parse(text.slice(start))
+  } catch (err) {
+    throw new Error(
+      `could not parse npm pack --json output: ${err.message}. ` +
+        `Output began with: ${JSON.stringify(text.slice(0, 120))}`,
+    )
+  }
+})()
 const files = reports.flatMap((report) => report.files ?? []).map((file) => file.path)
 const violations = files.filter((file) => !isTemplatePlaceholder(file) && forbidden.test(file))
 if (violations.length > 0) {

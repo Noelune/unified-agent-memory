@@ -2,7 +2,76 @@
 
 All notable changes to this project are documented in this file.
 
-## [Unreleased]
+## [0.7.0] — 2026-10-13
+
+DSH `0.2.0-rc.2` / 桌面端适配版本。**兼容性声明修复是必须升级的理由**：0.6.0 在
+DSH `0.2.0-rc.2` 上会被宿主整体跳过（工具与路由都不注册）。
+
+### Added — DSH 0.2.0 / 桌面端适配
+
+- **桌面端支持（DeepSeek Harness Desktop）**：新增 `docs/DESKTOP.md`，说明桌面端使用
+  **独立的 `desktop` profile**（而非 `profiles/web`），因此 Web 端装的插件在桌面端不可见；
+  给出两条受支持的安装路径（桌面端自带插件管理器 / 退出应用后用
+  `dsh plugin --profile desktop add`）、`vaultPath` 配置位置与验证步骤。
+- DSH `0.2.0` 兼容性闸门说明：宿主在**导入插件前**校验其 `@deepseek-ai/dsh*` peer 范围，
+  不匹配的组合包会被**整体跳过**（工具与路由都不注册，UI 无任何报错）。该机制与
+  `compatibility.json` 精确版本豁免的用法一并记录在 `docs/DESKTOP.md`。
+- `engines.dsh` 与 `dsh.manifestVersion` 声明（DSH 0.2.0 起的包清单字段；目前仅声明、
+  不参与强制校验）。
+
+### Changed — DSH 0.2.0 / 桌面端适配
+
+- **兼容性声明修正（关键修复）**：`peerDependencies` 中两条 `@deepseek-ai/dsh*` 范围由
+  `^0.1.0-rc.6` 改为 `^0.1.0-rc.6 || >=0.2.0-rc.1 <0.3.0-0`。原范围**不匹配** `0.2.0-rc.2`
+  （预发布版本不落入上界为 `0.2.0` 的 caret 范围），在 DSH `0.2.0-rc.2` 上会导致插件被静默
+  跳过——五个工具与六条 HTTP 路由全部不注册。
+- 开发依赖对齐到真实目标版本：`@deepseek-ai/dsh-tools`、`@deepseek-ai/dsh-host-webserver`
+  升至 `0.2.0-rc.2`，`@deepseek-ai/cordis` 升至 `^4.0.4`。这些包自带精确锁定的 peer 集合
+  （`dsh-llm`、`dsh-agent`、`dsh-ptc-runtime`、`dsh-sandbox` 等），需整套同版本共存。
+- `build.mjs` 的进度日志改走 **stderr**：新增 `prepack` 后，构建输出会污染
+  `npm pack --json` 的 stdout，使 `audit:package` 以 JSON 解析错误失败。
+- 兼容目标文档（`README.md` / `README.zh.md` / `docs/ARCHITECTURE.md` /
+  `docs/AGENT-EXPERIENCE.md` / `docs/DEPLOY.md` / `docs/DSH-MEMORY-ADAPTERS.md`）由单一
+  `0.1.5-rc.2` 改为「`0.1.5-rc.2` 与 `0.2.0-rc.2` 两条版本线」。
+- `dsh.plugin.json` 改为**完全由 `build.mjs` 从 `package.json` 与源码派生**，不再手工维护；
+  `entry.inject` 直接从 `src/index.ts` 的 `export const inject` 读取。此前该文件已漂移：
+  `entry.inject` 写的是 `['tools']`，而代码实际是 `['tools','webServer']`。
+- 更新检查（`src/updater.ts`）新增 **npmmirror 回退**：主源 `registry.npmjs.org` 在国内网络
+  经常超时，镜像可用时仍能拿到版本号；镜像也失败时保留既有状态而不是写入「未知」。
+
+### Fixed — DSH 0.2.0 / 桌面端适配
+
+- **七个死测试**：`test/*.test.mjs` 既被 `vitest.config.ts` 排除，也没有任何 npm script 或
+  CI 步骤执行，其中两个文件仍在对重构前的 API 断言（`plugin.default`、可选的 `webServer`、
+  四个工具、`contextPath`、`memoryUiStatus`），实际 9 项中 7 项失败且长期无人发现。现按当前
+  契约重写，并新增 `npm run test:node` 纳入 `npm run check`（排在 `build` 之后，因为它断言的
+  是构建产物）。
+- `drift-check.mjs` 的工具名清单补上 `memory_preview`（此前只校验 4/5 个工具），并新增对
+  `dsh.plugin.json` 的 `compatibility` / `entry.inject` / `client.platform` 的独立复算比对
+  （即使没跑构建也能抓到漂移）。
+- **版本比较器重写**（`src/updater.ts`）：原实现用 `replace(/[^0-9.]/g, '')` 剥掉预发布标识，
+  导致 `0.6.0-rc.1` 与 `0.6.0` 判为**相等**——跑预发布的用户永远收不到正式版已发布的提示。
+  现按 SemVer 实现（预发布低于正式版、数字标识符低于字母标识符、短标识符列表更低、
+  忽略 build metadata）。
+- **`remoteEnabled` 字符串布尔陷阱**（`src/utils.ts`）：原用 `Boolean(value)`，而
+  `Boolean('false') === true`——配置文件或环境变量里写 `'false'` 会**静默打开**远程索引。
+  现改用 `toBool()`，接受 `1/true/yes/on` 与 `0/false/no/off`，无法解析时回退默认值而非猜测；
+  并新增 `UNIFIED_MEMORY_REMOTE` 环境变量支持。
+- `sync-check.mjs` 的汇总行把退出码当作问题计数，两条错误会打印「1 issue(s) found」；
+  现独立计数。
+- CI（`.github/workflows/ci.yml`）补上 `npm run test:node`（排在 `build` 之后），死测试不再
+  可能无声复发；`sync:check` 改为 `continue-on-error`（发布中途「已打 tag 未发布」是合法状态，
+  不应卡住 CI）。
+- `package.json` 新增 `prepack`，使从干净 checkout 发布时必定带上 `lib/` 产物
+  （此前无任何 prepare/prepack 脚本，直接 `npm publish` 会发出不含构建产物的包）。
+
+### Notes — DSH 0.2.0 / 桌面端适配
+
+- `dsh.plugin.json` 与 `dsh.compatibility.dshReleases` 在 DSH `0.2.0` 中**已无任何读取方**
+  （宿主改读 `package.json` 的 `peerDependencies`）。文件暂时保留以免影响第三方市场读取方，
+  但不再作为兼容性权威来源；真实兼容性以 `peerDependencies` 为准。
+- `npm run sync:check` 仍会报红：registry 上是 `0.5.2`，本地已打 `v0.6.0` tag 但从未发布。
+  这是发布状态事实而非缺陷，`npm publish` 后即消失。
 
 ### Added
 

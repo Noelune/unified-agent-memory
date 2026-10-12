@@ -22,7 +22,7 @@ jobs:
         run: python -m unittest discover -s core/tests -v
 
   js:
-    name: JS checks (typecheck / drift / sync / vitest / build / audit)
+    name: JS checks (typecheck / drift / sync / vitest / build / contracts / audit)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -36,12 +36,21 @@ jobs:
         run: npm run typecheck
       - name: Drift check
         run: npm run drift:check
+      # sync:check compares the published registry version against the local tag.
+      # A repo that is mid-release (tagged but not yet published) is legitimately
+      # red here, so it is advisory in CI rather than a hard gate.
       - name: Sync check
         run: npm run sync:check
+        continue-on-error: true
       - name: JS unit tests
         run: npm run test:js
       - name: Build
         run: npm run build
+      # Runs after build on purpose: these assert on the emitted bundles
+      # (lib/client-ui.js, lib/index.js), not on src/. They were previously
+      # executed by nothing at all, and seven of them were silently red.
+      - name: Built-artifact contract tests
+        run: npm run test:node
       - name: Package audit
         run: npm run audit:package
 

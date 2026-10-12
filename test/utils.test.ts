@@ -31,6 +31,7 @@ describe('resolveConfig', () => {
     delete process.env.UNIFIED_MEMORY_VAULT
     delete process.env.UNIFIED_MEMORY_PYTHON
     delete process.env.UNIFIED_MEMORY_COREPATH
+    delete process.env.UNIFIED_MEMORY_REMOTE
   })
 
   afterEach(() => {
@@ -72,6 +73,44 @@ describe('resolveConfig', () => {
   it('casts remoteEnabled to boolean', () => {
     const cfg = resolveConfig({ remoteEnabled: true })
     expect(cfg.remoteEnabled).toBe(true)
+  })
+
+  // Regression: `Boolean(value)` was used here, and `Boolean('false')` is
+  // `true` — so a string "false" from a YAML config or an env var silently
+  // turned the remote index ON.
+  it('treats string "false" as disabled, not as truthy', () => {
+    expect(resolveConfig({ remoteEnabled: 'false' }).remoteEnabled).toBe(false)
+    expect(resolveConfig({ remoteEnabled: 'FALSE' }).remoteEnabled).toBe(false)
+    expect(resolveConfig({ remoteEnabled: 'no' }).remoteEnabled).toBe(false)
+    expect(resolveConfig({ remoteEnabled: 'off' }).remoteEnabled).toBe(false)
+    expect(resolveConfig({ remoteEnabled: '0' }).remoteEnabled).toBe(false)
+  })
+
+  it('accepts the truthy spellings that appear in config and env', () => {
+    expect(resolveConfig({ remoteEnabled: 'true' }).remoteEnabled).toBe(true)
+    expect(resolveConfig({ remoteEnabled: 'yes' }).remoteEnabled).toBe(true)
+    expect(resolveConfig({ remoteEnabled: 'on' }).remoteEnabled).toBe(true)
+    expect(resolveConfig({ remoteEnabled: '1' }).remoteEnabled).toBe(true)
+    expect(resolveConfig({ remoteEnabled: 1 }).remoteEnabled).toBe(true)
+  })
+
+  it('falls back rather than guessing on an unparseable value', () => {
+    expect(resolveConfig({ remoteEnabled: 'maybe' }).remoteEnabled).toBe(false)
+    expect(resolveConfig({ remoteEnabled: '' }).remoteEnabled).toBe(false)
+    expect(resolveConfig({ remoteEnabled: null }).remoteEnabled).toBe(false)
+    expect(resolveConfig({ remoteEnabled: {} }).remoteEnabled).toBe(false)
+  })
+
+  it('reads remoteEnabled from UNIFIED_MEMORY_REMOTE', () => {
+    process.env.UNIFIED_MEMORY_REMOTE = 'true'
+    expect(resolveConfig().remoteEnabled).toBe(true)
+    process.env.UNIFIED_MEMORY_REMOTE = 'false'
+    expect(resolveConfig().remoteEnabled).toBe(false)
+  })
+
+  it('prefers cordis config over the env var for remoteEnabled', () => {
+    process.env.UNIFIED_MEMORY_REMOTE = 'true'
+    expect(resolveConfig({ remoteEnabled: 'false' }).remoteEnabled).toBe(false)
   })
 })
 

@@ -29,6 +29,29 @@ const BUILTIN_DOCS = /^(index|prefs|env|rules|tools|ui|coord)$/
 /** Pattern for valid *.md note filenames (no path separators). */
 const NOTE_FILE = /^[^/\\]+\.md$/i
 
+/**
+ * Coerce a config/env value to a boolean.
+ *
+ * `Boolean(value)` is wrong here: cordis config and environment variables are
+ * commonly strings, and `Boolean('false')` is `true` — so `remoteEnabled:
+ * 'false'` would silently enable the remote index. Accept the spellings that
+ * actually appear in config files and env vars, and treat anything else as
+ * "unset" rather than guessing.
+ */
+function toBool(value: unknown, fallback: boolean): boolean {
+  if (value === undefined || value === null) return fallback
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return value !== 0
+  if (typeof value === 'string') {
+    const v = value.trim().toLowerCase()
+    if (v === '') return fallback
+    if (['1', 'true', 'yes', 'on'].includes(v)) return true
+    if (['0', 'false', 'no', 'off'].includes(v)) return false
+    return fallback
+  }
+  return fallback
+}
+
 // ── Configuration ───────────────────────────────────────────────────
 
 /**
@@ -50,7 +73,7 @@ export function resolveConfig(config: Record<string, unknown> = {}): PluginConfi
         env.UNIFIED_MEMORY_COREPATH ??
         join(HERE, '..', 'core'),
     ),
-    remoteEnabled: Boolean(config.remoteEnabled ?? false),
+    remoteEnabled: toBool(config.remoteEnabled ?? env.UNIFIED_MEMORY_REMOTE, false),
   }
 }
 

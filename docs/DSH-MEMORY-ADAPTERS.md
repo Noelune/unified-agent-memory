@@ -5,11 +5,14 @@ They are related, but they do different jobs and have different write rights.
 
 ## Compatibility target
 
-The primary host target is DSH `0.1.5-rc.2` / npm `next` with Node.js `>=20`.
-The stable `latest` tag is a separate compatibility boundary and must be
-validated independently before upgrading. The plugin keeps its four memory
-tools available when optional HTTP or injection capabilities are absent; route
-registration is best-effort and returns cleanup when the host supports it.
+The primary host targets are DSH `0.1.5-rc.2` and DSH `0.2.0-rc.2` (both the
+CLI/Web profile and the Desktop app's own profile), with Node.js `>=20`. Since
+DSH `0.2.0` the host validates the plugin's `@deepseek-ai/dsh*` peer ranges
+before importing it and skips a non-matching bundle entirely, so the two version
+lines are declared explicitly rather than covered by one open range. The plugin
+keeps its five memory tools available when optional HTTP or injection
+capabilities are absent; route registration is best-effort and returns cleanup
+when the host supports it.
 
 ## Components
 

@@ -46,9 +46,46 @@ function readCurrentVersion(): string {
 // ── Constants ───────────────────────────────────────────────────────
 
 const PKG_NAME = 'dsh-unified-agent-memory'
-const NPM_API = `https://registry.npmjs.org/${PKG_NAME}/latest`
+
+/**
+ * Registries to ask, in order.
+ *
+ * The canonical registry is tried first, but it is not always reachable — on
+ * mainland-China networks `registry.npmjs.org` frequently times out while a
+ * mirror answers instantly. The update badge is cosmetic, so it must never be
+ * the thing that hangs a session: each attempt shares one short budget and a
+ * failure just moves on. `npmmirror` is a full read-through mirror, so the
+ * `dist-tags.latest` it reports is the same version.
+ */
+const REGISTRIES = [
+  'https://registry.npmjs.org',
+  'https://registry.npmmirror.com',
+] as const
+
 const CACHE_TTL_MS = 3_600_000 // 1 hour
 const FETCH_TIMEOUT_MS = 5_000
+
+/**
+ * Ask each registry in turn for the latest published version.
+ *
+ * Returns null when every registry failed or was unreachable — never throws.
+ * The shared `signal` bounds the whole sequence, not each request, so a slow
+ * first registry cannot extend the total budget.
+ */
+async function fetchLatestVersion(signal: AbortSignal): Promise<string | null> {
+  for (const base of REGISTRIES) {
+    if (signal.aborted) return null
+    try {
+      const res = await fetch(`${base}/${PKG_NAME}/latest`, { signal })
+      if (!res.ok) continue
+      const data = (await res.json()) as { version?: string }
+      if (data.version) return String(data.version)
+    } catch {
+      // Unreachable, aborted, or malformed — try the next registry.
+    }
+  }
+  return null
+}
 
 // ── State ───────────────────────────────────────────────────────────
 
@@ -63,18 +100,81 @@ let cached: UpdateInfo = {
 // ── Compare helpers ─────────────────────────────────────────────────
 
 /**
- * Simple semver comparison (handles x.y.z pre-release).
+ * Compare two semantic versions by SemVer precedence.
+ *
  * Returns 1 if a > b, -1 if a < b, 0 if equal.
+ *
+ * This replaced a comparator that stripped every non-digit with
+ * `v.replace(/[^0-9.]/g, '')`, which made `0.6.0-rc.1` and `0.6.0` compare
+ * EQUAL — so a user running a pre-release was never told the final release had
+ * shipped. The rules implemented here are the SemVer ones that actually matter
+ * for npm versions:
+ *
+ *   - numeric major.minor.patch compared in order;
+ *   - a pre-release sorts BELOW its release (`1.0.0-rc.1 < 1.0.0`);
+ *   - pre-release identifiers are dot-separated, compared left to right;
+ *     numeric identifiers compare numerically and always rank below
+ *     alphanumeric ones; a shorter set of identifiers ranks lower when all
+ *     preceding ones are equal (`1.0.0-alpha < 1.0.0-alpha.1`);
+ *   - build metadata (`+sha`) is ignored, as the spec requires.
+ *
+ * Implemented inline rather than by adding the `semver` package: this plugin is
+ * deliberately dependency-free at runtime, and the subset above is the whole
+ * contract the update badge needs.
  */
-function compareVersions(a: string, b: string): number {
-  const clean = (v: string) => v.replace(/[^0-9.]/g, '').split('.').map(Number)
-  const pa = clean(a)
-  const pb = clean(b)
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const na = pa[i] ?? 0
-    const nb = pb[i] ?? 0
+export function compareVersions(a: string, b: string): number {
+  const parse = (raw: string) => {
+    // Build metadata (`+sha`) is ignored, as SemVer requires — so take only the
+    // part before the first '+'.
+    const core = String(raw).trim().split('+')[0]
+    const [nums, prerelease] = [
+      core.split('-')[0],
+      core.includes('-') ? core.slice(core.indexOf('-') + 1) : null,
+    ]
+    const parts = nums.split('.').map((n) => {
+      const v = Number.parseInt(n, 10)
+      return Number.isFinite(v) ? v : 0
+    })
+    return { parts, prerelease }
+  }
+
+  const pa = parse(a)
+  const pb = parse(b)
+
+  const width = Math.max(pa.parts.length, pb.parts.length)
+  for (let i = 0; i < width; i++) {
+    const na = pa.parts[i] ?? 0
+    const nb = pb.parts[i] ?? 0
     if (na > nb) return 1
     if (na < nb) return -1
+  }
+
+  // Equal cores: a pre-release precedes the release it belongs to.
+  if (pa.prerelease === null && pb.prerelease === null) return 0
+  if (pa.prerelease === null) return 1
+  if (pb.prerelease === null) return -1
+
+  const ia = pa.prerelease.split('.')
+  const ib = pb.prerelease.split('.')
+  const len = Math.max(ia.length, ib.length)
+  for (let i = 0; i < len; i++) {
+    const xa = ia[i]
+    const xb = ib[i]
+    if (xa === undefined) return -1 // shorter identifier list ranks lower
+    if (xb === undefined) return 1
+    const na = /^\d+$/.test(xa)
+    const nb = /^\d+$/.test(xb)
+    if (na && nb) {
+      const va = Number.parseInt(xa, 10)
+      const vb = Number.parseInt(xb, 10)
+      if (va !== vb) return va > vb ? 1 : -1
+    } else if (na) {
+      return -1 // numeric identifiers rank below alphanumeric ones
+    } else if (nb) {
+      return 1
+    } else if (xa !== xb) {
+      return xa > xb ? 1 : -1
+    }
   }
   return 0
 }
@@ -96,24 +196,21 @@ export function checkForUpdate(): void {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
 
-  fetch(NPM_API, { signal: controller.signal })
-    .then((res) => {
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      return res.json() as Promise<{ version?: string }>
-    })
-    .then((data) => {
-      const latest = data.version ?? null
-      const cmp = latest ? compareVersions(latest, CURRENT_VERSION) : 0
+  fetchLatestVersion(controller.signal)
+    .then((latest) => {
+      // No registry answered: keep whatever we already knew (which is null on
+      // the first try) rather than overwriting a good reading with "unknown".
+      if (latest === null) return
       cached = {
         currentVersion: CURRENT_VERSION,
         latestVersion: latest,
-        updateAvailable: latest ? cmp > 0 : null,
+        updateAvailable: compareVersions(latest, CURRENT_VERSION) > 0,
         checkedAt: new Date().toISOString(),
       }
     })
     .catch(() => {
-      // Network failure — keep previous cache (or null if first try).
-      // Do not log: registry flakiness is expected and not user-actionable.
+      // Defensive: fetchLatestVersion already swallows its own failures. Do not
+      // log — registry flakiness is expected and not user-actionable.
     })
     .finally(() => {
       clearTimeout(timer)

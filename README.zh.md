@@ -213,14 +213,14 @@ Hermes 集成（`integrations/hermes/`）只是"其中一个 Agent 接进来"的
 | `lib/` | dsh 插件核心：提供 `memory_search` / `memory_show` / `memory_submit` / `memory_status` 工具接口 |
 | `integrations/` | 提供 `AGENTS.md` (Codex), `CLAUDE.md` (Claude) 与 Hermes Hook 集成示例 |
 | `setup/` | 部署与自检脚本 `setup.py` (init/cron/selfcheck) 与 `selfcheck.py` |
-| `docs/` | ARCHITECTURE (系统架构), DEPLOY (部署指南), SECURITY (安全规范) |
+| `docs/` | ARCHITECTURE (系统架构), DEPLOY (部署指南), DESKTOP (桌面端部署), SECURITY (安全规范) |
 
 ---
 
 ## 🔧 环境要求 (Requirements)
 
 - Python ≥ 3.10 (核心 Engine，仅需 Python 标准库)
-- Node.js ≥ 20 + DSH `0.1.5-rc.2` / npm `next` (仅 dsh 插件需要)
+- Node.js ≥ 20 + DSH `0.2.0-rc.2` 或 `0.1.5-rc.2` (仅 dsh 插件需要；桌面端见 [docs/DESKTOP.md](docs/DESKTOP.md))
 - 推荐使用 Obsidian 浏览和查看 Vault 知识库，但非强制要求 — 所有文件均为标准 Markdown 与 SQLite 数据库。
 
 ---
@@ -229,7 +229,7 @@ Hermes 集成（`integrations/hermes/`）只是"其中一个 Agent 接进来"的
 
 - **Maintainer**: [Noelune](https://github.com/Noelune)
 - **Community-maintained** — 欢迎提交 Issue 与 Pull Request。缺陷修复通常在 1–2 周内处理，安全问题优先解决。
-- **Compatibility**: 主要验证目标为 DSH `0.1.5-rc.2` / npm `next`。稳定标签 `latest` 是独立兼容边界，升级前需单独验证；上游 API 变更说明记录于 [CHANGELOG.md](CHANGELOG.md)。
+- **Compatibility**: 验证目标为 DSH `0.1.5-rc.2` 与 `0.2.0-rc.2`（含桌面端）两条版本线，二者均在 `peerDependencies` 中显式声明。DSH `0.2.0` 起宿主会在加载前校验插件的 `@deepseek-ai/dsh*` peer 范围，不匹配的组合包会被整体跳过（工具与路由均不注册）；因此升级 DSH 后若工具消失，请先核对版本线而非怀疑代码。上游 API 变更说明记录于 [CHANGELOG.md](CHANGELOG.md)。
 - **License**: **MIT License** — 允许商业化使用。
 
 ---
