@@ -142,8 +142,30 @@ section for why).
 ## 4. Configure the vault (required)
 
 Installing the bundle mounts the plugin but leaves `vaultPath` unset, so every
-tool answers *"not configured"*. Add the configuration to the **desktop**
-profile's `cordis.patch.yml`:
+tool answers *"not configured"*. There are three ways to fix that, and the
+plugin honours them in this order (highest first):
+
+1. **`vaultPath` in the plugin config** — the `cordis.patch.yml` entry below.
+2. **`UNIFIED_MEMORY_VAULT`** in the environment the app starts with.
+3. **`~/.unified-memory.yaml`** — the file `setup.py init` writes. **If you
+   already initialized a vault from the repo, this is already set and you need
+   to do nothing here.**
+
+That third source matters: the plugin used to consult only its own config, so an
+install relying on the file reported `configured: false` and made every tool
+answer *"not configured"* while the sidebar console happily served live data
+from the same vault — the console and the agent disagreed about the same
+machine. 0.7.0 mirrors the core's precedence, so the two always agree. Check
+what the plugin resolved:
+
+```sh
+curl -s http://127.0.0.1:19387/api/dsh-unified-agent-memory/status
+```
+
+`configured: true` and a real `vaultPath` mean you are done.
+
+To set it explicitly instead, add the configuration to the **desktop** profile's
+`cordis.patch.yml`:
 
 ```yaml
 # --- dsh-unified-agent-memory: shared memory tools and sidebar console ---
@@ -157,9 +179,37 @@ want to keep. Optional keys: `pythonPath` (default `python`), `corePath`
 (defaults to the plugin's bundled `core/`, auto-added to `PYTHONPATH`) and
 `remoteEnabled` (default `false`).
 
-The same settings can be supplied by environment variables
-(`UNIFIED_MEMORY_VAULT`, `UNIFIED_MEMORY_PYTHON`, `UNIFIED_MEMORY_COREPATH`)
-instead of the patch file.
+---
+
+## 4b. What else ships with the plugin
+
+The npm package is self-contained. After installing it you already have, inside
+`<harness home>/profiles/desktop/node_modules/dsh-unified-agent-memory/`:
+
+| Content | Path | What it is for |
+|---|---|---|
+| Python core | `core/unified_memory/` | The engine the tools call. Auto-added to `PYTHONPATH` — **no pip install needed**. |
+| Vault template | `vault-template/` | A ready-to-use Obsidian vault skeleton. |
+| Setup scripts | `setup/setup.py`, `setup/deploy.py`, `setup/selfcheck.py` | `init` / `cron` / `selfcheck`, and the deployment helper. |
+| Agent templates | `integrations/codex/AGENTS.md`, `integrations/claude/CLAUDE.md` | Global-instruction starting points, copied next to a new vault. |
+| Hermes hooks | `integrations/hermes/*.py` | Optional pre-turn injection, daily cron, session archiving. |
+| Docs | `docs/` | Including `AGENT-DEPLOY.md`, the agent-driven wiring task book. |
+
+To bootstrap a vault from the installed package (no clone required):
+
+```sh
+python "<harness home>/profiles/desktop/node_modules/dsh-unified-agent-memory/setup/setup.py" \
+  init --vault "C:/Users/<you>/Documents/AgentMemory"
+```
+
+That creates the vault, writes `~/.unified-memory.yaml`, and drops
+`AGENTS.md` / `CLAUDE.md` next to it. Then have the agent read
+`docs/AGENT-DEPLOY.md` and follow it to wire each agent's global instruction
+file.
+
+> Releases before 0.7.0 shipped neither `setup/` nor the `integrations/{codex,claude}`
+> templates, so an npm install could not initialize a vault at all. If you are on
+> an older version, upgrade or use a git clone.
 
 ---
 

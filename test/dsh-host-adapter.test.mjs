@@ -19,10 +19,20 @@
  *     `inject` guard only exists inside a harness scope, so a fake ctx cannot
  *     reproduce it; these tests assert the *declaration* (`export const inject`)
  *     and the registration calls, not the guard itself.
+ *   - Degraded mode is exercised in a CHILD PROCESS with HOME/USERPROFILE
+ *     pointed at an empty temp directory. `resolveConfig` falls back to the
+ *     core's own `~/.unified-memory.yaml`, so an in-process assertion would pass
+ *     on CI and fail on any developer machine that has a vault configured —
+ *     which is exactly what happened when the fallback was added.
  */
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import {
   validateDocId, clampLimit, buildSearchArgv, buildPreviewArgv, resolveConfig,
@@ -131,16 +141,53 @@ test('registers the six exact HTTP routes for the browser half', () => {
 
 // ── Degraded mode ───────────────────────────────────────────────────
 
-test('answers with a setup guide instead of failing when no vault is configured', async () => {
-  const { ctx, toolsList } = makeContext()
-  plugin.apply(ctx, {})
-
-  for (const name of TOOL_NAMES) {
-    const tool = toolsList.find((entry) => entry.name === name)
-    const result = await tool.execute(argsFor(name))
-    assert.equal(result.ok, false, `${name} should degrade, not throw`)
-    assert.match(result.output, /not configured/)
-    assert.match(result.output, /UNIFIED_MEMORY_VAULT/)
+test('answers with a setup guide instead of failing when no vault is configured', () => {
+  // Run in a child process with a scrubbed HOME so the core-config fallback
+  // cannot find a real ~/.unified-memory.yaml and mask the degraded path.
+  const emptyHome = mkdtempSync(join(tmpdir(), 'uam-nohome-'))
+  const pluginUrl = pathToFileURL(fileURLToPath(new URL('../lib/index.js', import.meta.url))).href
+  const script = `
+    const plugin = await import(${JSON.stringify(pluginUrl)})
+    const tools = []
+    plugin.apply(
+      { tools: { register: (d) => { tools.push(d); return () => {} } },
+        webServer: { register: () => () => {} } },
+      {},
+    )
+    const args = {
+      memory_search: { query: 'anything' },
+      memory_show: { doc: 'index' },
+      memory_submit: { facts: '- a fact' },
+      memory_preview: { view: 'pending' },
+      memory_status: {},
+    }
+    const out = []
+    for (const t of tools) {
+      const r = await t.execute(args[t.name] ?? {})
+      out.push({ name: t.name, ok: r.ok, output: String(r.output ?? '') })
+    }
+    console.log(JSON.stringify(out))
+  `
+  try {
+    const raw = execFileSync(process.execPath, ['--input-type=module', '-e', script], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        HOME: emptyHome,
+        USERPROFILE: emptyHome,
+        // A stale UNIFIED_MEMORY_VAULT would defeat the point of the test.
+        UNIFIED_MEMORY_VAULT: '',
+      },
+    })
+    const results = JSON.parse(raw.trim().split('\n').pop())
+    assert.equal(results.length, 5, 'all five tools should be registered')
+    for (const r of results) {
+      assert.equal(r.ok, false, `${r.name} should degrade, not throw`)
+      assert.match(r.output, /not configured/)
+      assert.match(r.output, /UNIFIED_MEMORY_VAULT/)
+    }
+  } finally {
+    rmSync(emptyHome, { recursive: true, force: true })
   }
 })
 

@@ -2,6 +2,40 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.7.1] — 2026-10-13
+
+在真实桌面端上安装 0.7.0 后实测发现的三个问题。**建议从 0.7.0 升级**：其中第一条会让
+「已配好 vault 的安装」看起来完全没配置。
+
+### Fixed
+
+- **`vaultPath` 解析与 core 不一致（用户可见）**：插件此前只读自己的 cordis 配置，而 core
+  的 vault 解析顺序是 `UNIFIED_MEMORY_VAULT` → `~/.unified-memory.yaml` 的 `vault:` →
+  内置默认值。于是「用 `setup.py init` 初始化过、但没在插件里填 `vaultPath`」的安装会出现
+  **自相矛盾**：侧边栏控制台正常显示真实数据（437 条记忆 / 364 向量），而 5 个模型工具全部
+  回答 `not configured`——控制台与 agent 对同一台机器给出不同结论。
+  现 `resolveConfig` 完整复刻 core 的优先级（cordis 配置 → 环境变量 → core 配置文件），
+  并导出 `readCoreConfigVault()` 供测试；空字符串不再遮蔽低优先级来源。
+- **npm 包缺少 `setup/` 与 agent 模板**：`files[]` 未收录 `setup/*.py` 与
+  `integrations/{codex,claude}`，因此 npm 安装的用户**无法初始化 vault**（`setup.py init`
+  不存在），也无法拿到 `AGENTS.md` / `CLAUDE.md` 模板——而文档有 12 处引用这些脚本。
+  现已全部随包发布（包条目 92 → 99），并新增 `setup/README.md` 说明各脚本用途。
+  实测：从安装位置运行 `setup.py init` 可正常建库（8 份 canonical 笔记 + 两份 agent 模板）。
+
+### Changed
+
+- `docs/DEPLOY.md` 新增「§0 你是哪种安装」对照表，说明 npm 安装与 git clone 各含什么、
+  `<pkg>` 指代哪个目录，以及 core **无需 pip install**（插件自动把内置 `core/` 加入
+  `PYTHONPATH`）。
+- `docs/DESKTOP.md` 新增「§4b 插件还附带什么」：列出包内 `core/`、`vault-template/`、
+  `setup/`、`integrations/`、`docs/` 的用途与从安装位置直接建库的命令。
+
+### Fixed (tests)
+
+- 降级路径测试改为**密闭执行**：`resolveConfig` 现在会读 `~/.unified-memory.yaml`，使原测试
+  在「本机已配 vault」时失败、在 CI 上却通过（典型的环境依赖型测试）。现改为在子进程中以
+  空 `HOME`/`USERPROFILE` 运行，任何机器上都成立。
+
 ## [0.7.0] — 2026-10-13
 
 DSH `0.2.0-rc.2` / 桌面端适配版本。**兼容性声明修复是必须升级的理由**：0.6.0 在

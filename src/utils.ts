@@ -8,7 +8,8 @@
  */
 
 import { execFile } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { PluginConfig, CoreResult } from './types.ts'
@@ -55,16 +56,63 @@ function toBool(value: unknown, fallback: boolean): boolean {
 // ── Configuration ───────────────────────────────────────────────────
 
 /**
+ * Path of the core's own config file, mirroring `CONFIG_PATH` in
+ * `core/unified_memory/common.py` (`Path.home() / ".unified-memory.yaml"`).
+ *
+ * The plugin needs this because the core resolves the vault from THREE places,
+ * in this order: `UNIFIED_MEMORY_VAULT`, then the `vault:` key in this file,
+ * then a built-in default. The plugin used to consult only its own cordis
+ * config, so an install that relied on the file — which is exactly what
+ * `setup.py init` writes — reported `configured: false` and made every tool
+ * answer "not configured" while the HTTP routes happily served live data from
+ * the same vault. The console and the agent disagreed about the same machine.
+ */
+export const CORE_CONFIG_PATH = join(homedir(), '.unified-memory.yaml')
+
+/**
+ * Read the `vault:` key from the core's config file, or '' when absent.
+ *
+ * Deliberately a tiny `key: value` parse rather than a YAML library: this is
+ * the same subset `parse_config()` in common.py accepts, the plugin has no YAML
+ * dependency, and a malformed file must degrade to "no vault here" instead of
+ * throwing during plugin load.
+ */
+export function readCoreConfigVault(path: string = CORE_CONFIG_PATH): string {
+  try {
+    const text = readFileSync(path, 'utf-8')
+    for (const raw of text.split('\n')) {
+      const line = raw.split('#', 1)[0].trim()
+      if (!line || !line.includes(':')) continue
+      const idx = line.indexOf(':')
+      if (line.slice(0, idx).trim() !== 'vault') continue
+      return line
+        .slice(idx + 1)
+        .trim()
+        .replace(/^["']|["']$/g, '')
+    }
+  } catch {
+    // Missing or unreadable file is not an error: it just means this source
+    // has nothing to contribute, and the next one in the chain decides.
+  }
+  return ''
+}
+
+/**
  * Resolve plugin configuration from cordis config, then env vars.
  *
- * Resolution order: cordis config key → environment variable → built-in
- * default. Every field has a valid fallback, so this never throws — the
- * caller checks `vaultPath` truthiness to decide whether tools can operate.
+ * Resolution order for the vault mirrors the core's own precedence so the two
+ * cannot disagree: cordis config → `UNIFIED_MEMORY_VAULT` → the core config
+ * file's `vault:` key → '' (unconfigured).
+ *
+ * Every field has a valid fallback, so this never throws.
  */
 export function resolveConfig(config: Record<string, unknown> = {}): PluginConfig {
   const env = process.env
+  const vaultPath = String(
+    config.vaultPath || env.UNIFIED_MEMORY_VAULT || readCoreConfigVault() || '',
+  )
   return {
-    vaultPath: String(config.vaultPath ?? env.UNIFIED_MEMORY_VAULT ?? ''),
+    vaultPath,
     pythonPath: String(
       config.pythonPath ?? env.UNIFIED_MEMORY_PYTHON ?? 'python',
     ),

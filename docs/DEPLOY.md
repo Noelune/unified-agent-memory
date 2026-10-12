@@ -12,23 +12,57 @@ Two modes:
 
 ## Standalone mode (default)
 
-### 1. Get the code and install the core
+### 0. Which installation do you have?
+
+There are two shapes, and they differ in **what you already have on disk**:
+
+| | npm/plugin install | git clone |
+|---|---|---|
+| What you ran | `dsh plugin add dsh-unified-agent-memory` (or the Desktop plugin page) | `git clone …` |
+| Plugin host/client bundles | ✅ inside the package | ✅ after `npm run build` |
+| Python core (`core/`) | ✅ shipped in the package | ✅ |
+| Vault template | ✅ shipped | ✅ |
+| `setup/` scripts | ✅ shipped (since 0.7.0) | ✅ |
+| Agent instruction templates | ✅ shipped (since 0.7.0) | ✅ |
+| Docs | ✅ shipped | ✅ |
+
+Everything needed for the standalone flow ships inside the package. Earlier
+releases omitted `setup/` and the `integrations/{codex,claude}` templates, so an
+npm install could not initialize a vault or copy the agent files; 0.7.0 includes
+them. Locate the installed package with:
 
 ```sh
-git clone https://github.com/Noelune/unified-agent-memory.git
-cd unified-agent-memory
-pip install -e ./core          # dependency-free; standard library only
+npm root -g                      # if installed globally
+# or, inside a dsh profile:
+<harness home>/profiles/<profile>/node_modules/dsh-unified-agent-memory
+```
+
+Throughout this document, `<pkg>` means that directory. A clone is equivalent —
+run the same commands from the repository root.
+
+### 1. Install the core (optional)
+
+The plugin auto-adds its bundled `core/` to `PYTHONPATH`, so **no install step is
+required** for the tools to work. Install it only if you also want the `memory`
+CLI on your `PATH`:
+
+```sh
+pip install -e <pkg>/core          # dependency-free; standard library only
 ```
 
 ### 2. Initialize a vault (one command)
 
 ```sh
-python setup/setup.py init --vault ~/Documents/AgentMemory
+python <pkg>/setup/setup.py init --vault ~/Documents/AgentMemory
 ```
 
 This creates the full vault template (7 canonical notes, 提交区 inbox,
 情境信息, 记忆遗忘区), writes the vault path into ~/.unified-memory.yaml, and
 drops AGENTS.md / CLAUDE.md next to the vault.
+
+> The plugin reads that same `~/.unified-memory.yaml`, so **you do not also need
+> to set `vaultPath`** in the plugin config. Setting it explicitly is still
+> supported and takes precedence; see step 4.
 
 > **Windows note**: use a native Windows path (e.g. `C:\Users\you\Documents\AgentMemory`)
 > or a plain absolute POSIX-style path (`C:/Users/...`). Paths starting with a

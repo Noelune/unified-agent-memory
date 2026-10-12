@@ -1,7 +1,7 @@
 {
   "name": "dsh-unified-agent-memory",
   "description": "Unified agent memory for DeepSeek Harness — one shared Obsidian vault for every agent (dsh, Codex, Claude, Hermes). Ships the dependency-free Python core (search/promote/adjudicate/forget), a vault template, and a dsh plugin with memory_search / memory_show / memory_submit / memory_status tools.",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "compatibility": {
     "node": ">=20",
     "dshReleases": {

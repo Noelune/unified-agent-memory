@@ -8,6 +8,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   resolveConfig,
   checkVaultHealth,
@@ -17,6 +20,7 @@ import {
   notConfigured,
   buildSearchArgv,
   buildPreviewArgv,
+  readCoreConfigVault,
   DEPLOY_TASKBOOK,
 } from '../src/utils.ts'
 
@@ -58,10 +62,63 @@ describe('resolveConfig', () => {
 
   it('uses built-in defaults for all fields', () => {
     const cfg = resolveConfig()
-    expect(cfg.vaultPath).toBe('')
+    // vaultPath is deliberately NOT asserted as '' here: it legitimately falls
+    // back to the core's own config file, so its value depends on the machine.
+    // The resolution chain is covered by the dedicated cases below.
     expect(cfg.pythonPath).toBe('python')
     expect(cfg.remoteEnabled).toBe(false)
     expect(cfg.corePath).toContain('core')
+  })
+
+  it('treats an absent core config file as "no vault from that source"', () => {
+    expect(readCoreConfigVault('D:/definitely/not/a/real/path.yaml')).toBe('')
+  })
+
+  it('reads the vault key from a core config file, ignoring comments and quotes', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'uam-cfg-'))
+    try {
+      const f = join(dir, 'cfg.yaml')
+      writeFileSync(f, [
+        '# a comment line',
+        'unrelated: value',
+        'vault: "D:/my vault"   # trailing comment',
+        '',
+      ].join('\n'), 'utf-8')
+      expect(readCoreConfigVault(f)).toBe('D:/my vault')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('degrades to "" on a malformed core config file instead of throwing', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'uam-cfg-bad-'))
+    try {
+      const f = join(dir, 'cfg.yaml')
+      writeFileSync(f, 'this is not: valid: yaml: at all\nvault\n', 'utf-8')
+      expect(() => readCoreConfigVault(f)).not.toThrow()
+      expect(readCoreConfigVault(f)).toBe('')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  // Regression: the plugin consulted only its own cordis config, so an install
+  // relying on ~/.unified-memory.yaml (what `setup.py init` writes) reported
+  // configured:false and every tool answered "not configured" — while the HTTP
+  // routes served live data from the same vault. The console and the agent
+  // disagreed about the same machine.
+  it('prefers an explicit vaultPath over the environment and the file', () => {
+    process.env.UNIFIED_MEMORY_VAULT = '/env/vault'
+    const cfg = resolveConfig({ vaultPath: '/config/vault' })
+    expect(cfg.vaultPath).toBe('/config/vault')
+  })
+
+  it('treats an empty explicit vaultPath as unset and continues down the chain', () => {
+    process.env.UNIFIED_MEMORY_VAULT = '/env/vault'
+    // `''` must not shadow a lower-priority source — that is exactly the bug
+    // shape that made a configured install look unconfigured.
+    const cfg = resolveConfig({ vaultPath: '' })
+    expect(cfg.vaultPath).toBe('/env/vault')
   })
 
   it('cordis config takes precedence over env vars', () => {
