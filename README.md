@@ -220,7 +220,7 @@ Hermes 集成（`integrations/hermes/`）只是"其中一个 Agent 接进来"的
 ## 🔧 环境要求 (Requirements)
 
 - Python ≥ 3.10 (核心 Engine，仅需 Python 标准库)
-- Node.js ≥ 20 + DSH `0.2.0-rc.2` 或 `0.1.5-rc.2` (仅 dsh 插件需要；桌面端见 [docs/DESKTOP.md](docs/DESKTOP.md))
+- Node.js ≥ 20 + DSH `0.2.1-rc.2`（兼容 `0.2.0-rc.2`、`0.1.5-rc.2`）(仅 dsh 插件需要；桌面端见 [docs/DESKTOP.md](docs/DESKTOP.md))
 - 推荐使用 Obsidian 浏览和查看 Vault 知识库，但非强制要求 — 所有文件均为标准 Markdown 与 SQLite 数据库。
 
 ---
@@ -229,7 +229,7 @@ Hermes 集成（`integrations/hermes/`）只是"其中一个 Agent 接进来"的
 
 - **Maintainer**: [Noelune](https://github.com/Noelune)
 - **Community-maintained** — 欢迎提交 Issue 与 Pull Request。缺陷修复通常在 1–2 周内处理，安全问题优先解决。
-- **Compatibility**: 验证目标为 DSH `0.1.5-rc.2` 与 `0.2.0-rc.2`（含桌面端）两条版本线，二者均在 `peerDependencies` 中显式声明。DSH `0.2.0` 起宿主会在加载前校验插件的 `@deepseek-ai/dsh*` peer 范围，不匹配的组合包会被整体跳过（工具与路由均不注册）；因此升级 DSH 后若工具消失，请先核对版本线而非怀疑代码。上游 API 变更说明记录于 [CHANGELOG.md](CHANGELOG.md)。
+- **Compatibility**: 验证目标为 DSH `0.2.1-rc.2` 与 `0.2.0-rc.2`（含桌面端）；`0.1.5-rc.2` 仅保留在 `peerDependencies` 范围内、本轮未复测。DSH `0.2.0` 起宿主会在加载前校验插件的 `@deepseek-ai/dsh*` peer 范围，不匹配的组合包会被整体跳过（工具与路由均不注册）；因此升级 DSH 后若工具消失，请先核对版本线而非怀疑代码。上游 API 变更说明记录于 [CHANGELOG.md](CHANGELOG.md)。
 - **License**: **MIT License** — 允许商业化使用。
 
 ---

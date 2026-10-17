@@ -188,7 +188,7 @@ whole procedure can be re-run at any time without side effects.
 
 ## Compatibility
 
-- DSH `0.1.5-rc.2` / `0.2.0-rc.2` plugin (Web and Desktop profiles); Python ≥ 3.10 for
+- DSH `0.2.0-rc.2` / `0.2.1-rc.2` plugin (Web and Desktop profiles); Python ≥ 3.10 for
   the core; SQLite FTS5 when available (substring fallback otherwise).
 - SiliconFlow embeddings: `Qwen/Qwen3-Embedding-4B`, 1024 dims (optional; API
   key in `~/.unified-memory/secrets.yaml`, permissions 0600 / user-only ACL).

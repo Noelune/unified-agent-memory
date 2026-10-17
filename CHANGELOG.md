@@ -2,6 +2,35 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+适配 DSH `0.2.1-rc.2`（桌面端 44.7.0 附带的运行时）。**插件代码零改动**：上游这一版只在
+`dsh-tools`、`dsh-host-webserver`、`dsh-client-ui-slots` 上做加法，本插件用到的
+`defineTool`、`ctx.tools.register`、`webServer.register({kind:'exact'})`、`slots.inject`
+签名全都没变。同一台机器上被宿主按 peer 范围整体跳过的插件（例如 `dsh-turn-rewind`、
+`dsh-vision-toolkit`）是它们自己的声明没跟上，与本项目无关。
+
+### Changed
+
+- `devDependencies` 的 `@deepseek-ai/dsh-tools` / `@deepseek-ai/dsh-host-webserver` 钉到
+  `0.2.1-rc.2`，`@deepseek-ai/cordis` 升到 `^4.0.5`（上游把 `~4.0.4` 提到了 `~4.0.5`）。
+- `package-lock.json` 重建：CI 走 `npm ci`，锁文件与 `package.json` 不一致会直接装错版本。
+  重建是全新解析，顺带把 `vitest` 4.1.11 → 4.1.12、`rolldown` 1.2.9 → 1.2.14、
+  `@types/node` 等开发依赖挪到各自 range 内的最新版，属于锁文件的正常刷新。
+- `compatibility.dshReleases` 增加 `"0.2.1-rc.2": "compatible"`（`package.json` 与
+  `dsh.plugin.json` 两处必须一致，drift-check 会比对）。
+- 文档里的「验证目标」统一改为 `0.2.0-rc.2` / `0.2.1-rc.2`：`0.1.5-rc.2` 仍在 peer 范围内，
+  但本轮没有复测，因此不再声称「已验证」。
+
+### Added (tests)
+
+- `test/version-sync.test.mjs`：`devDependencies` 钉住的 DSH 版本必须出现在两张兼容表里，
+  否则红灯。此前兼容表纯属注释性质，升版后没人检查，声明落后于实际验证也发现不了。
+- `test/web-ui-contract.test.mjs`：客户端 bundle 的**真实加载**用例——在 `vm` 里模拟
+  `window.__ModuleLoader__`，跑 factory 拿到模块对象，再喂一个 `slots` 桩，断言
+  `sidebar.footer.action` 与 `shell.overlay` 两个座位确实被注册、且都拿到 React 组件。
+  在这之前只靠正则确认字符串存在，客户端契约变了也看不出来。
+
 ## [0.7.1] — 2026-10-13
 
 在真实桌面端上安装 0.7.0 后实测发现的三个问题。**建议从 0.7.0 升级**：其中第一条会让

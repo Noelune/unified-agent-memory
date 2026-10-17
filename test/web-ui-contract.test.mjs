@@ -22,6 +22,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
+import vm from 'node:vm'
 
 const client = await readFile(new URL('../lib/client-ui.js', import.meta.url), 'utf8')
 const host = await readFile(new URL('../lib/index.js', import.meta.url), 'utf8')
@@ -49,6 +50,64 @@ test('client half mounts through the slots service, not the global DOM', () => {
   assert.match(client, /shell\.overlay/)
   // The client contract forbids reaching for product globals or hard-coded DOM.
   assert.doesNotMatch(client, /__DSH_SIDEBAR_SEATS__/)
+})
+
+// ── Client bundle: executed, not just pattern-matched ──────────────
+
+test('client bundle runs in a ModuleLoader harness and mounts both slots', async () => {
+  // Pattern-matching the bundle proves it *contains* the right strings; this
+  // proves the harness can actually evaluate it and that `apply()` reaches the
+  // `slots` service. A DSH update that changes the client-plugin contract
+  // (loader globals, the plugin shape, the slot names) shows up here.
+  const loaded = []
+  const sandbox = {
+    window: { __ModuleLoader__: { load: (mod) => loaded.push(mod) } },
+    console,
+  }
+  sandbox.globalThis = sandbox
+  vm.createContext(sandbox)
+  vm.runInContext(client, sandbox, { filename: 'client-ui.js' })
+
+  assert.equal(loaded.length, 1, 'bundle must announce itself exactly once')
+  const [{ id, factory }] = loaded
+  assert.equal(id, 'dsh-unified-agent-memory')
+
+  // Only `react` is external. Nothing renders, so a callable stand-in is enough.
+  const react = new Proxy({}, { get: () => () => null })
+  const mod = factory((name) => {
+    if (name === 'react') return react
+    throw new Error(`unexpected require("${name}") in the client bundle`)
+  })
+
+  assert.equal(mod.name, 'dsh-unified-agent-memory')
+  assert.deepEqual([...mod.inject], ['slots'], 'the client half needs the slots service')
+  assert.equal(typeof mod.apply, 'function')
+
+  const mounted = []
+  const slots = {
+    inject(slot, callback) {
+      mounted.push({ slot })
+      callback()
+      return () => {}
+    },
+    register(entry, component) {
+      Object.assign(mounted[mounted.length - 1], {
+        id: entry.id,
+        name: entry.name,
+        component,
+      })
+      return () => {}
+    },
+  }
+  mod.apply({ slots })
+
+  assert.deepEqual(mounted.map((m) => m.slot), ['sidebar.footer.action', 'shell.overlay'])
+  assert.deepEqual(mounted.map((m) => m.id),
+    ['dsh-unified-agent-memory', 'dsh-unified-agent-memory-sheet'])
+  for (const seat of mounted) {
+    assert.equal(seat.name, seat.slot, 'register() must target the slot it was injected into')
+    assert.equal(typeof seat.component, 'function', `${seat.slot} needs a React component`)
+  }
 })
 
 // ── Host bundle: the /status payload the console polls ──────────────

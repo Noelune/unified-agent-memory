@@ -208,8 +208,9 @@ unless you configure a remote endpoint yourself.
 ## Upgrading
 
 - Core CLI is versioned; check CHANGELOG.md for changes.
-- The DSH plugin targets DSH `0.1.5-rc.2` and `0.2.0-rc.2` (CLI/Web and
-  Desktop). Since DSH `0.2.0` the host validates the plugin's
+- The DSH plugin targets DSH `0.2.0-rc.2` and `0.2.1-rc.2` (CLI/Web and
+  Desktop); `0.1.5-rc.2` remains inside the declared peer range but is no longer
+  re-tested. Since DSH `0.2.0` the host validates the plugin's
   `@deepseek-ai/dsh*` peer ranges *before* importing it and skips a bundle whose
   peers do not match, so a DSH upgrade can remove the tools without any error in
   the UI. Check the version line first; see [DESKTOP.md](DESKTOP.md#2-the-compatibility-gate-read-this-before-upgrading-dsh).

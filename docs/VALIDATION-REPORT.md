@@ -5,8 +5,9 @@ Date: 2026-09-12
 ## Compatibility target
 
 > **Superseded for the current release.** This report records the 2026-09-12
-> validation against DSH `0.1.5-rc.2`. The plugin now also targets DSH
-> `0.2.0-rc.2` (Web + Desktop); the re-validation is in
+> validation against DSH `0.1.5-rc.2`. The current target line is recorded in
+> [Re-validation (2026-10-18)](#re-validation-2026-10-18-dsh-021-rc2), with the
+> earlier DSH `0.2.0-rc.2` pass in
 > [Re-validation (2026-10-13)](#re-validation-2026-10-13) below.
 
 - DSH: `0.1.5-rc.2` / npm `next`
@@ -151,4 +152,89 @@ not a defect; it clears on `npm publish`.
   so requires fully quitting the Desktop app, which was hosting the session.
 - The `compatibility.json` exemption path was read from the upstream docs and CLI
   source, but no exemption was exercised.
+
+## Re-validation (2026-10-18): DSH 0.2.1-rc.2
+
+Trigger: the Desktop client moved to `dsh` `0.2.1-rc.2` (app version `44.7.0`).
+Question asked: did the upgrade break the plugin, and if so where?
+
+### Compatibility target (current)
+
+- DSH: `0.2.1-rc.2` (CLI/Web, and the runtime the Desktop app loads)
+- `@deepseek-ai/dsh-tools`: `0.2.1-rc.2`
+- `@deepseek-ai/dsh-host-webserver`: `0.2.1-rc.2`
+- `@deepseek-ai/cordis`: `4.0.5` (upstream moved `~4.0.4` → `~4.0.5`; the declared
+  `^4.0.1` peer still covers it)
+- Node.js `v24.12.0`, npm `11.6.2`, Python `3.11.9`
+
+### Upstream API delta (0.2.0-rc.2 → 0.2.1-rc.2)
+
+| Surface | Change | Effect on this plugin |
+| --- | --- | --- |
+| `dsh-host-webserver` | `match()` still resolves exact routes before prefixes; `register` / `registerFallback` signatures unchanged. The package grew for transport options, not routing | none |
+| `dsh-tools` | `ToolPresentationMode` dropped `'both'`; `renderToolsSdk` gained `programFormat`; `createRunCodeTool` gained `ctx`; tool entries gained `meta?: JsonValue` | none — only `defineTool` and `ctx.tools.register` are used |
+| `dsh-client-ui-slots` | `lib/index.js` is byte-identical to `0.2.0-rc.2` (sha256 `57E1314E…`); only typings and READMEs changed | none |
+| Plugin compatibility gate | Mechanism unchanged: a bundle whose `@deepseek-ai/dsh*` peer ranges exclude the running runtime is skipped wholesale; per-pair grants live in the profile's `compatibility.json` | this plugin's ranges include `0.2.1-rc.2`, so it is not skipped |
+
+### Findings and fixes
+
+1. **No plugin code needed to change.** With devDependencies resolved to
+   `0.2.1-rc.2`, `tsc --noEmit` is clean and all 421 vitest cases pass. The four
+   API surfaces the plugin touches (`defineTool`, `ctx.tools.register`,
+   `webServer.register({ kind: 'exact' })`, `slots.inject` / `slots.register`)
+   are unchanged in 0.2.1.
+2. **The declared support matrix was stale.** Neither `package.json` nor
+   `dsh.plugin.json` listed `0.2.1-rc.2`. The gate reads peer ranges, so this did
+   not break loading — but it told readers (and marketplace surfaces) that the
+   newest tested version was `0.2.0-rc.2`. Both maps now list
+   `"0.2.1-rc.2": "compatible"`; drift-check compares the two and would fail on
+   a one-sided edit.
+3. **The lockfile still pinned `0.2.0-rc.2`.** CI installs with `npm ci`, which
+   refuses (or silently installs the wrong tree) when the lock disagrees with
+   `package.json`. Regenerated; `npm ci` then succeeded from a clean
+   `node_modules` and the full gate ran against that tree.
+4. **The compatibility declaration was untested.** `test/version-sync.test.mjs`
+   now asserts that the DSH version pinned in `devDependencies` appears as
+   `"compatible"` in both manifests. It was written first and failed with
+   `must list 0.2.1-rc.2 as "compatible"` before the fix.
+5. **The client bundle was never executed.** `test/web-ui-contract.test.mjs`
+   previously only pattern-matched the shipped bundle. It now runs
+   `lib/client-ui.js` inside a `vm` host that emulates
+   `window.__ModuleLoader__`, calls the factory, and drives `apply()` with a
+   `slots` stand-in, asserting both seats (`sidebar.footer.action`,
+   `shell.overlay`) are registered with their stable ids and a component.
+6. **Out of scope, but visible on the same machine.** The Web profile now skips
+   `@dsh-external/dsh-vision-toolkit@0.1.4` and `@anionex/dsh-turn-rewind@0.3.9`
+   (their own `@deepseek-ai/dsh*` peer ranges exclude `0.2.1-rc.2`), and the
+   `better-sidebar` patch target no longer exists. Those are other packages'
+   declarations; nothing in this repository depends on them.
+
+### Tests and checks (current)
+
+| Check | Result |
+| --- | --- |
+| `npm ci` from the regenerated lock | 92 packages added, exit `0` |
+| `npm run typecheck` | exit `0` |
+| `npm run drift:check` | all JS-side drift checks passed, exit `0` |
+| `npm run test:js` | 18 files, 421 tests, all passed, exit `0` |
+| `npm test` (Python 3.11.9) | exit `0` |
+| `npm run build` | bundles + declarations emitted, no diff against the committed bundles, exit `0` |
+| `npm run test:node` | 21 tests, all passed, exit `0` (includes the new execution probe) |
+| `npm run drift:python` | `No drift detected`, exit `0` |
+| `npm run audit:package` | `npm package audit ok: 99 entries`, exit `0` |
+| `dsh plugin --profile web version-exemptions` | `{}` — this profile needs no exemption for the plugin |
+
+Not green: `npm run sync:check`, which reports the working tree as dirty while the
+change is uncommitted. It clears once the change is committed and pushed; it is a
+release-state gate, not a defect signal.
+
+### Remaining boundary (current)
+
+- The Desktop profile was still not modified; the plugin remains installed in the
+  Web profile only. Moving it requires quitting the Desktop app.
+- The Web profile server was not started, so the loopback routes were verified by
+  contract tests and by `dsh --dump-config` (the bundle is not skipped), not by a
+  live HTTP call. Route *matching* is unchanged in 0.2.1, and the exact-before-prefix
+  rule is what keeps them reachable.
+
 
