@@ -19,6 +19,10 @@ _LEGACY_NUMBERING = re.compile(
     r"^\s*(?:\d+[.、)]|[(（]\d+[)）]|第[0-9一二三四五六七八九十百]+[节章]\s*)\s*"
 )
 FENCE_RE = re.compile(r"^(?: {0,3}|\t+)(`{3,}|~{3,})")
+# CommonMark's own rule, used only where over-recognition would cost the user
+# something: a fence it does not recognise cannot swallow our section, so it
+# must not be a reason to refuse a deploy either.
+STRICT_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 LOCK_SUFFIX = ".unified-agent-memory.deploy.lock"
 BACKUP_RE = re.compile(r"\.bak-(\d{8}-\d{6}-\d{3})$")
 
@@ -157,12 +161,17 @@ def _replace_section(text: str, section: str, eol: str) -> str:
         ),
         None,
     )
-    if start is None and unclosed is not None:
+    if start is None and unclosed is not None and STRICT_FENCE_RE.match(lines[unclosed]):
         # The tail of the file is quoted by a fence nobody closed. Appending the
         # managed section there would render it as sample text — the agent would
         # read a code block instead of its rules, and selfcheck would still say
         # ok because the markers are present. Saying "fix your file" is the
         # honest answer; the message names the line to fix.
+        #
+        # Only a fence CommonMark agrees is a fence counts here. A tab-indented
+        # ``` opens nothing a renderer would honour, so refusing would block a
+        # deploy that leaves the file perfectly correct — that is a false alarm,
+        # not protection. The wider FENCE_RE is for the heading scan only.
         raise ValueError(
             f"an unclosed code fence (opened on line {unclosed + 1}) covers the end of the "
             "file, so the managed section would be written inside a code block: close the "

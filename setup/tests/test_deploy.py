@@ -151,7 +151,19 @@ class DeployTests(unittest.TestCase):
         self.assertEqual(twice, once.replace("## 0. 全局\n\n", "## 0. 全局\n", 1))
         self.assertEqual(replace_section(twice, section), twice)
 
+    def test_a_tab_indented_fence_does_not_block_a_deploy(self):
+        # A tab-indented ``` is an indented code block per CommonMark, so nobody
+        # is quoting anything and there is nothing to refuse: the deploy must
+        # still happen. (The wider mask only exists to protect quoted headings;
+        # refusing is reserved for fences CommonMark agrees are fences.)
+        original = "## 0. 全局\n\n\t```\n正文\n"
+        section = build_section("dsh", "<vault>", "dsh")
+        once = replace_section(original, section)
+        self.assertIn("## 0. 全局", once)
+        self.assertIn("正文", once)
+        self.assertEqual(once.count(START_MARKER), 1)
 
+    def test_a_four_space_indented_fence_is_not_a_fence(self):
         # CommonMark: four spaces make an indented code block, not a fence. Read
         # as a fence, it hides every heading below it, so the legacy section is
         # never migrated and the deploy leaves two sections in one file.
