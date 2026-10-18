@@ -185,6 +185,36 @@ describe('shim and registry content', () => {
       expect(mergeRegistry(once, 'C:\\Vault', rows)).toBe(once)
     })
 
+    it('starts an appended row on its own line when the table has no data rows yet', () => {
+      // The same glue, one step earlier: the last line of the table may be the
+      // header or the separator, which is not in the body this patch used to
+      // fix. A table that is only its header is exactly what a first run writes
+      // into an otherwise empty registry.
+      for (const existing of [
+        '| 前缀 | 运行时 | 说明 |',
+        '| 前缀 | 运行时 | 说明 |\n| --- | --- | --- |',
+      ]) {
+        const once = mergeRegistry(existing, 'C:\\Vault', rows)
+        expect(once).toContain(`${existing}\n| \`dsh-desktop-\` | dsh 桌面端 | DSH_PROFILE=desktop |`)
+        expect(mergeRegistry(once, 'C:\\Vault', rows)).toBe(once)
+      }
+    })
+
+    it('keeps the last cell of a row that has no trailing pipe', () => {
+      // GFM lets a row end without the outer pipe. Treating the last cell as a
+      // separator drops whatever the user typed there when we rewrite the row.
+      const existing = [
+        '| 前缀 | 运行时 | 说明 | 状态 |',
+        '| --- | --- | --- | --- |',
+        '| `dsh-desktop-` | 旧说明 | 旧 | 在用',
+        '',
+      ].join('\n')
+      const merged = mergeRegistry(existing, 'C:\\Vault', rows)
+      expect(merged).toContain('| `dsh-desktop-` | dsh 桌面端 | DSH_PROFILE=desktop | 在用 |')
+      expect(merged).not.toContain('旧说明')
+    })
+
+
     it('is byte-stable when a cell contains an escaped pipe', () => {
       // `\|` is how a Markdown table carries a literal pipe. Splitting on every
       // pipe re-reads that one cell as two, and each run keeps another copy of

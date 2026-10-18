@@ -162,6 +162,20 @@ class UseExistingVaultTest(unittest.TestCase):
         self.assertIn("read back as", str(raised.exception))
         self.assertEqual(self.config.read_text(encoding="utf-8"), "vault: C:\\keep\n")
 
+    def test_use_refuses_a_path_with_a_line_separator(self):
+        # The readers split the file with str.splitlines(), which also breaks on
+        # U+2028 and friends. A value carrying one of those is written as two
+        # lines and read back as the first half only — the same failure as "#",
+        # through a different door, so the check has to reuse their splitting.
+        split = self.root / "vault\u2028x"
+        (split / "50-Agent-Context").mkdir(parents=True)
+        (split / "50-Agent-Context" / "上下文索引.md").write_text("# 索引\n", encoding="utf-8")
+        self.config.write_text("vault: C:\\keep\n", encoding="utf-8")
+        with self.assertRaises(SystemExit) as raised:
+            self._run_use(split)
+        self.assertIn("read back as", str(raised.exception))
+        self.assertEqual(self.config.read_text(encoding="utf-8"), "vault: C:\\keep\n")
+
     def test_use_quotes_the_path_in_its_advice(self):
         # The message is copy-pasteable, and vaults with spaces are the norm.
         spaced = self.root / "empty vault"

@@ -108,7 +108,50 @@ class DeployTests(unittest.TestCase):
         self.assertNotIn("旧内容", once)
         self.assertEqual(once.count(START_MARKER), 1)
 
-    def test_a_four_space_indented_fence_is_not_a_fence(self):
+    def test_refuses_to_append_inside_an_unclosed_fence(self):
+        # If a fence opens before the old section and is never closed, appending
+        # the managed section puts it inside a code block: the agent renders it
+        # as sample text, the old section stays, and selfcheck still says ok.
+        # Writing something that reads as code is worse than saying "fix your
+        # file first", and the message names the line.
+        original = "```\n引用\n\n## 统一记忆库\n- 旧\n## 9. 用户正文\n保留\n"
+        section = build_section("dsh", "<vault>", "dsh")
+        with self.assertRaises(ValueError) as raised:
+            replace_section(original, section)
+        self.assertIn("unclosed code fence", str(raised.exception))
+        self.assertIn("line 1", str(raised.exception))
+
+    def test_tab_indented_fence_still_protects_its_content(self):
+        # CommonMark reads a tab indent as four columns, so a tab-indented ```
+        # is an indented code block rather than a fence. Treating it as a fence
+        # anyway is the safe direction: the quoted heading below stays quoted,
+        # and we delete nothing the user pasted.
+        original = (
+            "## 0. 全局\n\n\t```md\n## 统一记忆库（示例）\n\t```\n\n"
+            "## 统一记忆库\n\n旧内容\n\n## 9. 用户正文\n\n必须保留\n"
+        )
+        section = build_section("dsh", "<vault>", "dsh")
+        once = replace_section(original, section)
+        self.assertIn("## 统一记忆库（示例）", once)
+        self.assertIn("## 9. 用户正文", once)
+        self.assertIn("必须保留", once)
+        self.assertNotIn("旧内容", once)
+
+    def test_a_second_run_settles_the_append_seam(self):
+        # Appending copies the file's own ending (see
+        # test_mixed_line_endings_survive_a_managed_write), so a file ending in
+        # a blank line keeps that blank line on the first run. The next run
+        # normalises the seam once and stops there. Converging is the contract;
+        # "the first run already equals the second" would mean rewriting the
+        # user's last line on the first pass.
+        original = "## 0. 全局\n\n"
+        section = build_section("dsh", "<vault>", "dsh")
+        once = replace_section(original, section)
+        twice = replace_section(once, section)
+        self.assertEqual(twice, once.replace("## 0. 全局\n\n", "## 0. 全局\n", 1))
+        self.assertEqual(replace_section(twice, section), twice)
+
+
         # CommonMark: four spaces make an indented code block, not a fence. Read
         # as a fence, it hides every heading below it, so the legacy section is
         # never migrated and the deploy leaves two sections in one file.

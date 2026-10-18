@@ -171,7 +171,11 @@ function eolOf(line: string): string {
 
 /** Cells between the outer pipes of a table line, with `\|` kept in one piece. */
 function cellsOf(line: string): string[] {
-  return line.replace(/\s+$/, '').split(/(?<!\\)\|/).slice(1, -1)
+  // GFM lets a row omit its outer pipes. Slicing off both ends unconditionally
+  // reads the last cell as a separator and drops what the user typed there.
+  const trimmed = line.replace(/\s+$/, '').replace(/(?<!\\)\|$/, '')
+  const cells = trimmed.split(/(?<!\\)\|/)
+  return trimmed.startsWith('|') ? cells.slice(1) : cells
 }
 
 /**
@@ -182,7 +186,10 @@ function cellsOf(line: string): string[] {
  */
 function patchRow(line: string, row: RegistryRow, columns: number): string {
   const cells = cellsOf(line)
-  const written = [` \`${row.prefix}\` `, ` ${row.runtime} `, ` ${row.note} `, ...cells.slice(3)]
+  // A kept cell may come from a row without an outer pipe, so it does not carry
+  // the padding the others do; give it the same shape or the row reads wrong.
+  const kept = cells.slice(3).map((cell) => (cell.trim() ? ` ${cell.trim()} ` : cell))
+  const written = [` \`${row.prefix}\` `, ` ${row.runtime} `, ` ${row.note} `, ...kept]
   while (written.length < columns) written.push('  ')
   return `|${written.join('|')}|`
 }
@@ -234,15 +241,18 @@ export function mergeRegistry(existing: string | undefined, vaultPath: string, r
     seen.add(prefix)
     return [`${patchRow(line, row, columns)}${eolOf(line) || eol}`]
   })
+  const head = lines.slice(0, firstRow)
   const missing = [...pending].filter(([prefix]) => !seen.has(prefix))
   if (missing.length) {
     // A table that ends the file often has no final newline; appending then
     // glues our row onto the last one, and that damaged line stays in a file
-    // two machines share.
-    const last = body[body.length - 1]
-    if (last !== undefined && !eolOf(last)) body[body.length - 1] = `${last}${eol}`
+    // two machines share. The last line of the table may be the header or the
+    // separator: a registry that only has those is what a first run finds.
+    const preceding = body.length ? body : head
+    const last = preceding[preceding.length - 1]
+    if (last !== undefined && !eolOf(last)) preceding[preceding.length - 1] = `${last}${eol}`
     for (const [, row] of missing) body.push(`${registryRow(row, columns)}${eol}`)
   }
 
-  return [...lines.slice(0, firstRow), ...body, ...lines.slice(end)].join('')
+  return [...head, ...body, ...lines.slice(end)].join('')
 }

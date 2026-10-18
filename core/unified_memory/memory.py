@@ -126,11 +126,14 @@ def find_template_dir() -> Path | None:
 def _vault_as_read_back(vault: Path) -> str:
     """The value a reader gets from `vault: <path>` — mirrors common.parse_config.
 
-    The config is hand-editable, so readers cut a value at "#" (trailing
-    comment) and then strip surrounding quotes. The stored text is therefore not
-    always the text that comes back.
+    The config is hand-editable, so readers split the file into lines, cut each
+    line at "#" (trailing comment) and strip surrounding quotes. Splitting is
+    `str.splitlines()`, which also breaks on U+2028 and U+0085, so a path
+    carrying one of those is stored as two lines and read back as the first
+    half. The stored text is therefore not always the text that comes back.
     """
-    line = f"vault: {vault}".split("#", 1)[0].strip()
+    first = f"vault: {vault}".splitlines()[0]
+    line = first.split("#", 1)[0].strip()
     return line.partition(":")[2].strip().strip('"').strip("'")
 
 

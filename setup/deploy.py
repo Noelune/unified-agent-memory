@@ -18,7 +18,7 @@ LEGACY_TOKENS = ("统一记忆", "Agent提交区", "50-Agent-Context")
 _LEGACY_NUMBERING = re.compile(
     r"^\s*(?:\d+[.、)]|[(（]\d+[)）]|第[0-9一二三四五六七八九十百]+[节章]\s*)\s*"
 )
-FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+FENCE_RE = re.compile(r"^(?: {0,3}|\t+)(`{3,}|~{3,})")
 LOCK_SUFFIX = ".unified-agent-memory.deploy.lock"
 BACKUP_RE = re.compile(r"\.bak-(\d{8}-\d{6}-\d{3})$")
 
@@ -157,6 +157,17 @@ def _replace_section(text: str, section: str, eol: str) -> str:
         ),
         None,
     )
+    if start is None and unclosed is not None:
+        # The tail of the file is quoted by a fence nobody closed. Appending the
+        # managed section there would render it as sample text — the agent would
+        # read a code block instead of its rules, and selfcheck would still say
+        # ok because the markers are present. Saying "fix your file" is the
+        # honest answer; the message names the line to fix.
+        raise ValueError(
+            f"an unclosed code fence (opened on line {unclosed + 1}) covers the end of the "
+            "file, so the managed section would be written inside a code block: close the "
+            "fence and retry"
+        )
     if start is not None:
         # The end scan may not trust a fence that is never closed: treating the
         # rest of the file as quoted would delete every heading after it, where
@@ -173,6 +184,11 @@ def _replace_section(text: str, section: str, eol: str) -> str:
         )
         return _splice("".join(lines[:start]), section, "".join(lines[end:]), eol)
 
+    # Appending must not change a byte the user wrote: these files are often
+    # mixed-EOL, and rewriting their last line shows up as a full-file diff in
+    # the user's repo. The seam therefore follows the file's own habit instead
+    # of the dominant EOL. (The next run goes through _splice and collapses a
+    # trailing blank line once, then stops — see the convergence test.)
     separator = "" if not text or text.endswith(("\n", "\r")) else eol
     return text + separator + section + eol
 
@@ -225,12 +241,24 @@ def _read_text(path: Path) -> str:
     return path.read_bytes().decode("utf-8")
 
 
+def _replace_section_at(path: Path, text: str, section: str) -> str:
+    """`replace_section`, with the file named in any refusal it raises.
+
+    A refusal is about one file, and a machine has several targets; a message
+    without the path leaves the user guessing which one to fix.
+    """
+    try:
+        return replace_section(text, section)
+    except ValueError as exc:
+        raise ValueError(f"{path}: {exc}") from exc
+
+
 def apply_file(path: Path, section: str, *, dry_run: bool = False) -> dict[str, object]:
     path = Path(path).expanduser()
     if not path.is_file():
         raise FileNotFoundError(path)
     original = _read_text(path)
-    updated = replace_section(original, section)
+    updated = _replace_section_at(path, original, section)
     changed = updated != original
     result: dict[str, object] = {"path": path, "changed": changed, "written": False, "backup": None}
     if not changed or dry_run:
@@ -238,7 +266,7 @@ def apply_file(path: Path, section: str, *, dry_run: bool = False) -> dict[str, 
     with deployment_lock(path):
         # Re-read after locking so concurrent deployment cannot overwrite newer content.
         original = _read_text(path)
-        updated = replace_section(original, section)
+        updated = _replace_section_at(path, original, section)
         if updated == original:
             result["changed"] = False
             return result
