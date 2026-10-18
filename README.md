@@ -164,7 +164,7 @@ flowchart LR
 
 ### 2. 装完之后的第一次使用 (First run after install)
 
-从 0.8.1 起，`npm install` 这一步已经把所有东西带齐了——core、`setup/setup.py`、`setup/deploy.py`、vault 模版全部在包内。不需要再克隆仓库，也不需要 `postinstall`（那类脚本在 pnpm 与插件市场里本来就会被拦）。
+从 0.8.1 起（即当前 Unreleased 里程碑的内容），`npm install` 这一步已经把所有东西带齐了——core、`setup/setup.py`、`setup/deploy.py`、vault 模版全部在包内。不需要再克隆仓库，也不需要 `postinstall`（那类脚本在 pnpm 与插件市场里本来就会被拦）。
 
 所以第一次只需要在对话里说一句「帮我初始化记忆库」，Agent 会调用 `memory_setup`：
 

@@ -474,10 +474,13 @@ else:
 | 情况 | `needsConsent` | 关键字段 | 是否写盘 |
 |---|---|---|---|
 | 已有针对该 vault 的授权记录 | `false` | `steps: []`、`message` | 否 |
+| 已有授权记录 + `apply: true` | `false` | `steps[]` | 是（补写缺失部分） |
 | 无授权、未传 `apply` | `true` | `reason`（四行事实）、`plan`、`hint` | 否 |
 | 审批被拒/取消 | `true` | `hint` 含「已取消」 | 否 |
+| 审批服务抛错 | `true` | `hint` 含「未写入任何文件」 | 否 |
 | 审批通过（`allowed-once`） | `false` | `steps[]`、`onboarding`（已落盘） | 是 |
 | 无审批通道 + `apply: true` | `false` | `steps[]`，**无 `onboarding`** | 是 |
+| `vault` 是相对路径 | `false`（`ok: false`） | `output` 说明必须是绝对路径 | 否 |
 
 约定：
 
@@ -489,8 +492,19 @@ else:
 - 通过审批才落 `~/.unified-memory/onboarding.json`（`version:1`、`consent:"granted"`、
   `grantedAt`、`vaultPath`、`scope`、`targets`）。**无审批通道而用 `apply` 落地时不会伪造授权记录**，
   所以下次仍会再问一次——宁可多问，不可伪造同意。
+- 授权记录只免掉「再问一次」，不免掉「干活」：`apply: true` 即使已有授权也照样重跑一遍，
+  用来补写上次失败的步骤（`init` 已成功时不会重复初始化）。
 - `steps[].name` 取值：`vault` / `instructions` / `shim` / `registry` / `selfcheck`；首个失败即中止，
-  `ok` 为 `false`，`detail` 带退出码与截断后的 stderr。
+  `ok` 为 `false`，`detail` 带退出码与截断后的 stderr。`init` 真的跑过而后续步骤失败时，
+  该步 `detail` 末尾追加 `；注意：本机默认记忆库(vault:)已指向 <path>`——`init` 会写
+  `~/.unified-memory.yaml`，那台机器此后所有运行时都指向新 vault，不能只报一句失败。
+- `vault` 步骤是**幂等**的：`<vault>/50-Agent-Context` 已存在时跳过 `memory init`（`init` 对已存在的
+  vault 会直接 `SystemExit`，`--force` 又会用模版覆盖用户笔记），`detail` 写「复用已存在的记忆库」。
+- `shim` 步骤按平台落 `~/.unified-memory/bin/memory.cmd`（win32）或 `memory`（`#!/bin/sh`，
+  POSIX 上 `chmod 0o755`）；内容与磁盘一致时跳过。`registry` 步骤**合并**而不是重写
+  `50-Agent-Context/Agent提交区/前缀登记.md`，其他运行时的行不会被抹掉。
+- `selfcheck` 不信退出码：`memory status` 发现结构缺失时照样退出 0，所以还要匹配 stdout 里的
+  `vault structure: MISSING`。
 
 ---
 

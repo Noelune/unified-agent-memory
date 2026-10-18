@@ -40,6 +40,46 @@ All notable changes to this project are documented in this file.
   解析，不看 argv），但原先静默覆盖，等于把一台本来指向正确 vault 的机器悄悄改到别处。
   现在多打印一行 `note: replaced the configured vault A -> B`；行为不变，只是不再无声。
 
+### Fixed — 首次引导的复查修复（代码评审 C1–C3 / I1–I7）
+
+- **C1（数据丢失）托管段落的旧格式清理会吃掉前面的标题**：早期用
+  `(?ms)^## .*?(?:统一记忆|Agent提交区|50-Agent-Context)` 找旧段落，`.*?` 会从**文件里第一个
+  `## ` 标题**开始吞，只要中间出现过关键词，就把前面那节（例如 `## 0. 全局`）整段删掉，
+  而且标记数量校验照样通过（新段落自带标记）。现在只按行找**标题本身含关键词**的那一节，
+  只删它到下一个 `## ` 之间的内容。
+- **C2（引导永远失败）指向已存在的 vault 时 `init` 必然拒绝**：`init_vault` 在
+  `<vault>/50-Agent-Context` 已存在时直接 `SystemExit("vault already initialized … --force")`，
+  而 `--force` 会用模版覆盖用户笔记。复用现成 vault 正是 0.8.0 升级与「我已有 Obsidian 仓库」
+  的主路径。现在先探测 `50-Agent-Context`，存在就跳过 `init` 直接进入部署，步骤详情写
+  `复用已存在的记忆库`。
+- **C3（装完仍不可用）五个读取工具依旧报 not configured**：`configured` 是注册时抓的布尔值，
+  `reload` 只改配置对象，所以 setup 成功后必须重启宿主才好；而且 `reload` 还挂在
+  「有授权记录」这一条件上，走 `apply: true` 的路径永远不刷新。现在工厂按调用时的
+  `cfg.vaultPath` 判定，vault 步骤成功即 `reload`。
+- **I1 半途失败会静默把机器指到新 vault**：`init` 成功后若 `deploy` 失败，本机默认 vault 已经
+  改指向了，调用方却只看到一句 `deploy failed`。现在失败详情末尾追加
+  `；注意：本机默认记忆库(vault:)已指向 <path>`。
+- **I2 前缀登记表被整表重写**：`buildRegistry` 从头生成，会把其他运行时（`dsh-web-`、手动登记的
+  `codex-`）的行全部抹掉。新增 `mergeRegistry`：解析已有 `| \`前缀\` | 运行时 | 说明 |` 行，
+  按前缀 upsert 再重排，别人的行原样保留。
+- **I3 有授权记录时 `apply: true` 被吞掉**：短路条件只看「已授权」不看 `apply`，于是消息里
+  「补写缺失的文件请传 apply=true」照做也没用。现在只有 `已授权 && !apply` 才短路。
+- **I4 审批服务抛错会炸出工具契约**：`approval.request` 原先既没判 `typeof` 也没 try/catch，
+  服务在调用中途消失就直接抛。现在两者都有，兜底返回计划并说明「未写入任何文件」。
+- **I5 shim 只有 Windows 版、且每次重写**：现在 win32 写 `memory.cmd`，其他平台写
+  `#!/bin/sh` 的 `memory` 并 `chmod 0o755`；内容与磁盘一致时跳过写入，不制造无意义的 mtime 变化。
+- **I6 托管写入会把 CRLF 改成 LF**（含 `.bak` 备份）：Windows 上的指令文件多半是 CRLF，
+  一次部署就等于整文件换行符改写，diff 噪音盖住真实改动。现在按字节读写，原文件是纯 CRLF
+  就还原成 CRLF。
+- **I7 `notConfigured()` 把用户推去读手册**：提示改成第一步就调 `memory_setup`（不带 `apply`
+  只出计划），任务书降为手工替代路径。
+- **M1 自检形同虚设**：`memory status` 发现结构缺失时仍然退出 0，只看退出码的自检永远通过。
+  现在额外匹配 stdout 里的 `vault structure: MISSING` 判失败。
+- **M2 相对路径会在宿主的 cwd 里建库**：`memory_setup` 现在要求绝对路径，否则直接返回
+  `ok: false` 并说明怎么改，一个字节都不写。
+- **M5 `relToHome` 前缀误判**：`C:\Users\bobby` 会被当成 home `C:\Users\bob` 内部路径，
+  渲染出 `by/.dsh/AGENTS.md`。现在只在分隔符边界上剥离。
+
 ### Fixed — 提交前缀不再硬编码
 
 - **`memory_submit` 把身份写死成 `dsh`**：插件层（`src/tools.ts`）原样调用
