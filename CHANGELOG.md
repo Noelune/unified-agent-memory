@@ -72,6 +72,24 @@ All notable changes to this project are documented in this file.
 - 既有后端门禁保持全绿：`npm run typecheck`、`test:js`（421）、`test:node`（21）、
   `setup/tests`（5）。
 
+### Hermes-side pipeline (external, aligned in the same pass)
+
+The live Hermes deployment keeps its own scripts under
+`HERMES_HOME/scripts/`. They were aligned to the same hygiene contract in this
+release (see `integrations/hermes/README.md`):
+
+- new `memory_hygiene.py` shared by promoter/forgetter/inject/export/status;
+- fixed `SOURCE_SUFFIX_RE` so ordinary `（写入 …｜来源：[[…]]）` lines are
+  recognised (they were silently skipped by the forgetter);
+- forgetter now skips `｜有效至` history, backs up + atomically rewrites, and
+  scans only `50-Agent-Context` (not `20-Knowledge` guides);
+- auto-versioning backs up before rewrite;
+- context injection strips provenance suffixes;
+- Supermemory/mem0/OpenClaw exports filter history, 已取代 sections and
+  sync-conflict copies;
+- `hermes_memory.py` points at current canonical files and searches current
+  facts only.
+
 ## [0.7.2] — 2026-10-18
 
 适配 DSH `0.2.1-rc.2`（桌面端 44.7.0 附带的运行时）。**插件代码零改动**：上游这一版只在

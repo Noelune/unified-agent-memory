@@ -183,6 +183,22 @@ The core package is deliberately separated from agent-specific adapters:
 | `dsh-memory-discipline` | optional pre-step recall and memory-discipline instructions | No |
 | `Agent提交区/` | isolated cross-agent submission files | Submission files only |
 
+### Hermes-side pipeline (external to this repo)
+
+A full deployment also has a Hermes-owned pipeline in
+`HERMES_HOME/scripts/`. It is not shipped by this package, but it must follow
+the same hygiene contract:
+
+| Script | Job | Shared rules applied |
+|---|---|---|
+| `memory_hygiene.py` | single source for versioned/conflict-copy/canonical-path rules, atomic write + backup | — |
+| `dream_memory_promoter.py` | classify/dedup/supersede archive + inbox facts | skips history in conflicts; backs up before rewrite |
+| `memory_forgetter.py` | weekly decay | canonical profiles only; never versioned history; backs up |
+| `inject_hermes_memory_context.py` | per-turn context pack | drops history + provenance suffixes |
+| `sync_obsidian_to_supermemory.py` / `sync_obsidian_to_mem0.py` | semantic-provider export | canonical notes only; history/sections/conflict copies filtered |
+| `publish_openclaw_memory.py` | remote read-only snapshot | same filter |
+| `hermes_memory.py` (skill) | read-only search for Codex/Claude/ZCode | current facts only; excludes inbox/forget/archives/copies |
+
 `dsh-memory-discipline` is an optional runtime policy layer. It invokes the
 core CLI for recall; it does not replace the core, bypass review, or write the
 canonical vault directly.

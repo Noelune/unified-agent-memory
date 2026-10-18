@@ -19,6 +19,24 @@ any runtime with a scheduler).
 3. **Tools** — expose `memory_search` / `memory_show` / `memory_submit`
    the same way the dsh plugin does.
 
+## Hygiene contract (keep every consumer in sync)
+
+Every Hermes-side consumer must agree on three rules. In a full Hermes
+deployment they live in one shared module (`HERMES_HOME/scripts/memory_hygiene.py`);
+the core equivalent is `unified_memory.common`:
+
+- `｜有效至 YYYY-MM-DD` marks a **historical version**. Never inject, export,
+  rank or forget it as current truth.
+- Sync-client conflict copies (`note 2.md`, `note-副本.md`, `conflicted copy`)
+  are not canonical notes. Exclude them from indexing/export and report them.
+- Inbox, forget area, archives, pending/conflict queues are **not** current
+  fact sources. Export/scan only canonical notes (and curated knowledge notes
+  only when the caller explicitly opts in).
+
+The promoter, forgetter, context hook, Supermemory/mem0 export, OpenClaw
+snapshot and the read-only `hermes_memory.py` search skill all apply these
+rules; changing one without the others reintroduces stale or duplicate truth.
+
 ## Minimal hook sketch (adapt to YOUR agent runtime)
 
 ```python
