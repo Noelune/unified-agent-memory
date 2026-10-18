@@ -511,6 +511,9 @@ else:
     判定函数（`inspectVault`），因此半成品目录在征求同意之前就被拒，不会先要授权再在第一步失败。
   - 路径含 `#` 的 vault 一律拒绝：读取端把配置值按 `#` 截断（配置文件可手写注释），
     `C:\notes #2` 会被读成 `C:\notes`，写进去就等于埋一个读不回来的值。
+  - `memory use` 自己也会拒收半成品：`<vault>/50-Agent-Context` 只是同名目录、缺
+    `上下文索引.md` 时直接 `SystemExit`，不改 `vault:`。插件的判定与 CLI 的判定必须一致，
+    否则手工跑一条命令就能把配置指到一个读起来是空的库，而退出码还是 0。
 - `shim` 步骤按平台落 `~/.unified-memory/bin/memory.cmd`（win32）或 `memory`（`#!/bin/sh`，
   POSIX 上 `chmod 0o755`）；内容与磁盘一致时跳过。`registry` 步骤**合并**而不是重写
   `50-Agent-Context/Agent提交区/前缀登记.md`：只替换/追加本运行时的行，其他运行时的行、表外散文、

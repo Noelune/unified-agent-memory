@@ -92,6 +92,11 @@ class UseExistingVaultTest(unittest.TestCase):
         self.root = Path(self._tmp.name)
         self.vault = self.root / "vault"
         (self.vault / "50-Agent-Context").mkdir(parents=True)
+        # A vault the readers can actually resolve: the index is what `use`
+        # checks before it repoints `vault:`.
+        (self.vault / "50-Agent-Context" / "上下文索引.md").write_text(
+            "# 上下文索引\n", encoding="utf-8"
+        )
         self.config = self.root / "config.yaml"
         self._saved_config = mem_mod.CONFIG_PATH
         mem_mod.CONFIG_PATH = self.config
@@ -150,6 +155,20 @@ class UseExistingVaultTest(unittest.TestCase):
         with self.assertRaises(SystemExit) as raised:
             self._run_use(spaced)
         self.assertIn(f'memory init --vault "{spaced}"', str(raised.exception))
+
+    def test_use_refuses_a_vault_without_the_context_index(self):
+        # A folder that merely has 50-Agent-Context is not a memory vault: the
+        # readers resolve 50-Agent-Context/上下文索引.md, so pointing `vault:`
+        # there would make every later call read an empty memory while reporting
+        # success. The plugin refuses this state; the CLI has to agree.
+        half = self.root / "half-built"
+        (half / "50-Agent-Context").mkdir(parents=True)
+        self.config.write_text("vault: C:\\keep\n", encoding="utf-8")
+        with self.assertRaises(SystemExit) as raised:
+            self._run_use(half)
+        self.assertIn("上下文索引.md", str(raised.exception))
+        self.assertIn("memory init", str(raised.exception))
+        self.assertEqual(self.config.read_text(encoding="utf-8"), "vault: C:\\keep\n")
 
     def test_use_twice_does_not_grow_the_config(self):
         self._run_use()

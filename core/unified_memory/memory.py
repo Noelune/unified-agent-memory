@@ -224,6 +224,16 @@ def cmd_use(args: argparse.Namespace) -> None:
             f"not a memory vault: {ctx} is missing. "
             f'Run `memory init --vault "{vault}"` to create the structure first.'
         )
+    index = ctx / CANONICAL_DOCS["index"]
+    # A folder that merely carries the directory name is not a vault: every
+    # reader resolves the index, so pointing `vault:` here reports success while
+    # later calls read an empty memory. The plugin refuses this state before it
+    # asks for consent; the CLI has to refuse the same thing.
+    if not index.is_file():
+        raise SystemExit(
+            f"not a memory vault: {index} is missing, so {ctx} is only half-built. "
+            f'Move or rename that folder, then run `memory init --vault "{vault}"`.'
+        )
     previous = _persist_vault(vault)
     print(f"vault: {vault}")
     print(f"config written to {CONFIG_PATH}")

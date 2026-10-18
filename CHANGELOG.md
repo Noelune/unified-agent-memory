@@ -64,6 +64,10 @@ All notable changes to this project are documented in this file.
 - **半成品 vault 会先征求同意、再在第一步失败**：工具侧只探测 `50-Agent-Context` 目录，
   runner 还要求 `上下文索引.md`，同一个问题两个答案。现在共用 `inspectVault()`，工具在征求同意
   **之前**就按同一句话拒绝，不再要一份注定失败的授权。
+- **`memory use` 会收下名不副实的「半成品」库**：插件侧按「有没有 `上下文索引.md`」判定，CLI 只
+  看 `50-Agent-Context` 目录在不在，于是手工跑一条 `memory use --vault` 就能把 `vault:` 指到一个
+  读起来是空的目录，退出码还是 0、还自称成功。现在 `use` 也要求索引文件存在，否则 `SystemExit`、
+  不动配置，并提示移走/改名后重新 `init`。
 - **`selfcheck` 失败时不说「已指向新 vault」**：`init` / `use` 已经改了配置，但只有 `instructions`
   失败时才追加提示。现在自检失败也追加；`vault` 步骤自身失败时不加（那时配置还没写）。
 - **路径带空格时提示里的命令不能直接粘贴**：`planText` 与 `memory use` 的错误提示现在给路径加引号。
