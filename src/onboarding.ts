@@ -161,7 +161,14 @@ function registryRow(row: RegistryRow, columns = 3): string {
 
 /** The prefix of a table row, or undefined when the line is not one. */
 function rowPrefix(line: string): string | undefined {
-  return /^\|\s*`([^`]+)`\s*\|/.exec(line)?.[1]
+  // Rows must start with a pipe: a bare line inside a table is prose as often as
+  // it is a row (see the docs), and rewriting prose is worse than a stale row.
+  if (!line.startsWith('|')) return undefined
+  // We write the prefix in backticks; a hand-typed registry may leave them out.
+  // Reading both keeps one row per runtime either way.
+  const cell = (cellsOf(line)[0] ?? '').trim()
+  const bare = cell.startsWith('`') && cell.endsWith('`') ? cell.slice(1, -1) : cell
+  return bare || undefined
 }
 
 /** A line's own ending, so a patched line keeps the file's habit. */

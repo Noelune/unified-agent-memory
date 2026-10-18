@@ -121,21 +121,52 @@ class DeployTests(unittest.TestCase):
         self.assertIn("unclosed code fence", str(raised.exception))
         self.assertIn("line 1", str(raised.exception))
 
-    def test_tab_indented_fence_still_protects_its_content(self):
-        # CommonMark reads a tab indent as four columns, so a tab-indented ```
-        # is an indented code block rather than a fence. Treating it as a fence
-        # anyway is the safe direction: the quoted heading below stays quoted,
-        # and we delete nothing the user pasted.
+    def test_a_tab_indented_fence_is_an_indented_code_block(self):
+        # CommonMark reads a tab indent as four columns, so "\t```" opens an
+        # indented code block, not a fence. Pretending otherwise (round 5 did)
+        # hides every heading below it, the stale section is never migrated and
+        # the file ends up with two sections that claim the same job.
         original = (
-            "## 0. 全局\n\n\t```md\n## 统一记忆库（示例）\n\t```\n\n"
-            "## 统一记忆库\n\n旧内容\n\n## 9. 用户正文\n\n必须保留\n"
+            "## 0. 全局\n\n\t```md\n示例\n\n## 统一记忆库\n\n旧内容\n\n"
+            "## 9. 用户正文\n\n必须保留\n"
         )
         section = build_section("dsh", "<vault>", "dsh")
         once = replace_section(original, section)
-        self.assertIn("## 统一记忆库（示例）", once)
+        self.assertNotIn("旧内容", once)
         self.assertIn("## 9. 用户正文", once)
         self.assertIn("必须保留", once)
-        self.assertNotIn("旧内容", once)
+        self.assertEqual(once.count(START_MARKER), 1)
+
+    def test_a_tab_indented_line_does_not_close_a_fence(self):
+        # The mirror image: because "\t```" is not a fence, it cannot close one
+        # either. Reading it as a closer pairs it with the real fence's opener,
+        # leaves the last ``` looking like a fence nobody closed, and refuses a
+        # deploy the renderer is perfectly happy with.
+        original = "```\n示例\n\t```\n```\n"
+        section = build_section("dsh", "<vault>", "dsh")
+        once = replace_section(original, section)
+        self.assertIn("示例", once)
+        self.assertEqual(once.count(START_MARKER), 1)
+
+    def test_a_backtick_info_string_is_not_a_fence(self):
+        # CommonMark: the info string of a backtick fence may not contain a
+        # backtick, so this line is an ordinary paragraph. Reading it as an
+        # unclosed fence refuses a deploy that has nothing wrong with it.
+        original = "```md `x`\n正文\n"
+        section = build_section("dsh", "<vault>", "dsh")
+        once = replace_section(original, section)
+        self.assertIn("正文", once)
+        self.assertEqual(once.count(START_MARKER), 1)
+
+    def test_a_fence_opened_by_a_later_line_still_refuses(self):
+        # A tab-indented line is an indented code block, so the bare ``` after
+        # it opens a real fence that nothing closes. Appending there puts the
+        # section inside a code block, so the deploy must refuse.
+        original = "\t```md\n示例\n```\n正文\n"
+        section = build_section("dsh", "<vault>", "dsh")
+        with self.assertRaises(ValueError) as raised:
+            replace_section(original, section)
+        self.assertIn("unclosed code fence", str(raised.exception))
 
     def test_a_second_run_settles_the_append_seam(self):
         # Appending copies the file's own ending (see

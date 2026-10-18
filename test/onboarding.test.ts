@@ -171,6 +171,21 @@ describe('shim and registry content', () => {
       expect(merged).toContain('| `codex-` | codex | 手动登记 | 在用 |')
     })
 
+    it('rewrites a row whose prefix is not in backticks', () => {
+      // We write the prefix in backticks; a hand-typed registry may leave them
+      // out. Matching only the backticked form appends a second row for the
+      // same runtime and leaves the stale one in place for good.
+      const existing = [
+        '| 前缀 | 运行时 | 说明 |',
+        '| --- | --- | --- |',
+        '| dsh-desktop- | dsh | 旧值 |',
+        '',
+      ].join('\n')
+      const merged = mergeRegistry(existing, 'C:\\Vault', rows)
+      expect(merged.match(/dsh-desktop-/g)).toHaveLength(1)
+      expect(merged).not.toContain('旧值')
+    })
+
     it('starts an appended row on its own line when the table ends the file', () => {
       // Hand-edited registries often lack the final newline. Appending blindly
       // glues our row onto the last one, and that damaged line stays in a file
