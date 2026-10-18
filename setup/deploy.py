@@ -24,6 +24,13 @@ _LEGACY_NUMBERING = re.compile(
 # line pairing with a real fence makes the mask close on the wrong line, which
 # deletes user text below a quoted heading and refuses deploys that render fine.
 FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+# A line ends at CR, LF or CRLF — the three a renderer honours. str.splitlines()
+# also breaks on \x0c, U+2028 and friends, which turns mid-line text into a line
+# starting with "## " and deletes the prose after it.
+LINE_RE = re.compile(r"[^\r\n]*(?:\r\n|\r|\n)|[^\r\n]+\Z")
+# HTML blocks are not Markdown: headings and fence markers inside them are text.
+HTML_TAG_RE = re.compile(r"^ {0,3}</?[A-Za-z][A-Za-z0-9-]*(?=[\s/>]|\Z)")
+HTML_RAW_RE = re.compile(r"^ {0,3}<(pre|script|style|textarea)(?=[\s>]|\Z)", re.I)
 LOCK_SUFFIX = ".unified-agent-memory.deploy.lock"
 BACKUP_RE = re.compile(r"\.bak-(\d{8}-\d{6}-\d{3})$")
 
@@ -94,8 +101,8 @@ def _splice(head: str, section: str, tail: str, eol: str) -> str:
     return merged + tail if tail else merged
 
 
-def _fence_marker(line: str) -> str:
-    """The marker run that opens or closes a fence on this line, or "".
+def _fence_marker(line: str) -> tuple[str, str]:
+    """The marker run on a fence line and the text after it, or ("", "").
 
     CommonMark forbids a backtick in the info string of a backtick fence, so
     "```md `x`" is a paragraph. Treating it as a fence hides every heading below
@@ -103,9 +110,31 @@ def _fence_marker(line: str) -> str:
     """
     match = FENCE_RE.match(line)
     if not match:
-        return ""
+        return "", ""
     marker = match.group(1)
-    return "" if marker[0] == "`" and "`" in line[match.end() :] else marker
+    rest = line[match.end() :]
+    if marker[0] == "`" and "`" in rest:
+        return "", ""
+    return marker, rest
+
+
+def _html_block(line: str) -> str:
+    """What ends the HTML block this line opens: a token, "blank", or "".
+
+    A heading inside an HTML block is text, not a heading: replacing it deletes
+    the block's closing tag and turns the managed section into preformatted
+    output while selfcheck still reports ok. <pre>, <script>, <style>,
+    <textarea> and comments run to their own end token; any other block ends at
+    a blank line (CommonMark's rule for block-level tags).
+    """
+    stripped = line.strip()
+    if stripped.startswith("<!--"):
+        return "" if "-->" in stripped[4:] else "-->"
+    raw = HTML_RAW_RE.match(line)
+    if raw:
+        tag = raw.group(1).lower()
+        return "" if f"</{tag}>" in line.lower() else f"</{tag}>"
+    return "blank" if HTML_TAG_RE.match(line) else ""
 
 
 def _fence_mask(lines: list[str]) -> tuple[list[bool], int | None]:
@@ -115,9 +144,13 @@ def _fence_mask(lines: list[str]) -> tuple[list[bool], int | None]:
     headings starts a deletion at the quoted line and ends it at the next
     unquoted `## ` — eating the closing fence and the user's text after it.
 
-    A fence only closes on its own marker character and on a run at least as
-    long as the opening one (what CommonMark requires), so a ```` ``` ```` line
-    inside a `~~~` block — a common way to quote Markdown — does not end it.
+    A fence only closes on its own marker character, on a run at least as long
+    as the opening one, and with nothing but spaces after it — the three things
+    CommonMark requires. So a ```` ``` ```` line inside a `~~~` block (a common
+    way to quote Markdown) does not end it, and neither does a line of prose that
+    happens to start with the marker.
+
+    HTML blocks are masked for the same reason and never feed the fence state.
 
     The second value is the line of a fence left open at the end of the file, or
     None. The caller must not let that fence protect text all the way to EOF:
@@ -127,16 +160,29 @@ def _fence_mask(lines: list[str]) -> tuple[list[bool], int | None]:
     mask: list[bool] = []
     open_marker = ""
     open_at: int | None = None
+    html_end = ""
     for index, line in enumerate(lines):
-        marker = _fence_marker(line)
-        if marker:
-            if not open_marker:
-                open_marker, open_at = marker, index
-            elif marker[0] == open_marker[0] and len(marker) >= len(open_marker):
-                open_marker, open_at = "", None
-            mask.append(True)  # the fence line itself is never a heading
+        if html_end:
+            mask.append(True)
+            if html_end == "blank":
+                html_end = "" if not line.strip() else html_end
+            elif html_end in line.lower():
+                html_end = ""
             continue
-        mask.append(bool(open_marker))
+        if not open_marker:
+            html_end = _html_block(line)
+            if html_end:
+                mask.append(True)
+                continue
+        marker, rest = _fence_marker(line)
+        if not marker:
+            mask.append(bool(open_marker))
+            continue
+        mask.append(True)  # the fence line itself is never a heading
+        if not open_marker:
+            open_marker, open_at = marker, index
+        elif marker[0] == open_marker[0] and len(marker) >= len(open_marker) and not rest.strip():
+            open_marker, open_at = "", None
     return mask, (open_at if open_marker else None)
 
 
@@ -165,7 +211,7 @@ def _replace_section(text: str, section: str, eol: str) -> str:
     # A pre-marker deployment left a "## 统一记忆…" section behind: replace that
     # one heading's body, and only that one. Matching further than the heading
     # that names the section deletes whatever came before it.
-    lines = text.splitlines(keepends=True)
+    lines = LINE_RE.findall(text)
     fenced, unclosed = _fence_mask(lines)
     start = next(
         (
@@ -190,8 +236,9 @@ def _replace_section(text: str, section: str, eol: str) -> str:
         # The end scan may not trust a fence that is never closed: treating the
         # rest of the file as quoted would delete every heading after it, where
         # the pre-fence code stopped at the next one.
-        for index in range(unclosed if unclosed is not None else len(lines), len(lines)):
-            fenced[index] = False
+        if unclosed is not None:
+            for index in range(unclosed, len(lines)):
+                fenced[index] = False
         end = next(
             (
                 index

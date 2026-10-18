@@ -168,6 +168,69 @@ class DeployTests(unittest.TestCase):
             replace_section(original, section)
         self.assertIn("unclosed code fence", str(raised.exception))
 
+    def test_a_fence_line_with_trailing_text_does_not_close(self):
+        # CommonMark lets a closing fence be followed only by spaces or tabs.
+        # Reading "``` 说明" as a closer ends the block early, so the quoted text
+        # after it is scanned as real content — that is how a quoted heading gets
+        # deleted. Here the fence really is still open at EOF, so refuse.
+        original = "```\n代码\n``` 说明\n## 统一记忆库\n旧\n## 9. 其他\n保留\n"
+        section = build_section("dsh", "<vault>", "dsh")
+        with self.assertRaises(ValueError) as raised:
+            replace_section(original, section)
+        self.assertIn("unclosed code fence", str(raised.exception))
+
+    def test_a_fence_line_inside_an_html_block_is_text(self):
+        # CommonMark: inside an HTML block a ``` line is literal text, not a
+        # fence. Reading it as a fence refuses a file that renders fine.
+        original = "<div>\n```\n</div>\n\n正文\n"
+        section = build_section("dsh", "<vault>", "dsh")
+        once = replace_section(original, section)
+        self.assertIn("正文", once)
+        self.assertEqual(once.count(START_MARKER), 1)
+
+    def test_a_legacy_heading_inside_pre_is_not_replaced(self):
+        # <pre> content is not Markdown. Replacing a heading inside it deletes
+        # the closing tag and turns the whole managed section into preformatted
+        # text, while selfcheck still reports ok.
+        original = "<pre>\n## 统一记忆库（旧）\n</pre>\n## 9. 用户正文\n\n必须保留\n"
+        section = build_section("dsh", "<vault>", "dsh")
+        once = replace_section(original, section)
+        self.assertIn("</pre>", once)
+        self.assertIn("必须保留", once)
+        self.assertEqual(once.count(START_MARKER), 1)
+
+    def test_a_form_feed_does_not_start_a_new_line(self):
+        # Python's splitlines() also breaks on \x0c and U+2028/U+2029; the
+        # renderer does not. A heading that only looks like a line start there is
+        # mid-line text, so treating it as one deletes the prose after it.
+        original = "段落一\x0c## 统一记忆库（示例）\n用户正文\n## 9. 其他\n\n保留\n"
+        section = build_section("dsh", "<vault>", "dsh")
+        once = replace_section(original, section)
+        self.assertIn("用户正文", once)
+        self.assertIn("保留", once)
+        self.assertEqual(once.count(START_MARKER), 1)
+
+    def test_a_fence_line_with_an_info_string_does_not_close_inside_a_fence(self):
+        # "```python" inside an open fence is content, not a closer, so the
+        # quoted heading below it is still quoted text — keep it, and put the
+        # managed section after the fence closes.
+        original = "```md\n```python\n## 统一记忆库（示例）\n正文\n```\n"
+        section = build_section("dsh", "<vault>", "dsh")
+        once = replace_section(original, section)
+        self.assertIn("## 统一记忆库（示例）", once)
+        self.assertIn("正文", once)
+        self.assertTrue(once.rstrip().endswith(END_MARKER))
+        self.assertGreater(once.index(START_MARKER), once.index("正文"))
+
+    def test_an_unclosed_fence_with_a_later_info_line_still_refuses(self):
+        # Same reading, but nothing ever closes the fence: appending here would
+        # bury the section in a code block.
+        original = "```md\n```python\n"
+        section = build_section("dsh", "<vault>", "dsh")
+        with self.assertRaises(ValueError) as raised:
+            replace_section(original, section)
+        self.assertIn("unclosed code fence", str(raised.exception))
+
     def test_a_second_run_settles_the_append_seam(self):
         # Appending copies the file's own ending (see
         # test_mixed_line_endings_survive_a_managed_write), so a file ending in
