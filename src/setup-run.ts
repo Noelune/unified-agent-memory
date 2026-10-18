@@ -14,7 +14,6 @@
  * @module src/setup-run
  */
 
-import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { mergeRegistry, buildShim } from './onboarding.ts'
 
@@ -62,8 +61,11 @@ export type VaultState = 'missing' | 'incomplete' | 'ready'
  * the plan/consent text. A folder named `50-Agent-Context` is not a vault: the
  * readers need `上下文索引.md` inside it, and `init` cannot fill the gap because
  * it refuses a structure that already exists.
+ *
+ * The probe is required: a default would silently answer from the real disk, so
+ * every caller has to say what it knows (see `SetupDeps.exists`).
  */
-export function inspectVault(vaultPath: string, exists: (path: string) => boolean = existsSync): VaultState {
+export function inspectVault(vaultPath: string, exists: (path: string) => boolean): VaultState {
   const structure = join(vaultPath, '50-Agent-Context')
   if (!exists(structure)) return 'missing'
   return exists(join(structure, '上下文索引.md')) ? 'ready' : 'incomplete'
@@ -88,7 +90,10 @@ export async function runSetup(plan: SetupPlan, deps: SetupDeps): Promise<SetupR
   // --force"), and --force copies the template over the user's files. A vault
   // that already has the structure is the reuse case the consent text promises,
   // so probe first and skip init entirely.
-  const vaultState = inspectVault(plan.vaultPath, (path) => deps.exists?.(path) ?? existsSync(path))
+  // `deps.exists` absent means "assume it is missing" (the same contract as
+  // `readFile`), never "look at the real disk": a run without a probe must not
+  // decide differently on a machine that happens to have the path.
+  const vaultState = inspectVault(plan.vaultPath, deps.exists ?? (() => false))
   if (vaultState === 'incomplete') {
     // A folder named 50-Agent-Context is not a vault: without the index the
     // readers have nothing to show, and init cannot fill the gap (it refuses an
@@ -157,11 +162,13 @@ export async function runSetup(plan: SetupPlan, deps: SetupDeps): Promise<SetupR
   // alone would call a broken vault healthy.
   const structureMissing = /vault structure:\s*MISSING/i.test(check.stdout)
   const checkOk = check.code === 0 && !structureMissing
-  const problem = structureMissing ? 'vault structure MISSING' : failureDetail(check)
+  // `failureDetail` is undefined only when the exit code is 0, which `checkOk`
+  // already covers; the fallback keeps the type honest, not a reachable branch.
+  const problem = structureMissing ? 'vault structure MISSING' : (failureDetail(check) ?? `exit ${check.code}`)
   steps.push({
     name: 'selfcheck',
     ok: checkOk,
-    detail: checkOk ? undefined : `${problem ?? `exit ${check.code}`}${repointNote}`,
+    detail: checkOk ? undefined : `${problem}${repointNote}`,
   })
   return { ok: checkOk, steps }
 }

@@ -93,6 +93,36 @@ class DeployTests(unittest.TestCase):
         self.assertEqual(once.count("~~~"), 2)
         self.assertEqual(once.count(START_MARKER), 1)
 
+    def test_unclosed_fence_does_not_delete_the_rest_of_the_file(self):
+        # A fence that is never closed is malformed input, not a promise that
+        # everything to the end of the file is quoted: trusting it makes the
+        # section run to EOF and delete every heading and paragraph after it.
+        original = (
+            "## 0. 全局\n\n## 统一记忆库\n\n旧内容\n\n```md\n未闭合\n\n"
+            "## 1. 用户正文\n\n必须保留\n"
+        )
+        section = build_section("dsh", "<vault>", "dsh")
+        once = replace_section(original, section)
+        self.assertIn("## 1. 用户正文", once)
+        self.assertIn("必须保留", once)
+        self.assertNotIn("旧内容", once)
+        self.assertEqual(once.count(START_MARKER), 1)
+
+    def test_a_four_space_indented_fence_is_not_a_fence(self):
+        # CommonMark: four spaces make an indented code block, not a fence. Read
+        # as a fence, it hides every heading below it, so the legacy section is
+        # never migrated and the deploy leaves two sections in one file.
+        original = (
+            "## 0. 全局\n\n    ```\n    code\n\n## 统一记忆库\n\n旧内容\n\n"
+            "## 9. 其他\n\n也保留\n"
+        )
+        section = build_section("dsh", "<vault>", "dsh")
+        once = replace_section(original, section)
+        self.assertNotIn("旧内容", once)
+        self.assertIn("## 9. 其他", once)
+        self.assertIn("也保留", once)
+        self.assertEqual(once.count(START_MARKER), 1)
+
     def test_legacy_numbering_accepts_arabic_digits(self):
         # "## 第3节 统一记忆库" and "## (1) 统一记忆库" are the same legacy heading
         # written by hand; leaving them unmigrated puts two sections in the file.

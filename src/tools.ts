@@ -364,9 +364,14 @@ function planText(vaultPath: string, targets: string[], reusesVault: boolean): s
   ].join('\n')
 }
 
-/** The vault state runSetup would act on; one predicate for both call sites. */
+/**
+ * The vault state runSetup would act on; one predicate for both call sites.
+ *
+ * Same contract as the runner: no probe means "nothing is there", never a peek
+ * at the real disk, so the plan text and the run cannot disagree.
+ */
 function vaultStateFor(deps: SetupDepsForTool, vaultPath: string): VaultState {
-  return inspectVault(vaultPath, (path) => (deps.exists ? deps.exists(path) : existsSync(path)))
+  return inspectVault(vaultPath, deps.exists ?? (() => false))
 }
 
 /**

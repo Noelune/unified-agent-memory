@@ -148,6 +148,20 @@ class UseExistingVaultTest(unittest.TestCase):
         self.assertIn("#", str(raised.exception))
         self.assertEqual(self.config.read_text(encoding="utf-8"), "vault: C:\\keep\n")
 
+    def test_use_refuses_a_path_the_readers_would_rewrite(self):
+        # "#" is not the only character the readers touch: common.parse_config
+        # strips a quote from either end of the value, so a folder named
+        # `notes'` is stored and then resolved as `notes`. Checking the value
+        # the reader would see covers today's rules and any later ones.
+        quoted = self.root / "notes'"
+        (quoted / "50-Agent-Context").mkdir(parents=True)
+        (quoted / "50-Agent-Context" / "上下文索引.md").write_text("# 索引\n", encoding="utf-8")
+        self.config.write_text("vault: C:\\keep\n", encoding="utf-8")
+        with self.assertRaises(SystemExit) as raised:
+            self._run_use(quoted)
+        self.assertIn("read back as", str(raised.exception))
+        self.assertEqual(self.config.read_text(encoding="utf-8"), "vault: C:\\keep\n")
+
     def test_use_quotes_the_path_in_its_advice(self):
         # The message is copy-pasteable, and vaults with spaces are the norm.
         spaced = self.root / "empty vault"

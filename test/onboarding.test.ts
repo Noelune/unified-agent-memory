@@ -168,6 +168,56 @@ describe('shim and registry content', () => {
       const merged = mergeRegistry(existing, 'C:\\Vault', rows)
       expect(merged).toContain('| `dsh-desktop-` | dsh 桌面端 | DSH_PROFILE=desktop | 在用 |')
       expect(merged).not.toContain('旧说明')
+      expect(merged).toContain('| `codex-` | codex | 手动登记 | 在用 |')
+    })
+
+    it('starts an appended row on its own line when the table ends the file', () => {
+      // Hand-edited registries often lack the final newline. Appending blindly
+      // glues our row onto the last one, and that damaged line stays in a file
+      // two machines share — every later reader sees a six-cell row.
+      const existing =
+        '| 前缀 | 运行时 | 说明 |\n| --- | --- | --- |\n| `codex-` | codex | 手动登记 |'
+      const once = mergeRegistry(existing, 'C:\\Vault', rows)
+      expect(once).toContain(
+        '| `codex-` | codex | 手动登记 |\n| `dsh-desktop-` | dsh 桌面端 | DSH_PROFILE=desktop |',
+      )
+      expect(once.match(/`dsh-desktop-`/g)).toHaveLength(1)
+      expect(mergeRegistry(once, 'C:\\Vault', rows)).toBe(once)
+    })
+
+    it('is byte-stable when a cell contains an escaped pipe', () => {
+      // `\|` is how a Markdown table carries a literal pipe. Splitting on every
+      // pipe re-reads that one cell as two, and each run keeps another copy of
+      // its tail, so the row grows without end.
+      const piped = [{ prefix: 'dsh-desktop-', runtime: 'dsh 桌面端', note: 'DSH \\| 桌面端' }]
+      const existing = '| 前缀 | 运行时 | 说明 |\n| --- | --- | --- |\n| `codex-` | codex | x |\n'
+      const once = mergeRegistry(existing, 'C:\\Vault', piped)
+      const twice = mergeRegistry(once, 'C:\\Vault', piped)
+      const thrice = mergeRegistry(twice, 'C:\\Vault', piped)
+      expect(once).toContain('| `dsh-desktop-` | dsh 桌面端 | DSH \\| 桌面端 |')
+      expect(twice).toBe(once)
+      expect(thrice).toBe(once)
+    })
+
+    it('keeps the file when it has prose but no recognisable header', () => {
+      // A registry we cannot parse is not ours to regenerate: replacing the file
+      // deletes whatever the user wrote. Appending a table of our own cannot.
+      const existing = '# 提交前缀登记\n\n说明：这台机器只登记自己\n\n没有表格。\n'
+      const merged = mergeRegistry(existing, 'C:\\Vault', rows)
+      expect(merged).toContain('说明：这台机器只登记自己')
+      expect(merged).toContain('没有表格。')
+      expect(merged).toContain('| `dsh-desktop-` | dsh 桌面端 | DSH_PROFILE=desktop |')
+      expect(mergeRegistry(merged, 'C:\\Vault', rows)).toBe(merged)
+    })
+
+    it('patches our row when the table has no separator line', () => {
+      // A hand-written registry may skip `| --- |`. Writing from header + 2 then
+      // treats the first data row as the separator, so our own row is never
+      // rewritten: it is appended instead and the table names this runtime twice.
+      const existing = '| 前缀 | 运行时 | 说明 |\n| `dsh-desktop-` | 旧说明 | 旧 |\n'
+      const merged = mergeRegistry(existing, 'C:\\Vault', rows)
+      expect(merged.match(/`dsh-desktop-`/g)).toHaveLength(1)
+      expect(merged).toContain('| `dsh-desktop-` | dsh 桌面端 | DSH_PROFILE=desktop |')
     })
 
     it('leaves the line endings outside the table untouched', () => {

@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { runSetup, type SetupExec, type SetupPlan } from '../src/setup-run.ts'
 
@@ -60,6 +63,23 @@ describe('runSetup', () => {
     await runSetup(plan(), { exec, writeFile: () => {} })
     expect(calls[0]?.env.UNIFIED_MEMORY_VAULT).toBe('C:\\Vault')
     expect(calls[2]?.env.UNIFIED_MEMORY_VAULT).toBe('C:\\Vault')
+  })
+
+  it('treats a vault as missing when no probe is given', async () => {
+    // `SetupDeps.exists` means "absent, assume nothing is there", like readFile.
+    // Probing the real disk instead makes the decision depend on the machine:
+    // on a box that happens to have this exact vault, setup would pick `use`
+    // over `init`, and the init cases would silently stop covering init.
+    const { calls, exec } = recorder()
+    const here = mkdtempSync(join(tmpdir(), 'uam-run-'))
+    try {
+      mkdirSync(join(here, '50-Agent-Context'))
+      writeFileSync(join(here, '50-Agent-Context', '上下文索引.md'), '# 索引\n')
+      await runSetup(plan({ vaultPath: here }), { exec, writeFile: () => {} })
+      expect(calls.map((call) => actionOf(call.args))[0]).toBe('init')
+    } finally {
+      rmSync(here, { recursive: true, force: true })
+    }
   })
 
   it('passes the runtime prefix to deploy through the environment, never argv', async () => {

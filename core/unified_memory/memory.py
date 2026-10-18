@@ -123,18 +123,31 @@ def find_template_dir() -> Path | None:
     return None
 
 
-def _reject_unrepresentable_vault(vault: Path) -> None:
-    """Refuse a path the config readers cannot represent.
+def _vault_as_read_back(vault: Path) -> str:
+    """The value a reader gets from `vault: <path>` — mirrors common.parse_config.
 
-    Every reader truncates a config value at "#" (the file is hand-editable and
-    may carry trailing comments), so a vault under "notes #2" would be read back
-    as "notes" and later calls would quietly resolve a different directory.
-    Refusing up front is honest; storing a value we cannot read back is not.
+    The config is hand-editable, so readers cut a value at "#" (trailing
+    comment) and then strip surrounding quotes. The stored text is therefore not
+    always the text that comes back.
     """
-    if "#" in str(vault):
+    line = f"vault: {vault}".split("#", 1)[0].strip()
+    return line.partition(":")[2].strip().strip('"').strip("'")
+
+
+def _reject_unrepresentable_vault(vault: Path) -> None:
+    """Refuse a path the config readers would not read back.
+
+    A vault under "notes #2" is stored and then resolved as "notes"; one named
+    `notes'` loses its quote. Either way the next call quietly works on a
+    different folder, so comparing what a reader would see with the path itself
+    is the honest check — and it keeps holding if the reader rules change.
+    """
+    read_back = _vault_as_read_back(vault)
+    if read_back != str(vault):
         raise SystemExit(
-            f"unsupported vault path: {vault} contains '#', which the config readers treat as "
-            f"the start of a comment. Move or rename the folder and retry."
+            f"unsupported vault path: {vault} would be read back as {read_back!r} from "
+            f"~/.unified-memory.yaml (readers cut the value at '#' and strip quotes). "
+            f"Move or rename the folder and retry."
         )
 
 

@@ -129,17 +129,23 @@ export function buildShim(kind: 'cmd' | 'sh', corePath: string, pythonPath: stri
   return ['#!/bin/sh', `PYTHONPATH='${corePath}' exec '${pythonPath}' -m unified_memory.memory "$@"`, ''].join('\n')
 }
 
+/** The registry table on its own, for files we append to but do not own. */
+function registryTable(rows: RegistryRow[]): string[] {
+  return [
+    '| 前缀 | 运行时 | 说明 |',
+    '| --- | --- | --- |',
+    ...rows.map((row) => `| \`${row.prefix}\` | ${row.runtime} | ${row.note} |`),
+  ]
+}
+
 /** The writer registry every agent reads on entry. */
 export function buildRegistry(vaultPath: string, rows: RegistryRow[]): string {
-  const table = rows.map((row) => `| \`${row.prefix}\` | ${row.runtime} | ${row.note} |`).join('\n')
   return [
     '# 提交前缀登记',
     '',
     `记忆库：\`${vaultPath}\``,
     '',
-    '| 前缀 | 运行时 | 说明 |',
-    '| --- | --- | --- |',
-    table,
+    ...registryTable(rows),
     '',
     '规则：canonical 笔记只由主 Agent 晋升，其它 Agent 只写 `Agent提交区/`；前缀唯一，不得互相代表。',
     '',
@@ -163,9 +169,9 @@ function eolOf(line: string): string {
   return line.endsWith('\r\n') ? '\r\n' : line.endsWith('\n') ? '\n' : ''
 }
 
-/** Cells between the outer pipes of a table line. */
+/** Cells between the outer pipes of a table line, with `\|` kept in one piece. */
 function cellsOf(line: string): string[] {
-  return line.replace(/\s+$/, '').split('|').slice(1, -1)
+  return line.replace(/\s+$/, '').split(/(?<!\\)\|/).slice(1, -1)
 }
 
 /**
@@ -197,27 +203,46 @@ export function mergeRegistry(existing: string | undefined, vaultPath: string, r
   // turns a one-row fix into a full-file diff in a vault that two machines write.
   const lines = existing.match(/[^\n]*\n|[^\n]+$/g) ?? []
   const header = lines.findIndex((line) => /^\|\s*前缀\s*\|/.test(line))
-  if (header < 0) return buildRegistry(vaultPath, rows)
+  if (header < 0) {
+    // A registry we cannot parse is not ours to regenerate: replacing the file
+    // would delete whatever the user wrote. Keep every line and append a table
+    // of our own — the next run finds that header and patches it from then on.
+    const eol = existing.includes('\r\n') ? '\r\n' : '\n'
+    const head = existing.endsWith('\n') ? existing : `${existing}${eol}`
+    const gap = /\r?\n\s*\r?\n$/.test(head) ? '' : eol
+    return `${head}${gap}${registryTable(rows).map((line) => `${line}${eol}`).join('')}`
+  }
   const eol = eolOf(lines[header] as string) || '\n'
   const columns = Math.max(3, cellsOf(lines[header] as string).length)
   let end = header + 1
   while (end < lines.length && (lines[end] as string).trim().startsWith('|')) end += 1
+  // A hand-written table may skip `| --- |`. Counting a separator that is not
+  // there makes the first data row read-only, so our own row is appended next
+  // to a stale copy instead of being rewritten where it stands.
+  const separator = /^\|[\s:|-]+\|?\s*$/.test(lines[header + 1] ?? '')
+  const firstRow = header + (separator ? 2 : 1)
 
   const pending = new Map(rows.map((row) => [row.prefix, row]))
   const seen = new Set<string>()
   // A hand-edited registry can hold our prefix twice. Every occurrence is
   // rewritten to the same content (a stale duplicate would mislead the next
   // agent), but nothing the user wrote is deleted.
-  const body = lines.slice(header + 2, end).flatMap((line) => {
+  const body = lines.slice(firstRow, end).flatMap((line) => {
     const prefix = rowPrefix(line)
     const row = prefix === undefined ? undefined : pending.get(prefix)
     if (!row || prefix === undefined) return [line]
     seen.add(prefix)
     return [`${patchRow(line, row, columns)}${eolOf(line) || eol}`]
   })
-  for (const [prefix, row] of pending) {
-    if (!seen.has(prefix)) body.push(`${registryRow(row, columns)}${eol}`)
+  const missing = [...pending].filter(([prefix]) => !seen.has(prefix))
+  if (missing.length) {
+    // A table that ends the file often has no final newline; appending then
+    // glues our row onto the last one, and that damaged line stays in a file
+    // two machines share.
+    const last = body[body.length - 1]
+    if (last !== undefined && !eolOf(last)) body[body.length - 1] = `${last}${eol}`
+    for (const [, row] of missing) body.push(`${registryRow(row, columns)}${eol}`)
   }
 
-  return [...lines.slice(0, header + 2), ...body, ...lines.slice(end)].join('')
+  return [...lines.slice(0, firstRow), ...body, ...lines.slice(end)].join('')
 }
