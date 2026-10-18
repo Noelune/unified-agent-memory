@@ -57,6 +57,7 @@ const TOOL_NAMES = [
   'memory_submit',
   'memory_status',
   'memory_preview',
+  'memory_setup',
 ]
 
 /**
@@ -111,7 +112,7 @@ test('exports the Cordis plugin shape DSH requires', () => {
 
 // ── Registration ────────────────────────────────────────────────────
 
-test('registers all five memory tools', () => {
+test('registers all six memory tools', () => {
   const { ctx, toolsList } = makeContext()
   plugin.apply(ctx, {})
 
@@ -180,12 +181,20 @@ test('answers with a setup guide instead of failing when no vault is configured'
       },
     })
     const results = JSON.parse(raw.trim().split('\n').pop())
-    assert.equal(results.length, 5, 'all five tools should be registered')
-    for (const r of results) {
+    assert.equal(results.length, 6, 'all six tools should be registered')
+    // memory_setup is the documented way OUT of the unconfigured state; it
+    // answers with a plan instead of a "not configured" refusal, so it is
+    // asserted separately below rather than excluded silently.
+    const readers = results.filter((r) => r.name !== 'memory_setup')
+    assert.equal(readers.length, 5)
+    for (const r of readers) {
       assert.equal(r.ok, false, `${r.name} should degrade, not throw`)
       assert.match(r.output, /not configured/)
       assert.match(r.output, /UNIFIED_MEMORY_VAULT/)
     }
+    const setup = results.find((r) => r.name === 'memory_setup')
+    assert.equal(setup.ok, true, 'the setup tool answers with a plan, not a refusal')
+    assert.match(setup.output, /UnifiedAgentMemory/)
   } finally {
     rmSync(emptyHome, { recursive: true, force: true })
   }

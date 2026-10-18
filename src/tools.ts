@@ -316,6 +316,16 @@ type SetupToolResult = {
   steps?: Array<{ name: string; ok: boolean; detail?: string }>
   onboarding?: OnboardingState
   message?: string
+  output?: string
+}
+
+/**
+ * The text the host actually shows. `renderText` reads `output`, so a result
+ * without one renders as "[object Object]" — which would hide the consent
+ * prompt, the one thing this tool must not lose.
+ */
+function setupText(reason: string, plan: string, hint: string): string {
+  return [reason, '', plan, '', hint].join('\n')
 }
 
 function relToHome(home: string, path: string): string {
@@ -374,12 +384,8 @@ export function defineSetupTool(deps: SetupDepsForTool) {
       const targetNames = detected.map((item) => relToHome(deps.home, item.path))
 
       if (consentSatisfied(deps.readState(), { vaultPath, scope })) {
-        return {
-          ok: true,
-          needsConsent: false,
-          steps: [],
-          message: `已配置：${vaultPath}。补写缺失的文件请传 apply=true。`,
-        }
+        const message = `已配置：${vaultPath}。补写缺失的文件请传 apply=true。`
+        return { ok: true, needsConsent: false, steps: [], message, output: message }
       }
 
       const reason = buildConsentReason({
@@ -395,25 +401,29 @@ export function defineSetupTool(deps: SetupDepsForTool) {
         const answer = await approval.request({ toolName: 'memory_setup', reason, displayReason: reason })
         granted = answer.outcome === 'allowed-once'
         if (!granted && !(answer.outcome === 'unavailable' && args.apply)) {
+          const hint =
+            answer.outcome === 'unavailable'
+              ? '本会话没有可用的审批通道。请把上面的计划原样念给用户确认；用户同意后再用 apply=true 重试。'
+              : '已取消，未写入任何文件。想再试一次时重新调用 memory_setup；同意后用 apply=true 落地。'
           return {
             ok: true,
             needsConsent: true,
             reason,
             plan,
-            hint:
-              answer.outcome === 'unavailable'
-                ? '本会话没有可用的审批通道。请把上面的计划原样念给用户确认；用户同意后再用 apply=true 重试。'
-                : '已取消，未写入任何文件。想再试一次时重新调用 memory_setup；同意后用 apply=true 落地。',
+            hint,
+            output: setupText(reason, plan, hint),
           }
         }
       } else if (!args.apply) {
         // No approval service at all (older host, or prompts disabled): plan only.
+        const hint = '把上面的计划念给用户确认；同意后用 apply=true 重试，会创建上述文件。'
         return {
           ok: true,
           needsConsent: true,
           reason,
           plan,
-          hint: '把上面的计划念给用户确认；同意后用 apply=true 重试，会创建上述文件。',
+          hint,
+          output: setupText(reason, plan, hint),
         }
       }
 
@@ -444,14 +454,19 @@ export function defineSetupTool(deps: SetupDepsForTool) {
         deps.reload()
       }
 
+      const message = result.ok
+        ? `已完成：记忆库 ${vaultPath}。现在可以用 memory_search / memory_submit 了。`
+        : `在 ${result.steps[result.steps.length - 1]?.name ?? '未知'} 步骤失败，见 steps[].detail。`
+      const stepLines = result.steps.map(
+        (step) => `- ${step.name}: ${step.ok ? 'ok' : 'failed'}${step.detail ? ` (${step.detail})` : ''}`,
+      )
       return {
         ok: result.ok,
         needsConsent: false,
         steps: result.steps,
         onboarding,
-        message: result.ok
-          ? `已完成：记忆库 ${vaultPath}。现在可以用 memory_search / memory_submit 了。`
-          : `在 ${result.steps[result.steps.length - 1]?.name ?? '未知'} 步骤失败，见 steps[].detail。`,
+        message,
+        output: [message, ...stepLines].join('\n'),
       }
     },
   })

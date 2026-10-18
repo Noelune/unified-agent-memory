@@ -32,6 +32,9 @@ All notable changes to this project are documented in this file.
   「npm-only 安装不含 setup 脚本」这一已过时的错误说法；`docs/JSON-CONTRACT.md`
   增补 `memory_setup` 载荷与「无审批通道不伪造授权」的约定。
 
+- **`memory_setup` 的正文不再渲染成 `[object Object]`**：宿主的 `renderText` 只读 `output` 字段，
+  而早期实现只返回 `reason`/`plan`/`steps`，界面（和模型看到的正文）就成了 `[object Object]`，
+  恰好把这段必须念给用户听的同意文案吞掉。现在每个分支都带 `output`，结构化字段保留不变。
 - **`memory init --vault` 覆盖已有配置时会说出被替换的路径**：写入 `vault:` 本来就是
   这条命令的职责（所有运行时都从 `UNIFIED_MEMORY_VAULT` 或 `~/.unified-memory.yaml`
   解析，不看 argv），但原先静默覆盖，等于把一台本来指向正确 vault 的机器悄悄改到别处。

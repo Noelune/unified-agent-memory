@@ -481,6 +481,9 @@ else:
 
 约定：
 
+- **每个分支都带 `output`（人类可读正文）**。宿主的 `renderText` 只读 `output`，缺了它界面上就是
+  `[object Object]`，正好把这段要念给用户听的同意文案吞掉。`reason`/`plan`/`steps` 是结构化副本，
+  不是给人看的那个字段。
 - `reason` 只是「将要发生什么」的事实清单（建/复用哪个 vault、改哪些指令文件、写哪些附属文件、
   不联网不改凭据），不含寒暄与营销语。
 - 通过审批才落 `~/.unified-memory/onboarding.json`（`version:1`、`consent:"granted"`、

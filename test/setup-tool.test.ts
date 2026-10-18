@@ -124,3 +124,36 @@ describe('memory_setup consent gate', () => {
     expect(h.calls).toEqual([])
   })
 })
+
+describe('memory_setup renders readable text', () => {
+  // The host shows `output.render(args, value)` to the agent and the user. A
+  // result without an `output` string renders as "[object Object]", which would
+  // hide the very consent text this tool exists to show. Every branch must set
+  // `output`, and the rendered text must never be the object itself.
+  const rendered = (tool: ReturnType<typeof defineSetupTool>, result: unknown) =>
+    (tool.output.render as (args: unknown, value: unknown) => Array<{ text: string }>)({}, result)[0].text
+
+  it('renders the consent plan, not a stringified object', async () => {
+    const tool = defineSetupTool(deps().deps)
+    const result = await tool.execute({}, { agent: 'dsh-desktop' })
+    expect(String((result as Record<string, unknown>).output)).toContain('C:\\Vault')
+    const text = rendered(tool, result)
+    expect(text).toContain('C:\\Vault')
+    expect(text).toContain('apply=true')
+    expect(text).not.toContain('[object Object]')
+  })
+
+  it('renders the already-configured message', async () => {
+    const tool = defineSetupTool(deps({ readState: () => grantedState }).deps)
+    const result = await tool.execute({}, { agent: 'dsh-desktop' })
+    expect(rendered(tool, result)).toContain('已配置')
+  })
+
+  it('renders the completion summary after apply', async () => {
+    const tool = defineSetupTool(deps().deps)
+    const result = await tool.execute({ apply: true }, { agent: 'dsh-desktop' })
+    const text = rendered(tool, result)
+    expect(text).toContain('已完成')
+    expect(text).toContain('C:\\Vault')
+  })
+})
