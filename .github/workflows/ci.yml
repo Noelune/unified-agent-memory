@@ -20,6 +20,10 @@ jobs:
           python-version: "3.11"
       - name: Run core tests
         run: python -m unittest discover -s core/tests -v
+      # setup/tests existed but nothing ever ran them: they were red by omission,
+      # not by design. The deploy prefix now lives there.
+      - name: Run setup script tests
+        run: python -m unittest discover -s setup/tests -v
 
   js:
     name: JS checks (typecheck / drift / sync / vitest / build / contracts / audit)

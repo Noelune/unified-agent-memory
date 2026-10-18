@@ -56,3 +56,6 @@ credentials/
 *.backup*
 *.local
 *.pid
+
+# Superpowers plan workspace (scratch: ledger, briefs, review packages)
+.superpowers/

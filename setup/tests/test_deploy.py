@@ -1,6 +1,8 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from setup.deploy import (
     END_MARKER,
@@ -9,6 +11,7 @@ from setup.deploy import (
     build_section,
     detect_targets,
     replace_section,
+    resolved_prefix,
 )
 
 
@@ -55,6 +58,25 @@ class DeployTests(unittest.TestCase):
             targets = detect_targets(home)
             self.assertEqual([item["agent"] for item in targets], ["codex"])
             self.assertEqual(targets[0]["path"], home / ".codex" / "AGENTS.md")
+
+    def test_resolved_prefix_uses_runtime_declaration_for_dsh(self):
+        with patch.dict(os.environ, {"UNIFIED_MEMORY_AGENT": "dsh-desktop"}):
+            self.assertEqual(resolved_prefix("dsh"), "dsh-desktop")
+
+    def test_resolved_prefix_falls_back_to_agent_name_without_declaration(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(resolved_prefix("dsh"), "dsh")
+            self.assertEqual(resolved_prefix("codex"), "codex")
+
+    def test_resolved_prefix_explicit_override_wins(self):
+        with patch.dict(os.environ, {"UNIFIED_MEMORY_AGENT": "dsh-web"}):
+            self.assertEqual(resolved_prefix("dsh", "dsh-desktop"), "dsh-desktop")
+
+    def test_dsh_section_carries_the_derived_prefix(self):
+        with patch.dict(os.environ, {"UNIFIED_MEMORY_AGENT": "dsh-web"}):
+            section = build_section("dsh", "<vault>", resolved_prefix("dsh"))
+        self.assertIn("`dsh-web-`", section)
+        self.assertIn("--agent dsh-web", section)
 
     def test_rejects_relative_target_that_is_not_a_file(self):
         with tempfile.TemporaryDirectory() as temp:

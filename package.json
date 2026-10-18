@@ -46,9 +46,10 @@
     "audit:package": "node scripts/audit-package.mjs",
     "setup-hooks": "node scripts/install-hooks.mjs",
     "test": "python -m unittest discover -s core/tests",
+    "test:setup": "python -m unittest discover -s setup/tests",
     "test:js": "vitest run",
     "test:node": "node --test test/*.test.mjs",
-    "check": "npm run typecheck && npm run drift:check && npm run sync:check && npm run test:js && npm run test && npm run build && npm run test:node && npm run drift:python"
+    "check": "npm run typecheck && npm run drift:check && npm run sync:check && npm run test:js && npm run test && npm run test:setup && npm run build && npm run test:node && npm run drift:python"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",

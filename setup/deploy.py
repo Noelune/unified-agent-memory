@@ -22,6 +22,21 @@ AGENT_TARGETS = {
 }
 
 
+def resolved_prefix(agent: str, override: str | None = None) -> str:
+    """The submission prefix for one agent instruction section.
+
+    DSH runtimes export UNIFIED_MEMORY_AGENT (desktop and web share a vault but
+    must never share a prefix), so the dsh target reads it instead of guessing.
+    Other agents keep their own name; an explicit --agent still wins for the
+    one-off cases the CLI already exposes.
+    """
+    if override:
+        return override
+    if agent == "dsh":
+        return os.environ.get("UNIFIED_MEMORY_AGENT") or "dsh"
+    return agent
+
+
 def build_section(agent: str, vault: str, prefix: str) -> str:
     """Build public, path-parameterized instructions; never include credentials."""
     return "\n".join(
@@ -179,7 +194,7 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             failures = 0
             for agent, path in targets:
-                prefix = agent if args.agent is None else args.agent
+                prefix = resolved_prefix(agent, args.agent)
                 section = build_section(agent, args.vault, prefix)
                 if args.command == "selfcheck":
                     text = path.read_text(encoding="utf-8")
