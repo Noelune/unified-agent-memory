@@ -18,7 +18,7 @@ when the host supports it.
 
 | Component | What it does | Write boundary |
 |---|---|---|
-| `unified-agent-memory` | Pure-Python core: vault index, BM25/vector/graph recall, promotion, conflict handling, forgetting and optional digest | Reviewed promoter writes canonical notes; normal tools write only the inbox |
+| `unified-agent-memory` | Pure-Python core: vault index, five-stream recall (BM25 + CJK bigram + vector + graph + trigram), promotion, conflict handling, forgetting, health/GC and optional digest | Reviewed promoter writes canonical notes; normal tools write only the inbox |
 | `dsh-hermes-memory` | DSH host tools (`memory_status`, `memory_search`, `memory_show`, `memory_submit`), loopback HTTP routes and optional settings/sidebar UI | Never writes canonical notes; `memory_submit` creates a `dsh-*.md` inbox file |
 | `dsh-memory-discipline` | Optional automatic pre-step recall and discipline instructions for every relevant DSH turn | Never writes the vault; only injects plugin messages |
 
