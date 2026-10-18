@@ -143,7 +143,6 @@ async function readStats(cfg: PluginConfig): Promise<StatusStats | null> {
 
 export function apply(ctx: Context, config: Record<string, unknown> = {}): void {
   const cfg = resolveConfig(config)
-  const configured = Boolean(cfg.vaultPath)
 
   // ---- Optional approval service (memory_setup asks through it) ----
   // `ctx.inject(deps, cb)` is Cordis' plugin() under the hood: the callback gets
@@ -163,7 +162,7 @@ export function apply(ctx: Context, config: Record<string, unknown> = {}): void 
   }
 
   // ---- Register the model tools (memory_setup included) ----
-  registerAll(ctx, cfg, configured, {
+  registerAll(ctx, cfg, {
     approval: () => approvalRef,
     // setup writes a vault and a config; the live tools must stop reporting
     // "not configured" without requiring a restart.

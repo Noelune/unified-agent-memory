@@ -356,9 +356,11 @@ export function notConfigured(action: string): { ok: false; output: string } {
       'to PYTHONPATH via corePath), so no pip install is needed for the tools.',
       '',
       '[deploy] This looks like a fresh install — complete it now:',
-      `1. Read the deploy task book: ${DEPLOY_TASKBOOK}`,
-      "2. Wire the shared memory rules into each detected agent's global instruction file.",
-      '3. Set vaultPath (or UNIFIED_MEMORY_VAULT) and run memory_status to confirm.',
+      '1. Call the memory_setup tool. Without apply it only returns the plan (vault path,',
+      '   instruction files it would touch, files it would write) — show that to the user;',
+      '   with apply=true it provisions everything in one step and needs no restart.',
+      `2. Prefer doing it by hand? The deploy task book is ${DEPLOY_TASKBOOK}`,
+      '3. Either way, set vaultPath (or UNIFIED_MEMORY_VAULT), then run memory_status.',
     ].join('\n'),
   }
 }

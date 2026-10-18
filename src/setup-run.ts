@@ -5,11 +5,17 @@
  * Every side effect goes through `SetupDeps`, so the sequence is testable
  * without Python or a filesystem, and `memory_setup` can log each step.
  *
+ * The order is idempotent on purpose: a vault that already has a structure is
+ * reused rather than re-initialised, and every file written here is compared
+ * with what is already on disk first. `apply: true` is therefore safe to repeat
+ * after a partial failure — which is the only way a user can recover without
+ * hand-editing their home directory.
+ *
  * @module src/setup-run
  */
 
 import { join } from 'node:path'
-import { buildRegistry, buildShim } from './onboarding.ts'
+import { mergeRegistry, buildShim } from './onboarding.ts'
 
 export type SetupExec = (file: string, args: string[], env: Record<string, string>) => Promise<{ code: number; stdout: string; stderr: string }>
 
@@ -20,8 +26,6 @@ export interface SetupPlan {
   pythonPath: string
   deployScript: string
   agentName: string
-  /** Targets that will also get the shared-section deploy, in display form. */
-  networkTargets: string[]
   writeShim: boolean
   writeRegistry: boolean
 }
@@ -35,6 +39,13 @@ export interface SetupStep {
 export interface SetupDeps {
   exec: SetupExec
   writeFile: (path: string, content: string) => void
+  /** Existing content, for merge/skip decisions. Absent means "nothing there". */
+  readFile?: (path: string) => string | undefined
+  /** Existence probe. Absent means "assume it is missing". */
+  exists?: (path: string) => boolean
+  /** POSIX shims must be executable; Windows has no equivalent. */
+  chmod?: (path: string, mode: number) => void
+  platform?: NodeJS.Platform
 }
 
 export interface SetupResult {
@@ -50,41 +61,77 @@ export async function runSetup(plan: SetupPlan, deps: SetupDeps): Promise<SetupR
   // under construction is pinned here instead of being inherited from whatever
   // the machine already had configured.
   const pythonEnv = { PYTHONPATH: plan.corePath, UNIFIED_MEMORY_VAULT: plan.vaultPath }
+  const platform = deps.platform ?? process.platform
 
-  const vault = await deps.exec(plan.pythonPath, ['-m', 'unified_memory.memory', 'init', '--vault', plan.vaultPath], pythonEnv)
-  steps.push({ name: 'vault', ok: vault.code === 0, detail: failureDetail(vault) })
-  if (vault.code !== 0) return { ok: false, steps }
+  // `init` refuses to run over an existing vault ("already initialized … use
+  // --force"), and --force copies the template over the user's files. A vault
+  // that already has the structure is the reuse case the consent text promises,
+  // so probe first and skip init entirely.
+  const reusesVault = deps.exists?.(join(plan.vaultPath, '50-Agent-Context')) === true
+  let initialised = false
+  if (reusesVault) {
+    steps.push({ name: 'vault', ok: true, detail: `复用已存在的记忆库 ${plan.vaultPath}` })
+  } else {
+    const vault = await deps.exec(plan.pythonPath, ['-m', 'unified_memory.memory', 'init', '--vault', plan.vaultPath], pythonEnv)
+    steps.push({ name: 'vault', ok: vault.code === 0, detail: failureDetail(vault) })
+    if (vault.code !== 0) return { ok: false, steps }
+    initialised = true
+  }
+
+  // A failure from here on leaves `vault:` in the core config pointing at the
+  // new vault for every runtime on the machine. Say so instead of only echoing
+  // the failing step's stderr.
+  const repointNote = initialised ? `；注意：本机默认记忆库(vault:)已指向 ${plan.vaultPath}` : ''
 
   const instructions = await deps.exec(
     plan.pythonPath,
     [plan.deployScript, 'apply', '--home', plan.home, '--vault', plan.vaultPath],
     { PYTHONPATH: plan.corePath, UNIFIED_MEMORY_VAULT: plan.vaultPath, UNIFIED_MEMORY_AGENT: plan.agentName },
   )
-  steps.push({ name: 'instructions', ok: instructions.code === 0, detail: failureDetail(instructions) })
-  if (instructions.code !== 0) return { ok: false, steps }
+  if (instructions.code !== 0) {
+    steps.push({ name: 'instructions', ok: false, detail: `${failureDetail(instructions) ?? `exit ${instructions.code}`}${repointNote}` })
+    return { ok: false, steps }
+  }
+  steps.push({ name: 'instructions', ok: true })
 
   if (plan.writeShim) {
-    const shimPath = join(plan.home, '.unified-memory', 'bin', 'memory.cmd')
-    deps.writeFile(shimPath, buildShim('cmd', plan.corePath, plan.pythonPath))
-    steps.push({ name: 'shim', ok: true, detail: shimPath })
+    const kind = platform === 'win32' ? 'cmd' : 'sh'
+    const shimPath = join(plan.home, '.unified-memory', 'bin', kind === 'cmd' ? 'memory.cmd' : 'memory')
+    const content = buildShim(kind, plan.corePath, plan.pythonPath)
+    if (deps.readFile?.(shimPath) === content) {
+      steps.push({ name: 'shim', ok: true, detail: `${shimPath}（内容一致，未改动）` })
+    } else {
+      deps.writeFile(shimPath, content)
+      if (kind === 'sh') deps.chmod?.(shimPath, 0o755)
+      steps.push({ name: 'shim', ok: true, detail: shimPath })
+    }
   }
 
   if (plan.writeRegistry) {
     const registryPath = join(plan.vaultPath, '50-Agent-Context', 'Agent提交区', '前缀登记.md')
-    deps.writeFile(
-      registryPath,
-      buildRegistry(plan.vaultPath, [
-        { prefix: `${plan.agentName}-`, runtime: '本机 DSH 运行时', note: '由 memory_setup 生成' },
-        // Everything written before prefixes were derived landed under this one.
-        { prefix: 'dsh-', runtime: '历史提交', note: '不改名，只认领归属' },
-      ]),
-    )
-    steps.push({ name: 'registry', ok: true, detail: registryPath })
+    const content = mergeRegistry(deps.readFile?.(registryPath), plan.vaultPath, [
+      { prefix: `${plan.agentName}-`, runtime: '本机 DSH 运行时', note: '由 memory_setup 生成' },
+      // Everything written before prefixes were derived landed under this one.
+      { prefix: 'dsh-', runtime: '历史提交', note: '不改名，只认领归属' },
+    ])
+    if (deps.readFile?.(registryPath) === content) {
+      steps.push({ name: 'registry', ok: true, detail: `${registryPath}（内容一致，未改动）` })
+    } else {
+      deps.writeFile(registryPath, content)
+      steps.push({ name: 'registry', ok: true, detail: registryPath })
+    }
   }
 
   const check = await deps.exec(plan.pythonPath, ['-m', 'unified_memory.memory', 'status'], pythonEnv)
-  steps.push({ name: 'selfcheck', ok: check.code === 0, detail: failureDetail(check) })
-  return { ok: check.code === 0, steps }
+  // `status` prints the structure problem and still exits 0, so the exit code
+  // alone would call a broken vault healthy.
+  const structureMissing = /vault structure:\s*MISSING/i.test(check.stdout)
+  steps.push({
+    name: 'selfcheck',
+    ok: check.code === 0 && !structureMissing,
+    detail: structureMissing ? 'vault structure MISSING' : failureDetail(check),
+  })
+  return { ok: check.code === 0 && !structureMissing, steps }
 }
 
 function failureDetail(result: { code: number; stderr: string; stdout: string }): string | undefined {

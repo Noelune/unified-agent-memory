@@ -12,9 +12,9 @@
  */
 
 import { execFile } from 'node:child_process'
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, isAbsolute, join } from 'node:path'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { PluginConfig } from './types.ts'
 import { runCore, renderText, notConfigured, buildSearchArgv, buildPreviewArgv, buildSubmitArgv, validateDocId, DEPLOY_TASKBOOK } from './utils.ts'
@@ -51,7 +51,7 @@ const TOOL_OUTPUT_SCHEMA = {
 /**
  * memory_search — search the shared agent memory vault.
  */
-function defineSearchTool(cfg: PluginConfig, configured: boolean) {
+function defineSearchTool(cfg: PluginConfig) {
   return defineTool({
     name: 'memory_search',
     description:
@@ -107,7 +107,7 @@ function defineSearchTool(cfg: PluginConfig, configured: boolean) {
       format?: string
       budget?: number
     }) {
-      if (!configured) return notConfigured('memory_search needs vaultPath')
+      if (!cfg.vaultPath) return notConfigured('memory_search needs vaultPath')
       const argv = buildSearchArgv(String(args.query ?? '').trim(), {
         limit: args.limit,
         hybrid: args.hybrid,
@@ -123,7 +123,7 @@ function defineSearchTool(cfg: PluginConfig, configured: boolean) {
 /**
  * memory_show — print one canonical document.
  */
-function defineShowTool(cfg: PluginConfig, configured: boolean) {
+function defineShowTool(cfg: PluginConfig) {
   return defineTool({
     name: 'memory_show',
     description:
@@ -141,7 +141,7 @@ function defineShowTool(cfg: PluginConfig, configured: boolean) {
     },
     output: { schema: TOOL_OUTPUT_SCHEMA, render: renderText },
     async execute(args: { doc?: string }) {
-      if (!configured) return notConfigured('memory_show needs vaultPath')
+      if (!cfg.vaultPath) return notConfigured('memory_show needs vaultPath')
       const doc = String(args.doc ?? '').trim()
       if (!doc) {
         return {
@@ -161,7 +161,7 @@ function defineShowTool(cfg: PluginConfig, configured: boolean) {
 /**
  * memory_submit — write facts into the submission inbox (only write path).
  */
-function defineSubmitTool(cfg: PluginConfig, configured: boolean) {
+function defineSubmitTool(cfg: PluginConfig) {
   return defineTool({
     name: 'memory_submit',
     description:
@@ -178,7 +178,7 @@ function defineSubmitTool(cfg: PluginConfig, configured: boolean) {
     },
     output: { schema: TOOL_OUTPUT_SCHEMA, render: renderText },
     async execute(args: { facts?: string }) {
-      if (!configured) return notConfigured('memory_submit needs vaultPath')
+      if (!cfg.vaultPath) return notConfigured('memory_submit needs vaultPath')
       return runCore(cfg, buildSubmitArgv(cfg, String(args.facts ?? '')))
     },
   })
@@ -187,7 +187,7 @@ function defineSubmitTool(cfg: PluginConfig, configured: boolean) {
 /**
  * memory_status — show configuration and index health.
  */
-function defineStatusTool(cfg: PluginConfig, configured: boolean) {
+function defineStatusTool(cfg: PluginConfig) {
   return defineTool({
     name: 'memory_status',
     description:
@@ -198,7 +198,7 @@ function defineStatusTool(cfg: PluginConfig, configured: boolean) {
     parameters: {},
     output: { schema: TOOL_OUTPUT_SCHEMA, render: renderText },
     async execute() {
-      if (!configured) return notConfigured('memory_status needs vaultPath')
+      if (!cfg.vaultPath) return notConfigured('memory_status needs vaultPath')
       const r = await runCore(cfg, ['status'])
       if (!r.ok) return r
 
@@ -228,7 +228,7 @@ function defineStatusTool(cfg: PluginConfig, configured: boolean) {
 /**
  * memory_preview — read-only governance views over the shared memory.
  */
-function definePreviewTool(cfg: PluginConfig, configured: boolean) {
+function definePreviewTool(cfg: PluginConfig) {
   return defineTool({
     name: 'memory_preview',
     description:
@@ -253,7 +253,7 @@ function definePreviewTool(cfg: PluginConfig, configured: boolean) {
     },
     output: { schema: TOOL_OUTPUT_SCHEMA, render: renderText },
     async execute(args: { view: string; limit?: number }) {
-      if (!configured) return notConfigured('memory_preview needs vaultPath')
+      if (!cfg.vaultPath) return notConfigured('memory_preview needs vaultPath')
       let argv: string[]
       try {
         argv = buildPreviewArgv(String(args.view ?? '').trim(), { limit: args.limit })
@@ -289,6 +289,12 @@ export interface SetupDepsForTool {
   writeState: (state: OnboardingState) => void
   detectTargets: () => Array<{ agent: InstructionTarget; path: string }>
   writeFile: (path: string, content: string) => void
+  /** Existing content, so the runner can skip unchanged files and merge the registry. */
+  readFile?: (path: string) => string | undefined
+  /** Existence probe: a vault that already has the structure is reused, not re-inited. */
+  exists?: (path: string) => boolean
+  /** POSIX shims must be executable; Windows has no equivalent. */
+  chmod?: (path: string, mode: number) => void
   spawnExec: SetupExec
   reload: () => void
   /**
@@ -329,7 +335,11 @@ function setupText(reason: string, plan: string, hint: string): string {
 }
 
 function relToHome(home: string, path: string): string {
-  return path.startsWith(home) ? path.slice(home.length).replace(/^[\\/]+/, '').replace(/\\/g, '/') : path
+  // A bare prefix test also matches C:\Users\bobby for home C:\Users\bob, which
+  // would render the path as "by/.dsh/AGENTS.md". Only strip on a separator.
+  const root = home.replace(/[\\/]+$/, '')
+  if (!path.startsWith(`${root}/`) && !path.startsWith(`${root}\\`)) return path
+  return path.slice(root.length).replace(/^[\\/]+/, '').replace(/\\/g, '/')
 }
 
 function planText(vaultPath: string, targets: string[]): string {
@@ -379,11 +389,20 @@ export function defineSetupTool(deps: SetupDepsForTool) {
     output: { schema: TOOL_OUTPUT_SCHEMA, render: renderText },
     async execute(args: { vault?: string; apply?: boolean }): Promise<SetupToolResult> {
       const vaultPath = resolveSetupVault(deps.cfg, args.vault, deps.home)
+      // A relative path would resolve against the host process cwd, which is not
+      // where the user meant to put their notes.
+      if (!isAbsolute(vaultPath)) {
+        const message = `vaultPath 必须是绝对路径（收到 ${vaultPath}）。用 memory_setup({vault:"C:\\\\路径\\\\到\\\\仓库"}) 或先设置 vaultPath 重试。`
+        return { ok: false, needsConsent: false, steps: [], message, output: message }
+      }
       const scope = [...ONBOARDING_SCOPE]
       const detected = deps.detectTargets()
       const targetNames = detected.map((item) => relToHome(deps.home, item.path))
 
-      if (consentSatisfied(deps.readState(), { vaultPath, scope })) {
+      // A stored grant skips the *question*, never the work: `apply: true` with
+      // a grant repairs a half-finished setup without asking again.
+      const alreadyGranted = consentSatisfied(deps.readState(), { vaultPath, scope })
+      if (alreadyGranted && !args.apply) {
         const message = `已配置：${vaultPath}。补写缺失的文件请传 apply=true。`
         return { ok: true, needsConsent: false, steps: [], message, output: message }
       }
@@ -395,16 +414,30 @@ export function defineSetupTool(deps: SetupDepsForTool) {
       })
       const plan = planText(vaultPath, targetNames)
 
-      let granted = false
       const approval = deps.approval?.()
-      if (approval) {
-        const answer = await approval.request({ toolName: 'memory_setup', reason, displayReason: reason })
-        granted = answer.outcome === 'allowed-once'
-        if (!granted && !(answer.outcome === 'unavailable' && args.apply)) {
-          const hint =
-            answer.outcome === 'unavailable'
-              ? '本会话没有可用的审批通道。请把上面的计划原样念给用户确认；用户同意后再用 apply=true 重试。'
-              : '已取消，未写入任何文件。想再试一次时重新调用 memory_setup；同意后用 apply=true 落地。'
+      let granted = alreadyGranted
+      if (!granted && approval && typeof approval.request === 'function') {
+        try {
+          const answer = await approval.request({ toolName: 'memory_setup', reason, displayReason: reason })
+          granted = answer.outcome === 'allowed-once'
+          if (!granted && !(answer.outcome === 'unavailable' && args.apply)) {
+            const hint =
+              answer.outcome === 'unavailable'
+                ? '本会话没有可用的审批通道。请把上面的计划原样念给用户确认；用户同意后再用 apply=true 重试。'
+                : '已取消，未写入任何文件。想再试一次时重新调用 memory_setup；同意后用 apply=true 落地。'
+            return {
+              ok: true,
+              needsConsent: true,
+              reason,
+              plan,
+              hint,
+              output: setupText(reason, plan, hint),
+            }
+          }
+        } catch {
+          // A host that refuses or tears down the approval service mid-call
+          // must degrade to the plan, not throw out of the tool.
+          const hint = '审批通道请求失败，未写入任何文件。把上面的计划念给用户确认；同意后用 apply=true 重试。'
           return {
             ok: true,
             needsConsent: true,
@@ -414,7 +447,7 @@ export function defineSetupTool(deps: SetupDepsForTool) {
             output: setupText(reason, plan, hint),
           }
         }
-      } else if (!args.apply) {
+      } else if (!granted && !args.apply) {
         // No approval service at all (older host, or prompts disabled): plan only.
         const hint = '把上面的计划念给用户确认；同意后用 apply=true 重试，会创建上述文件。'
         return {
@@ -434,11 +467,17 @@ export function defineSetupTool(deps: SetupDepsForTool) {
         pythonPath: deps.cfg.pythonPath,
         deployScript: deps.deployScript,
         agentName: deps.cfg.agentName,
-        networkTargets: targetNames,
         writeShim: true,
         writeRegistry: true,
       }
-      const result = await runSetup(setupPlan, { exec: deps.spawnExec, writeFile: deps.writeFile })
+      const result = await runSetup(setupPlan, {
+        exec: deps.spawnExec,
+        writeFile: deps.writeFile,
+        readFile: deps.readFile,
+        exists: deps.exists,
+        chmod: deps.chmod,
+        platform: process.platform,
+      })
 
       let onboarding: OnboardingState | undefined
       if (result.ok && granted) {
@@ -451,8 +490,11 @@ export function defineSetupTool(deps: SetupDepsForTool) {
           targets: targetNames,
         }
         deps.writeState(onboarding)
-        deps.reload()
       }
+      // The vault exists now whether or not a grant was recorded (the
+      // `apply:true` without an approval channel path), so the live tools must
+      // pick it up in this same session.
+      if (result.steps[0]?.ok) deps.reload()
 
       const message = result.ok
         ? `已完成：记忆库 ${vaultPath}。现在可以用 memory_search / memory_submit 了。`
@@ -490,6 +532,21 @@ export function buildSetupDeps(
       mkdirSync(dirname(path), { recursive: true })
       writeFileSync(path, content, 'utf8')
     },
+    readFile: (path) => {
+      try {
+        return readFileSync(path, 'utf8')
+      } catch {
+        return undefined
+      }
+    },
+    exists: (path) => existsSync(path),
+    chmod: (path, mode) => {
+      try {
+        chmodSync(path, mode)
+      } catch {
+        // A shim that cannot be chmodded is still usable via `sh <path>`.
+      }
+    },
     spawnExec: (file, argv, env) =>
       new Promise((resolve) => {
         execFile(
@@ -510,7 +567,7 @@ export function buildSetupDeps(
 // ── Tool registry ───────────────────────────────────────────────────
 
 /** Ordered list of tool factory functions. */
-const TOOL_FACTORIES: Array<(cfg: PluginConfig, configured: boolean) => ReturnType<typeof defineTool>> = [
+const TOOL_FACTORIES: Array<(cfg: PluginConfig) => ReturnType<typeof defineTool>> = [
   defineSearchTool,
   defineShowTool,
   defineSubmitTool,
@@ -531,12 +588,11 @@ const TOOL_FACTORIES: Array<(cfg: PluginConfig, configured: boolean) => ReturnTy
 export function registerAll(
   ctx: { tools: { register: (tool: ReturnType<typeof defineTool>) => void } },
   cfg: PluginConfig,
-  configured: boolean,
   extra: { approval?: () => ApprovalLike | undefined; reload?: () => void } = {},
 ): void {
   for (const factory of TOOL_FACTORIES) {
     try {
-      ctx.tools.register(factory(cfg, configured))
+      ctx.tools.register(factory(cfg))
     } catch (err) {
       // Log and continue — a single tool failure should not block the
       // entire plugin. This safeguard is belt-and-suspenders since the

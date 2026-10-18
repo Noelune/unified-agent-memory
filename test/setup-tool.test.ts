@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { defineSetupTool, type SetupDepsForTool } from '../src/tools.ts'
+import { defineSetupTool, registerAll, type SetupDepsForTool } from '../src/tools.ts'
 import type { OnboardingState } from '../src/onboarding.ts'
 import type { PluginConfig } from '../src/types.ts'
 
@@ -122,6 +122,82 @@ describe('memory_setup consent gate', () => {
     expect(result.steps).toEqual([])
     expect(String(result.message)).toContain('已配置')
     expect(h.calls).toEqual([])
+  })
+
+  it('still runs when a grant exists and apply is requested, so a half-done setup can be repaired', async () => {
+    // A grant skips the question, not the work: the already-configured short
+    // circuit used to swallow apply=true, so the "run it again to fill in what
+    // is missing" instruction in the message did nothing at all.
+    const h = deps({ readState: () => grantedState })
+    const result = (await defineSetupTool(h.deps).execute({ apply: true }, { agent: 'dsh-desktop' })) as Record<
+      string,
+      unknown
+    >
+    expect(result.needsConsent).toBe(false)
+    expect(result.ok).toBe(true)
+    expect(h.calls.length).toBeGreaterThan(0)
+    expect(h.states.length).toBe(1)
+  })
+
+  it('falls back to the plan when the approval service throws', async () => {
+    // The service can be torn down mid-call (turn closed, plugin reloaded); the
+    // tool must degrade to a plan instead of throwing out of the tool contract.
+    const h = deps({
+      approval: () => ({
+        request: async () => {
+          throw new Error('approval service is gone')
+        },
+      }),
+    })
+    const result = (await defineSetupTool(h.deps).execute({}, { agent: 'dsh-desktop' })) as Record<string, unknown>
+    expect(result.needsConsent).toBe(true)
+    expect(String(result.hint)).toContain('未写入任何文件')
+    expect(h.calls).toEqual([])
+    expect(h.written).toEqual([])
+  })
+
+  it('refuses a relative vault path instead of provisioning in the process cwd', async () => {
+    const h = deps()
+    const result = (await defineSetupTool(h.deps).execute({ vault: 'my-vault' }, { agent: 'dsh-desktop' })) as Record<
+      string,
+      unknown
+    >
+    expect(result.ok).toBe(false)
+    expect(String(result.output)).toContain('绝对路径')
+    expect(h.calls).toEqual([])
+    expect(h.written).toEqual([])
+  })
+
+  it('does not mistake a sibling directory for a path inside home', async () => {
+    // `startsWith(home)` also matches C:\Users\bobby for home C:\Users\bob, which
+    // would print "by/.dsh/AGENTS.md" as the target and deploy-nothing.
+    const h = deps({
+      home: 'C:\\Users\\bob',
+      detectTargets: () => [{ agent: 'dsh' as const, path: 'C:\\Users\\bobby\\.dsh\\AGENTS.md' }],
+    })
+    const result = (await defineSetupTool(h.deps).execute({}, { agent: 'dsh-desktop' })) as Record<string, unknown>
+    expect(String(result.plan)).toContain('bobby')
+  })
+})
+
+describe('tool registration', () => {
+  it('reads vaultPath live, so a setup that lands mid-session needs no restart', async () => {
+    // The gate used to be a boolean captured at registration time; `reload`
+    // only mutated the config object, so every reader kept answering "not
+    // configured" until the host restarted. Registration must read the config
+    // at call time.
+    const live = { ...cfg(), vaultPath: '', pythonPath: join('C:\\nope', 'python.exe') }
+    const tools: Array<{ name: string; execute: (args: unknown, exec: unknown) => Promise<unknown> }> = []
+    registerAll({ tools: { register: (tool) => tools.push(tool as never) } }, live, {})
+    const search = tools.find((tool) => tool.name === 'memory_search')
+    expect(search).toBeDefined()
+
+    const before = (await search!.execute({ query: 'x' }, { agent: 'dsh-desktop' })) as { output?: string }
+    expect(String(before.output)).toContain('not configured')
+
+    live.vaultPath = 'C:\\Vault'
+    const after = (await search!.execute({ query: 'x' }, { agent: 'dsh-desktop' })) as { output?: string }
+    expect(String(after.output)).not.toContain('not configured')
   })
 })
 

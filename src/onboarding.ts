@@ -145,3 +145,21 @@ export function buildRegistry(vaultPath: string, rows: RegistryRow[]): string {
     '',
   ].join('\n')
 }
+
+/**
+ * Upsert rows into an existing registry.
+ *
+ * Two DSH nodes share one vault (`dsh-desktop-`, `dsh-web-`), and codex/claude
+ * rows are written by `deploy.py`. Regenerating the file from this process's own
+ * rows would silently drop every other writer's row, so existing rows win their
+ * position and only matching prefixes are replaced.
+ */
+export function mergeRegistry(existing: string | undefined, vaultPath: string, rows: RegistryRow[]): string {
+  const merged = new Map<string, RegistryRow>()
+  for (const line of (existing ?? '').split(/\r?\n/)) {
+    const match = /^\|\s*`([^`]+)`\s*\|\s*([^|]*?)\s*\|\s*([^|]*?)\s*\|\s*$/.exec(line)
+    if (match) merged.set(match[1]!, { prefix: match[1]!, runtime: match[2]!, note: match[3]! })
+  }
+  for (const row of rows) merged.set(row.prefix, row)
+  return buildRegistry(vaultPath, [...merged.values()])
+}
