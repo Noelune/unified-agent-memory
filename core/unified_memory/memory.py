@@ -165,12 +165,19 @@ def init_vault(vault: Path, force: bool = False) -> None:
 
     # Persist the vault path for later invocations.
     cfg = read_maybe(CONFIG_PATH)
+    previous = parse_config(CONFIG_PATH).get("vault", "")
     lines = [ln for ln in cfg.splitlines() if not ln.strip().startswith("vault:")]
     lines.append(f"vault: {vault}")
     atomic_write(CONFIG_PATH, "\n".join(lines) + "\n")
 
     print(f"vault initialized at {vault}")
     print(f"config written to {CONFIG_PATH}")
+    # Repointing a working machine is a legitimate request (that is what
+    # --vault means), but it must never be invisible: a silent overwrite is how
+    # a one-off probe moved this laptop's vault to a temp dir that was then
+    # deleted. Say what was replaced, and let the caller decide.
+    if previous and Path(previous) != Path(vault):
+        print(f"note: replaced the configured vault {previous} -> {vault}")
     print("next: copy integrations/AGENTS.md (Codex) and CLAUDE.md (Claude Code)")
     print("      into your agent home directories, or use the dsh plugin.")
 

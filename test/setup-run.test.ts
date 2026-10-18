@@ -51,6 +51,17 @@ describe('runSetup', () => {
     expect(calls[2]?.args).toEqual(['-m', 'unified_memory.memory', 'status'])
   })
 
+  it('pins every core call to the vault being provisioned', async () => {
+    // `status` resolves the vault from the environment or the core config file,
+    // not from argv. Without this the selfcheck inspects whatever vault the
+    // machine happened to have configured — it passed on a dev box and would
+    // fail (or worse, silently pass) on a fresh install.
+    const { calls, exec } = recorder()
+    await runSetup(plan(), { exec, writeFile: () => {} })
+    expect(calls[0]?.env.UNIFIED_MEMORY_VAULT).toBe('C:\\Vault')
+    expect(calls[2]?.env.UNIFIED_MEMORY_VAULT).toBe('C:\\Vault')
+  })
+
   it('passes the runtime prefix to deploy through the environment, never argv', async () => {
     const { calls, exec } = recorder()
     await runSetup(plan(), { exec, writeFile: () => {} })

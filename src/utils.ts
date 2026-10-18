@@ -115,6 +115,13 @@ export function resolveConfig(config: Record<string, unknown> = {}): PluginConfi
   // fact this runtime writes. Several DSH runtimes can share one vault (desktop,
   // web, tui, headless…), so the fallback follows DSH_PROFILE — which the host
   // always sets — instead of collapsing them all into "dsh".
+  const agentNameSource: PluginConfig['agentNameSource'] = config.agentName
+    ? 'config'
+    : env.UNIFIED_MEMORY_AGENT
+      ? 'env'
+      : env.DSH_PROFILE
+        ? 'profile'
+        : 'fallback'
   const agentName = String(
     config.agentName ||
       env.UNIFIED_MEMORY_AGENT ||
@@ -123,6 +130,7 @@ export function resolveConfig(config: Record<string, unknown> = {}): PluginConfi
   return {
     vaultPath,
     agentName,
+    agentNameSource,
     pythonPath: String(
       config.pythonPath ?? env.UNIFIED_MEMORY_PYTHON ?? 'python',
     ),

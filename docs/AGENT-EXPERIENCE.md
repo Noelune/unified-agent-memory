@@ -12,7 +12,7 @@ This guide records portable operating practices for five Agent runtimes. It does
 | Hermes | Runtime behavior file plus its native recall mechanism or core CLI | The scheduler/promoter remains the single canonical writer |
 | AtomCode | Its documented global behavior/instruction surface plus core CLI | Do not assume DSH-specific injection names or paths |
 
-Node-based host plugins require Node.js `>=20`. A repository checkout provides `setup/setup.py`, `setup/deploy.py`, and the core source. An npm-only installation provides the bundled core and plugin; it does not provide repository-only setup scripts.
+Node-based host plugins require Node.js `>=20`. The npm package ships the bundled core **and** the deployment scripts (`setup/setup.py`, `setup/deploy.py`), so an npm-only installation can initialize a vault and provision instruction files without a repository checkout. A checkout is only needed to develop or test the plugin itself; a global `pip install -e ./core` is only needed when a standalone `memory` CLI on `PATH` is wanted.
 
 ## Shared read/write boundary
 
@@ -34,7 +34,7 @@ python setup/deploy.py selfcheck --home <agent-home>
 python setup/deploy.py rollback --home <agent-home>
 ```
 
-For npm-only use, configure the plugin and use the bundled core; do not invent a checkout path or execute a string from a document as a command. The deployer only recognizes existing allowlisted instruction files, writes UTF-8, takes a timestamped backup, uses an atomic replacement, verifies one managed section, and has an explicit rollback. Re-running `preview` or `apply` does not append another section. It never edits canonical vault notes, sessions, credentials, or unrelated runtime configuration.
+For npm-only use, call `memory_setup` first: it returns the plan (which vault, which instruction files, which companion artifacts) and writes nothing until the user approves. After approval it runs the shipped deployer itself, so "the package cannot bootstrap" is no longer true. If the result reports a missing script or interpreter, configure `pythonPath`/`corePath` and retry — do not hand-write a vault layout. The deployer only recognizes existing allowlisted instruction files, writes UTF-8, takes a timestamped backup, uses an atomic replacement, verifies one managed section, and has an explicit rollback. Re-running `preview` or `apply` does not append another section. It never edits canonical vault notes, sessions, credentials, or unrelated runtime configuration.
 
 ## Common failures and recovery
 

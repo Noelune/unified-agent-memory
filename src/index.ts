@@ -46,6 +46,7 @@ import { registerAll } from './tools.ts'
 import type { ApprovalLike } from './tools.ts'
 import { checkForUpdate, getUpdateInfo } from './updater.ts'
 import { buildStatusPayload } from './status-payload.ts'
+import { ONBOARDING_SCOPE, consentSatisfied, readOnboardingState } from './onboarding.ts'
 import { guard, guardWrite, queryParam, readBody, sendJson } from './routes.ts'
 import type { RouteReq, RouteRes } from './routes.ts'
 import { SEARCH_PATH, handleSearch } from './route-search.ts'
@@ -190,7 +191,13 @@ export function apply(ctx: Context, config: Record<string, unknown> = {}): void 
           const ui = getUpdateInfo()
           // Read-only core call; null on any failure. Never throws.
           const stats = await readStats(cfg)
-          sendJson(res, 200, buildStatusPayload(cfg, ui, stats))
+          // Whether first-run setup is done for the vault in use right now —
+          // a grant for a different vault does not count (consent is per-vault).
+          const granted = consentSatisfied(readOnboardingState(), {
+            vaultPath: cfg.vaultPath,
+            scope: ONBOARDING_SCOPE,
+          })
+          sendJson(res, 200, buildStatusPayload(cfg, ui, stats, { granted }))
         } catch {
           // Serialization failure — respond with 500 so the client
           // doesn't hang. This guard exists because JSON.stringify

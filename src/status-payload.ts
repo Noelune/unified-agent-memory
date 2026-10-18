@@ -43,6 +43,7 @@ export function buildStatusPayload(
   cfg: PluginConfig,
   ui: UpdateInfo,
   stats: StatusStats | null,
+  onboarding: { granted: boolean } = { granted: false },
 ) {
   return {
     ok: true,
@@ -51,6 +52,11 @@ export function buildStatusPayload(
     pythonPath: cfg.pythonPath,
     corePath: cfg.corePath,
     remoteEnabled: cfg.remoteEnabled,
+    // The submission prefix and its provenance: two runtimes sharing a vault
+    // must be visibly different, and a `fallback` source is a warning sign.
+    agentName: cfg.agentName,
+    agentSource: cfg.agentNameSource,
+    onboarding,
     version: ui.currentVersion,
     latestVersion: ui.latestVersion,
     updateAvailable: ui.updateAvailable,

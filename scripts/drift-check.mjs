@@ -59,7 +59,7 @@ if (!existsSync(toolsPath)) {
   // Expected tool names. Keep this list equal to TOOL_FACTORIES in
   // src/tools.ts — memory_preview was missing here, so removing or renaming it
   // would not have been caught by the drift gate.
-  const expectedTools = ['memory_search', 'memory_show', 'memory_submit', 'memory_status', 'memory_preview']
+  const expectedTools = ['memory_search', 'memory_show', 'memory_submit', 'memory_status', 'memory_preview', 'memory_setup']
   for (const tool of expectedTools) {
     if (toolsContent.includes(`name: '${tool}'`) || toolsContent.includes(`name: "${tool}"`)) {
       ok(`Tool '${tool}' found in src/tools.ts`)
@@ -79,7 +79,7 @@ if (existsSync(utilsPath)) {
 
   // agentName is in this list on purpose: it decides the submission prefix, so
   // silently dropping it would send every runtime back to a single `dsh-*`.
-  const expectedKeys = ['vaultPath', 'pythonPath', 'corePath', 'remoteEnabled', 'agentName']
+  const expectedKeys = ['vaultPath', 'pythonPath', 'corePath', 'remoteEnabled', 'agentName', 'agentNameSource']
   for (const key of expectedKeys) {
     if (utilsContent.includes(key)) {
       ok(`Config key '${key}' found in src/utils.ts`)

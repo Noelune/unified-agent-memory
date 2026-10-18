@@ -258,7 +258,7 @@ describe('shim and registry content', () => {
   it('quotes the core path so spaces survive', () => {
     const cmd = buildShim('cmd', 'C:\\Program Files\\core', 'C:\\Python311\\python.exe')
     expect(cmd).toContain('set "PYTHONPATH=C:\\Program Files\\core"')
-    expect(cmd).toContain('"%PYTHONPATH%"') // 说明：shim 用同一变量转发，见实现
+    expect(cmd).toContain('"C:\\Python311\\python.exe" -m unified_memory.memory %*')
     const sh = buildShim('sh', '/opt/my core', '/usr/bin/python3')
     expect(sh).toContain("PYTHONPATH='/opt/my core'")
   })

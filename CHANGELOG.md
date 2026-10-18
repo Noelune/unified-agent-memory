@@ -4,6 +4,39 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added — 首次引导 + 多 Agent 自助接入
+
+- **`memory_setup` 工具（第六个工具）**：装完插件后的第一次使用不再需要克隆仓库、
+  也不需要 `postinstall`（pnpm 与插件市场都会拦），因为 core、`setup/setup.py`、
+  `setup/deploy.py`、vault 模版本来就在 npm 包里——缺的只是一个会调用它们的入口。
+  `memory_setup` 默认**只返回计划不写盘**（建/复用哪个 vault、改哪些已存在的指令文件、
+  写哪些附属产物、全程本地不上传不联网），同意后才执行：建/复用 vault → 注入托管段
+  （时间戳备份 + 原子替换 + 幂等）→ 写 CLI shim `~/.unified-memory/bin/memory[.cmd]`
+  → 在 `50-Agent-Context/Agent提交区/前缀登记.md` 登记本端前缀 → `selfcheck`。
+- **同意是显式的、可撤回的、不可伪造的**：走 DSH 原生审批通道（`ctx.approval`）时弹窗
+  允许才继续，并把授权落盘（`~/.unified-memory/onboarding.json`，记录 vault 与 scope，
+  换 vault 需重新授权）；审批被禁用/无应答方时**不会假装同意**，必须显式 `apply: true`，
+  且这次**不写授权记录**，下次仍会再问一次。拒绝时一个字节都不写，`memory_status`
+  照常可用只是报「未配置」，手动 `setup.py init` 的旧路径仍然有效。
+- **多 Agent 共享同一个框架（不是每个人各装一份插件）**：插件只能自动接管它自己所在的
+  运行时，其余运行时通过 ①vault 内的协作规则说明（读哪里、写哪里、前缀怎么定）与
+  ②稳定的 CLI shim 接入；shim 不依赖 Python 是否在 `PATH`，也不依赖 checkout 路径。
+- **`/status` 载荷新增 `agentName`、`agentSource`、`onboarding`**：`agentSource` 取值
+  `config`/`env`/`profile`/`fallback`，其中 `fallback` 表示既没配 `agentName` 也没有
+  `DSH_PROFILE`（多端会写成同一个前缀，属可见告警）；`onboarding.granted` 按**当前
+  vault** 判定，换 vault 即回到未引导。见 [docs/JSON-CONTRACT.md](docs/JSON-CONTRACT.md) §6。
+- **`setup/deploy.py` 的前缀解析**：新增 `resolved_prefix()`，`dsh` 读
+  `UNIFIED_MEMORY_AGENT`（由插件经环境变量传入，不用 argv），显式 `--agent` 仍最高优先；
+  既有 `dsh-` 开头的文件名不做重命名，只用于「认领归属」。
+- **文档**：README 新增「装完之后的第一次使用」；`docs/AGENT-EXPERIENCE.md` 删掉
+  「npm-only 安装不含 setup 脚本」这一已过时的错误说法；`docs/JSON-CONTRACT.md`
+  增补 `memory_setup` 载荷与「无审批通道不伪造授权」的约定。
+
+- **`memory init --vault` 覆盖已有配置时会说出被替换的路径**：写入 `vault:` 本来就是
+  这条命令的职责（所有运行时都从 `UNIFIED_MEMORY_VAULT` 或 `~/.unified-memory.yaml`
+  解析，不看 argv），但原先静默覆盖，等于把一台本来指向正确 vault 的机器悄悄改到别处。
+  现在多打印一行 `note: replaced the configured vault A -> B`；行为不变，只是不再无声。
+
 ### Fixed — 提交前缀不再硬编码
 
 - **`memory_submit` 把身份写死成 `dsh`**：插件层（`src/tools.ts`）原样调用

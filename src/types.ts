@@ -23,6 +23,14 @@ export interface PluginConfig {
    * agent. Never empty — resolveConfig always yields a usable name.
    */
   agentName: string
+  /**
+   * Which input decided `agentName`.
+   *
+   * Deliberately surfaced in the status payload: a silent `fallback` means the
+   * runtime could not tell desktop and web apart, and the user should see that
+   * instead of guessing why two machines write under one prefix.
+   */
+  agentNameSource: 'config' | 'env' | 'profile' | 'fallback'
 }
 
 // ── Core execution results ───────────────────────────────────────────

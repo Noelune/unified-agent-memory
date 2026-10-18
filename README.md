@@ -141,7 +141,8 @@ flowchart LR
    ```bash
    dsh plugin --profile web add dsh-unified-agent-memory
    ```
-2. **状态感知**：在接下来的 DSH 会话中调用 `memory_status`。全新安装状态下，系统将自动输出部署提示并引导定位至 [docs/AGENT-DEPLOY.md](docs/AGENT-DEPLOY.md)。
+2. **状态感知**：在接下来的 DSH 会话中调用 `memory_setup`。全新安装状态下它会先返回**部署计划**（建/复用哪个 vault、改哪些指令文件、写哪些附属文件），确认后才动手，详见下文「装完之后的第一次使用」。
+
 3. **全自动装配执行**：由 DSH 自主读取部署任务指南并按顺序完成：
    - 检查并初始化 Obsidian Vault 存储目录与 SQLite FTS5 索引。
    - 安装 Python 核心 Engine 包。
@@ -160,6 +161,21 @@ flowchart LR
 | 4 | **连接 Agent 范围 (Connected Fleet)** | 自动扫描并连接所有已感知的代理（dsh / Codex / Claude / Hermes） |
 
 > **非 DSH 环境部署**：对于通用 AI 编码代理，只需复制 [docs/AGENT-DEPLOY-PROMPT.md](docs/AGENT-DEPLOY-PROMPT.md) 中的 Prompt 发送给 Agent 即可触发全自动部署。
+
+### 2. 装完之后的第一次使用 (First run after install)
+
+从 0.8.1 起，`npm install` 这一步已经把所有东西带齐了——core、`setup/setup.py`、`setup/deploy.py`、vault 模版全部在包内。不需要再克隆仓库，也不需要 `postinstall`（那类脚本在 pnpm 与插件市场里本来就会被拦）。
+
+所以第一次只需要在对话里说一句「帮我初始化记忆库」，Agent 会调用 `memory_setup`：
+
+1. **先出计划，不写盘**：返回将要创建/复用的 vault 路径、将被追加托管段的指令文件（`~/.dsh/AGENTS.md`、`~/.codex/AGENTS.md`、`~/.claude/CLAUDE.md` 中已存在的那些）、以及要写的附属产物。全程本地：不上传、不联网、不改凭据。
+2. **弹窗同意**：宿主是否存在审批通道由 DSH 决定。有通道时这里就是原生审批弹窗，用户点允许才继续；**没有通道时（审批被禁用）不会假装同意**，需要显式 `apply: true`，并且这次不落授权记录，下次仍会再问一次。
+3. **同意了才执行**：建 vault（已存在的复用，绝不覆盖）、跑 deployer 注入托管段（带时间戳备份 + 原子替换 + 幂等）、写 CLI shim `~/.unified-memory/bin/memory[.cmd]`、在 `50-Agent-Context/Agent提交区/前缀登记.md` 登记本端前缀，最后 `selfcheck`。
+4. **不同意也有降级路径**：什么都不写，`memory_status` 照常可用，只是报「未配置」。手动初始化随时可用：`python <包路径>/setup/setup.py init --vault <路径>`，然后只配 `vaultPath` 即可用检索与提交。
+
+**多 Agent 怎么共享同一个框架**：插件只能自动接管它自己所在的那一端（DSH），其余运行时靠两样已经落在磁盘上的东西接入——①`<vault>/50-Agent-Context/` 里的 README 与协作规则说明（告诉对方读什么、写哪里、前缀怎么定），②稳定的 CLI shim `~/.unified-memory/bin/memory`（不依赖 Python 装没装到 PATH，也不依赖 checkout 路径）。把 ① 的托管段复制进对方指令文件、让对方调 ②，它就是这个框架的一员，不需要再装一份插件。
+
+贡献与归属按前缀区分：本端前缀默认跟着 profile 走（`DSH_PROFILE=desktop` → `dsh-desktop-`），`memory_status` 里会显示前缀及其来源（`config` / `env` / `profile` / `fallback`）；出现 `fallback` 说明两端会写成同一个前缀，值得先修配置。
 
 ---
 

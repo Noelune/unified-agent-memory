@@ -45,7 +45,11 @@ export interface SetupResult {
 /** Abort on the first failure: a half-configured vault must not be reported as ready. */
 export async function runSetup(plan: SetupPlan, deps: SetupDeps): Promise<SetupResult> {
   const steps: SetupStep[] = []
-  const pythonEnv = { PYTHONPATH: plan.corePath }
+  // `status` (and anything else that resolves the vault itself) reads
+  // UNIFIED_MEMORY_VAULT or the core config file — never argv — so the vault
+  // under construction is pinned here instead of being inherited from whatever
+  // the machine already had configured.
+  const pythonEnv = { PYTHONPATH: plan.corePath, UNIFIED_MEMORY_VAULT: plan.vaultPath }
 
   const vault = await deps.exec(plan.pythonPath, ['-m', 'unified_memory.memory', 'init', '--vault', plan.vaultPath], pythonEnv)
   steps.push({ name: 'vault', ok: vault.code === 0, detail: failureDetail(vault) })
@@ -54,7 +58,7 @@ export async function runSetup(plan: SetupPlan, deps: SetupDeps): Promise<SetupR
   const instructions = await deps.exec(
     plan.pythonPath,
     [plan.deployScript, 'apply', '--home', plan.home, '--vault', plan.vaultPath],
-    { PYTHONPATH: plan.corePath, UNIFIED_MEMORY_AGENT: plan.agentName },
+    { PYTHONPATH: plan.corePath, UNIFIED_MEMORY_VAULT: plan.vaultPath, UNIFIED_MEMORY_AGENT: plan.agentName },
   )
   steps.push({ name: 'instructions', ok: instructions.code === 0, detail: failureDetail(instructions) })
   if (instructions.code !== 0) return { ok: false, steps }

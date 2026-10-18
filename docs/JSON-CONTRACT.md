@@ -433,9 +433,9 @@ else:
 **访问约束**：仅回环（`127.0.0.1` / `::1` / `::ffff:127.0.0.1`）可访问，其他来源 `403`；
 非 `GET`/`HEAD` 返回 `405`。成功响应 `200`，`cache-control: no-store`。
 
-入参：`(cfg: PluginConfig, ui: UpdateInfo, stats: StatusStats | null)`。
+入参：`(cfg: PluginConfig, ui: UpdateInfo, stats: StatusStats | null, onboarding = { granted: false })`。
 
-九个原有字段 + 新增 `index` 与 `stats`：
+九个原有字段 + `index`、`stats`、`agentName`、`agentSource`、`onboarding`：
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
@@ -445,6 +445,9 @@ else:
 | `pythonPath` | string | 解释器路径 |
 | `corePath` | string | 核心包路径 |
 | `remoteEnabled` | boolean | 是否启用远端索引 |
+| `agentName` | string | 本运行时的提交前缀；同机多端共用一个 vault 时以此区分 |
+| `agentSource` | `"config"\|"env"\|"profile"\|"fallback"` | 前缀来源。`fallback` 表示既没配 `agentName` 也没有 `DSH_PROFILE`，两端会写成同一个前缀——属可见的告警状态 |
+| `onboarding` | `{"granted": boolean}` | 当前 vault 是否已完成首次引导（逐个 vault 判定，换 vault 需重新授权） |
 | `version` | string | `ui.currentVersion` |
 | `latestVersion` | string \| null | 注册表检查未返回前为 `null` |
 | `updateAvailable` | boolean \| null | 同上，未知为 `null` |
@@ -461,6 +464,30 @@ else:
   但**存在且非有限**（如 `"corrupt"`）视为损坏读取 → 整体 `null`。
   不得悄悄折成 `0`，否则「损坏」与「确实没有待办」不可区分。
 - 核心未配置、spawn 失败、超时、输出不可解析：均整体 `null`，且**从不抛异常**（不产生 500）。
+
+---
+
+## 6.2 `memory_setup` 工具载荷
+
+首次引导工具。**默认只做计划，不写任何文件**（`apply` 缺省即 dry run）：
+
+| 情况 | `needsConsent` | 关键字段 | 是否写盘 |
+|---|---|---|---|
+| 已有针对该 vault 的授权记录 | `false` | `steps: []`、`message` | 否 |
+| 无授权、未传 `apply` | `true` | `reason`（四行事实）、`plan`、`hint` | 否 |
+| 审批被拒/取消 | `true` | `hint` 含「已取消」 | 否 |
+| 审批通过（`allowed-once`） | `false` | `steps[]`、`onboarding`（已落盘） | 是 |
+| 无审批通道 + `apply: true` | `false` | `steps[]`，**无 `onboarding`** | 是 |
+
+约定：
+
+- `reason` 只是「将要发生什么」的事实清单（建/复用哪个 vault、改哪些指令文件、写哪些附属文件、
+  不联网不改凭据），不含寒暄与营销语。
+- 通过审批才落 `~/.unified-memory/onboarding.json`（`version:1`、`consent:"granted"`、
+  `grantedAt`、`vaultPath`、`scope`、`targets`）。**无审批通道而用 `apply` 落地时不会伪造授权记录**，
+  所以下次仍会再问一次——宁可多问，不可伪造同意。
+- `steps[].name` 取值：`vault` / `instructions` / `shim` / `registry` / `selfcheck`；首个失败即中止，
+  `ok` 为 `false`，`detail` 带退出码与截断后的 stderr。
 
 ---
 

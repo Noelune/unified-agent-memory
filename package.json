@@ -20,7 +20,7 @@
   },
   "files": [
     "lib",
-    "docs",
+    "docs/*.md",
     "integrations/hermes/*.py",
     "integrations/hermes/README.md",
     "integrations/codex/AGENTS.md",
