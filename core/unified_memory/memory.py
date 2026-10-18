@@ -164,11 +164,7 @@ def init_vault(vault: Path, force: bool = False) -> None:
         )
 
     # Persist the vault path for later invocations.
-    cfg = read_maybe(CONFIG_PATH)
-    previous = parse_config(CONFIG_PATH).get("vault", "")
-    lines = [ln for ln in cfg.splitlines() if not ln.strip().startswith("vault:")]
-    lines.append(f"vault: {vault}")
-    atomic_write(CONFIG_PATH, "\n".join(lines) + "\n")
+    previous = _persist_vault(vault)
 
     print(f"vault initialized at {vault}")
     print(f"config written to {CONFIG_PATH}")
@@ -180,6 +176,42 @@ def init_vault(vault: Path, force: bool = False) -> None:
         print(f"note: replaced the configured vault {previous} -> {vault}")
     print("next: copy integrations/AGENTS.md (Codex) and CLAUDE.md (Claude Code)")
     print("      into your agent home directories, or use the dsh plugin.")
+
+
+def _persist_vault(vault: Path) -> str:
+    """Write the `vault:` key without touching any other line; returns the old value.
+
+    Line-preserving on purpose: the config is hand-editable and may carry
+    comments and unrelated keys.
+    """
+    cfg = read_maybe(CONFIG_PATH)
+    previous = parse_config(CONFIG_PATH).get("vault", "")
+    lines = [ln for ln in cfg.splitlines() if not ln.strip().startswith("vault:")]
+    lines.append(f"vault: {vault}")
+    atomic_write(CONFIG_PATH, "\n".join(lines) + "\n")
+    return previous
+
+
+def cmd_use(args: argparse.Namespace) -> None:
+    """Point this machine at a vault that already exists, without writing into it.
+
+    `init` is the wrong tool here: it refuses a vault that already has
+    `50-Agent-Context`, and `--force` copies the template over the user's notes.
+    Reusing a vault still has to persist `vault:`, because that key is what the
+    reading tools and the PATH shim resolve without any environment variable.
+    """
+    vault = Path(args.vault).expanduser().resolve()
+    ctx = vault / AGENT_CONTEXT
+    if not ctx.is_dir():
+        raise SystemExit(
+            f"not a memory vault: {ctx} is missing. "
+            f"Run `memory init --vault {vault}` to create the structure first."
+        )
+    previous = _persist_vault(vault)
+    print(f"vault: {vault}")
+    print(f"config written to {CONFIG_PATH}")
+    if previous and Path(previous) != Path(vault):
+        print(f"note: replaced the configured vault {previous} -> {vault}")
 
 
 # --------------------------------------------------------------------------
@@ -659,6 +691,10 @@ def main(argv: list[str] | None = None) -> None:
     p_init.add_argument("--vault", required=True)
     p_init.add_argument("--force", action="store_true")
     p_init.set_defaults(fn=cmd_init)
+
+    p_use = sub.add_parser("use", help="point the config at an existing vault (no writes inside it)")
+    p_use.add_argument("--vault", required=True)
+    p_use.set_defaults(fn=cmd_use)
 
     p_search = sub.add_parser("search", help="search canonical notes")
     p_search.add_argument("query")
