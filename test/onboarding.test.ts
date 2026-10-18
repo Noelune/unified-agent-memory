@@ -149,8 +149,51 @@ describe('shim and registry content', () => {
       expect(merged).toContain('说明：只登记前缀，不登记凭据')
       expect(merged).toContain('尾注：新增运行时请提 PR')
       expect(merged).toContain('| `codex-` | codex | 手动登记 | 在用 |')
-      expect(merged).toContain('| `dsh-desktop-` | dsh 桌面端 | DSH_PROFILE=desktop |')
+      // A four-column table gets four-cell rows: our own row is padded, not
+      // collapsed to three cells, which would break the table for every reader.
+      expect(merged).toContain('| `dsh-desktop-` | dsh 桌面端 | DSH_PROFILE=desktop |  |')
       expect(merged.replace(/\r\n/g, '')).not.toContain('\n')
+    })
+
+    it('keeps the extra cell of a row it replaces', () => {
+      // The fourth column is the user's ("在用"), and our prefix already has a
+      // row. Rewriting that row must not drop the value they typed there.
+      const existing = [
+        '| 前缀 | 运行时 | 说明 | 状态 |',
+        '| --- | --- | --- | --- |',
+        '| `codex-` | codex | 手动登记 | 在用 |',
+        '| `dsh-desktop-` | 旧说明 | 旧 | 在用 |',
+        '',
+      ].join('\n')
+      const merged = mergeRegistry(existing, 'C:\\Vault', rows)
+      expect(merged).toContain('| `dsh-desktop-` | dsh 桌面端 | DSH_PROFILE=desktop | 在用 |')
+      expect(merged).not.toContain('旧说明')
+    })
+
+    it('leaves the line endings outside the table untouched', () => {
+      // Mixed files come from two machines writing the same registry. Only the
+      // rows we touch may change; rewriting the whole file turns a one-row fix
+      // into a full-file diff.
+      const existing = [
+        '# 提交前缀登记',
+        '',
+        '说明：这一行是 LF',
+        '',
+        '| 前缀 | 运行时 | 说明 |',
+        '| --- | --- | --- |',
+        '| `codex-` | codex | 手动登记 |',
+        '',
+        '尾注：这一行也是 LF',
+        '',
+      ].join('\n')
+      const crlfTable = existing.replace(
+        '| 前缀 | 运行时 | 说明 |\n| --- | --- | --- |\n| `codex-` | codex | 手动登记 |\n',
+        '| 前缀 | 运行时 | 说明 |\r\n| --- | --- | --- |\r\n| `codex-` | codex | 手动登记 |\r\n',
+      )
+      const merged = mergeRegistry(crlfTable, 'C:\\Vault', rows)
+      expect(merged).toContain('说明：这一行是 LF\n')
+      expect(merged).toContain('| `codex-` | codex | 手动登记 |\r\n')
+      expect(merged).toContain('尾注：这一行也是 LF')
     })
 
     it('is idempotent and replaces this runtime row in place', () => {

@@ -197,6 +197,33 @@ describe('runSetup', () => {
     expect(written).toEqual([])
   })
 
+  it('says the vault was repointed when only the selfcheck fails', async () => {
+    // `vault` already wrote config, so the machine now points here no matter how
+    // the rest of the run ends. Reporting only "structure MISSING" would hide
+    // that from the user.
+    const exec: SetupExec = async (_file, args) =>
+      args.includes('status')
+        ? { code: 0, stdout: 'vault structure: MISSING', stderr: '' }
+        : { code: 0, stdout: 'ok', stderr: '' }
+    const result = await runSetup(plan(), { exec, writeFile: () => {} })
+    expect(result.ok).toBe(false)
+    expect(result.steps.at(-1)?.detail).toContain('已指向 C:\\Vault')
+  })
+
+  it('does not claim a repoint when the vault step itself fails', async () => {
+    // Nothing wrote `vault:` yet, so the note would be a lie.
+    const exists = (path: string) => path.startsWith('C:\\Vault\\50-Agent-Context')
+    const exec: SetupExec = async (_file, args) =>
+      actionOf(args) === 'use'
+        ? { code: 1, stdout: '', stderr: 'use failed' }
+        : { code: 0, stdout: 'ok', stderr: '' }
+    const result = await runSetup(plan(), { exec, writeFile: () => {}, exists })
+    expect(result.ok).toBe(false)
+    expect(result.steps).toHaveLength(1)
+    expect(result.steps[0]?.detail).toContain('use failed')
+    expect(result.steps[0]?.detail).not.toContain('已指向')
+  })
+
   it('stops at the failing step and reports it without throwing', async () => {
     const exec: SetupExec = async (_file, args) => {
       const action = actionOf(args)

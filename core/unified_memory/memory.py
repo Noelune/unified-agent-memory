@@ -123,8 +123,24 @@ def find_template_dir() -> Path | None:
     return None
 
 
+def _reject_unrepresentable_vault(vault: Path) -> None:
+    """Refuse a path the config readers cannot represent.
+
+    Every reader truncates a config value at "#" (the file is hand-editable and
+    may carry trailing comments), so a vault under "notes #2" would be read back
+    as "notes" and later calls would quietly resolve a different directory.
+    Refusing up front is honest; storing a value we cannot read back is not.
+    """
+    if "#" in str(vault):
+        raise SystemExit(
+            f"unsupported vault path: {vault} contains '#', which the config readers treat as "
+            f"the start of a comment. Move or rename the folder and retry."
+        )
+
+
 def init_vault(vault: Path, force: bool = False) -> None:
     vault = Path(vault)
+    _reject_unrepresentable_vault(vault)
     ctx = vault / AGENT_CONTEXT
     if ctx.exists() and force:
         base = vault.with_name(vault.name + f"-backup-{time.strftime('%Y%m%d-%H%M%S')}")
@@ -201,11 +217,12 @@ def cmd_use(args: argparse.Namespace) -> None:
     reading tools and the PATH shim resolve without any environment variable.
     """
     vault = Path(args.vault).expanduser().resolve()
+    _reject_unrepresentable_vault(vault)
     ctx = vault / AGENT_CONTEXT
     if not ctx.is_dir():
         raise SystemExit(
             f"not a memory vault: {ctx} is missing. "
-            f"Run `memory init --vault {vault}` to create the structure first."
+            f'Run `memory init --vault "{vault}"` to create the structure first.'
         )
     previous = _persist_vault(vault)
     print(f"vault: {vault}")

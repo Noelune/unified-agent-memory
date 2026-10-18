@@ -31,7 +31,14 @@ import {
   type InstructionTarget,
   type OnboardingState,
 } from './onboarding.ts'
-import { runSetup, type SetupExec, type SetupPlan } from './setup-run.ts'
+import {
+  halfBuiltVaultDetail,
+  inspectVault,
+  runSetup,
+  type SetupExec,
+  type SetupPlan,
+  type VaultState,
+} from './setup-run.ts'
 
 // ── Common output schema ────────────────────────────────────────────
 
@@ -343,10 +350,13 @@ function relToHome(home: string, path: string): string {
 }
 
 function planText(vaultPath: string, targets: string[], reusesVault: boolean): string {
+  // Quoted: an Obsidian vault path with spaces is the normal case, and this text
+  // is meant to be copy-pasteable.
+  const quoted = `"${vaultPath}"`
   return [
     reusesVault
-      ? `1) memory use --vault ${vaultPath}（复用已有记忆库，不写入库内容）`
-      : `1) memory init --vault ${vaultPath}`,
+      ? `1) memory use --vault ${quoted}（复用已有记忆库，不写入库内容）`
+      : `1) memory init --vault ${quoted}`,
     '2) deploy apply：写入/更新托管段落（带 .bak 备份，可回滚）',
     targets.length ? `   目标：${targets.join('、')}` : '   目标：未检测到指令文件，跳过',
     '3) 生成 ~/.unified-memory/bin/memory（Windows 为 memory.cmd）与前缀登记.md',
@@ -354,10 +364,9 @@ function planText(vaultPath: string, targets: string[], reusesVault: boolean): s
   ].join('\n')
 }
 
-/** Whether the vault already holds the memory structure runSetup would reuse. */
-function structureExists(deps: SetupDepsForTool, vaultPath: string): boolean {
-  const probe = join(vaultPath, '50-Agent-Context')
-  return deps.exists ? deps.exists(probe) : existsSync(probe)
+/** The vault state runSetup would act on; one predicate for both call sites. */
+function vaultStateFor(deps: SetupDepsForTool, vaultPath: string): VaultState {
+  return inspectVault(vaultPath, (path) => (deps.exists ? deps.exists(path) : existsSync(path)))
 }
 
 /**
@@ -415,10 +424,15 @@ export function defineSetupTool(deps: SetupDepsForTool) {
         return { ok: true, needsConsent: false, steps: [], message, output: message }
       }
 
-      // Same probe as runSetup: an empty Obsidian folder is not a vault, and
-      // init will create the structure inside it. Saying "reuse, nothing is
-      // overwritten" there would describe a different operation.
-      const reusesVault = structureExists(deps, vaultPath)
+      // The same predicate runSetup acts on. A folder that merely matches the
+      // name is refused here too, instead of promising "reuse, nothing is
+      // overwritten" and then failing at step 1.
+      const vaultState = vaultStateFor(deps, vaultPath)
+      if (vaultState === 'incomplete') {
+        const message = halfBuiltVaultDetail(vaultPath)
+        return { ok: false, needsConsent: false, steps: [], message, output: message }
+      }
+      const reusesVault = vaultState === 'ready'
       const reason = buildConsentReason({ vaultPath, targets: targetNames, reusesVault })
       const plan = planText(vaultPath, targetNames, reusesVault)
 

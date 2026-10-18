@@ -131,6 +131,26 @@ class UseExistingVaultTest(unittest.TestCase):
         self.assertIn("memory init", str(raised.exception))
         self.assertEqual(self.config.read_text(encoding="utf-8"), "vault: C:\\keep\n")
 
+    def test_use_refuses_a_path_containing_a_hash(self):
+        # Every reader splits the config line on "#" before stripping quotes, so
+        # a vault under "C:\notes #2" would be silently truncated to "C:\notes".
+        # Refusing at the write is the only place that can be seen.
+        hashed = self.root / "notes #2"
+        (hashed / "50-Agent-Context").mkdir(parents=True)
+        self.config.write_text("vault: C:\\keep\n", encoding="utf-8")
+        with self.assertRaises(SystemExit) as raised:
+            self._run_use(hashed)
+        self.assertIn("#", str(raised.exception))
+        self.assertEqual(self.config.read_text(encoding="utf-8"), "vault: C:\\keep\n")
+
+    def test_use_quotes_the_path_in_its_advice(self):
+        # The message is copy-pasteable, and vaults with spaces are the norm.
+        spaced = self.root / "empty vault"
+        spaced.mkdir()
+        with self.assertRaises(SystemExit) as raised:
+            self._run_use(spaced)
+        self.assertIn(f'memory init --vault "{spaced}"', str(raised.exception))
+
     def test_use_twice_does_not_grow_the_config(self):
         self._run_use()
         first = self.config.read_text(encoding="utf-8")

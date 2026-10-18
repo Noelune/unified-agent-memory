@@ -88,6 +88,39 @@ describe('memory_setup consent gate', () => {
     }
   })
 
+  it('promises reuse only for a complete vault, and quotes the path', async () => {
+    // The consent text and runSetup must answer the same question the same way.
+    const structure = join('C:\\Vault', '50-Agent-Context')
+    const h = deps({ exists: (path) => path === structure || path === join(structure, '上下文索引.md') })
+    const result = (await defineSetupTool(h.deps).execute({}, { agent: 'dsh-desktop' })) as Record<string, unknown>
+    expect(result.reason).toContain('复用已存在的记忆库')
+    expect(result.reason).toContain('不覆盖已有文件')
+    expect(String(result.plan)).toContain('memory use --vault "C:\\Vault"')
+  })
+
+  it('refuses a half-built vault before asking for consent', async () => {
+    // A folder named 50-Agent-Context without the index cannot be reused and
+    // cannot be re-initialised. Asking the user to approve work that will fail
+    // at step 1 is worse than saying so now.
+    const structure = join('C:\\Vault', '50-Agent-Context')
+    let asked = 0
+    const h = deps({
+      exists: (path) => path === structure,
+      approval: () => ({
+        request: async () => {
+          asked += 1
+          return { outcome: 'allowed-once' }
+        },
+      }),
+    })
+    const result = (await defineSetupTool(h.deps).execute({}, { agent: 'dsh-desktop' })) as Record<string, unknown>
+    expect(result.ok).toBe(false)
+    expect(result.needsConsent).toBe(false)
+    expect(String(result.output)).toContain('上下文索引.md')
+    expect(asked).toBe(0)
+    expect(h.calls).toEqual([])
+  })
+
   it('fails closed when the harness offers no approval channel', async () => {
     const h = deps()
     // No `approval` dep at all: this session's "prompts are disabled" case.

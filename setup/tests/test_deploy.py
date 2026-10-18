@@ -60,6 +60,51 @@ class DeployTests(unittest.TestCase):
         self.assertIn("## 关于 50-Agent-Context 的结构", once)
         self.assertEqual(once.count(START_MARKER), 1)
 
+    def test_legacy_match_skips_a_heading_inside_a_code_fence(self):
+        # AGENTS.md files legitimately show example headings inside fences. A
+        # scan that ignores fences starts deleting at the quoted line and stops
+        # at the next real heading, which eats the closing fence and the user's
+        # text after it — the same deletion C1 was about.
+        original = (
+            "## 0. 全局\n\n示例：\n\n```md\n## 统一记忆库\n\n示例文本\n```\n\n"
+            "## 1. 用户正文\n\n必须保留\n"
+        )
+        section = build_section("dsh", "<vault>", "dsh")
+        once = replace_section(original, section)
+        self.assertIn("示例文本", once)
+        self.assertIn("## 1. 用户正文", once)
+        self.assertIn("必须保留", once)
+        self.assertEqual(once.count("```"), 2)
+        self.assertEqual(once.count(START_MARKER), 1)
+
+    def test_fence_mask_ignores_a_quoted_backtick_fence_inside_a_tilde_block(self):
+        # Quoting Markdown by nesting ``` inside ~~~ is a normal habit. A
+        # character-blind toggle treats the inner ``` as the closer, unmasks the
+        # quoted heading that follows, and deletes everything after it.
+        original = (
+            "## 0. 全局\n\n示例：\n\n~~~md\n```js\n## 统一记忆库\n```\n示例文本\n~~~\n\n"
+            "## 1. 用户正文\n\n必须保留\n"
+        )
+        section = build_section("dsh", "<vault>", "dsh")
+        once = replace_section(original, section)
+        self.assertIn("示例文本", once)
+        self.assertIn("## 1. 用户正文", once)
+        self.assertIn("必须保留", once)
+        self.assertEqual(once.count("~~~"), 2)
+        self.assertEqual(once.count(START_MARKER), 1)
+
+    def test_legacy_numbering_accepts_arabic_digits(self):
+        # "## 第3节 统一记忆库" and "## (1) 统一记忆库" are the same legacy heading
+        # written by hand; leaving them unmigrated puts two sections in the file.
+        for heading in ("## 第3节 统一记忆库", "## (1) 统一记忆库"):
+            with self.subTest(heading=heading):
+                original = f"## 0. 全局\n\n保留\n\n{heading}\n\n旧内容\n\n## 9. 其他\n\n也保留\n"
+                section = build_section("dsh", "<vault>", "dsh")
+                once = replace_section(original, section)
+                self.assertNotIn("旧内容", once)
+                self.assertIn("## 9. 其他", once)
+                self.assertEqual(once.count(START_MARKER), 1)
+
     def test_apply_file_preserves_crlf_line_endings(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "AGENTS.md"

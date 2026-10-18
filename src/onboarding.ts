@@ -146,14 +146,39 @@ export function buildRegistry(vaultPath: string, rows: RegistryRow[]): string {
   ].join('\n')
 }
 
-/** One registry table row: `| \`prefix\` | runtime | note |`. */
-function registryRow(row: RegistryRow): string {
-  return `| \`${row.prefix}\` | ${row.runtime} | ${row.note} |`
+/** One registry table row, padded to the table's `columns` so a wider table stays aligned. */
+function registryRow(row: RegistryRow, columns = 3): string {
+  const cells = [` \`${row.prefix}\` `, ` ${row.runtime} `, ` ${row.note} `]
+  while (cells.length < columns) cells.push('  ')
+  return `|${cells.join('|')}|`
 }
 
 /** The prefix of a table row, or undefined when the line is not one. */
 function rowPrefix(line: string): string | undefined {
   return /^\|\s*`([^`]+)`\s*\|/.exec(line)?.[1]
+}
+
+/** A line's own ending, so a patched line keeps the file's habit. */
+function eolOf(line: string): string {
+  return line.endsWith('\r\n') ? '\r\n' : line.endsWith('\n') ? '\n' : ''
+}
+
+/** Cells between the outer pipes of a table line. */
+function cellsOf(line: string): string[] {
+  return line.replace(/\s+$/, '').split('|').slice(1, -1)
+}
+
+/**
+ * Rewrite one row, keeping the cells beyond the three we own.
+ *
+ * A registry with a fourth column ("状态") is common; writing three cells into
+ * it collapses the row and loses whatever the user put there.
+ */
+function patchRow(line: string, row: RegistryRow, columns: number): string {
+  const cells = cellsOf(line)
+  const written = [` \`${row.prefix}\` `, ` ${row.runtime} `, ` ${row.note} `, ...cells.slice(3)]
+  while (written.length < columns) written.push('  ')
+  return `|${written.join('|')}|`
 }
 
 /**
@@ -162,27 +187,37 @@ function rowPrefix(line: string): string | undefined {
  * Two DSH nodes share one vault (`dsh-desktop-`, `dsh-web-`), and other runtimes
  * (codex, claude, …) add their own rows. The registry is a shared file people
  * also edit by hand: prose, extra columns and line endings must survive, so the
- * table is patched in place instead of regenerated. Our own prefix is rewritten
- * where it already stands, which keeps the operation idempotent.
+ * table is patched in place instead of regenerated, and only the lines we touch
+ * are rewritten. Our own prefix is rewritten where it already stands, which
+ * keeps the operation idempotent.
  */
 export function mergeRegistry(existing: string | undefined, vaultPath: string, rows: RegistryRow[]): string {
   if (!existing) return buildRegistry(vaultPath, rows)
-  const eol = existing.includes('\r\n') ? '\r\n' : '\n'
-  const lines = existing.split(/\r?\n/)
+  // Keep every line's own ending: joining the file back together with one EOL
+  // turns a one-row fix into a full-file diff in a vault that two machines write.
+  const lines = existing.match(/[^\n]*\n|[^\n]+$/g) ?? []
   const header = lines.findIndex((line) => /^\|\s*前缀\s*\|/.test(line))
   if (header < 0) return buildRegistry(vaultPath, rows)
+  const eol = eolOf(lines[header] as string) || '\n'
+  const columns = Math.max(3, cellsOf(lines[header] as string).length)
   let end = header + 1
-  while (end < lines.length && lines[end]?.trim().startsWith('|')) end += 1
+  while (end < lines.length && (lines[end] as string).trim().startsWith('|')) end += 1
 
   const pending = new Map(rows.map((row) => [row.prefix, row]))
+  const seen = new Set<string>()
+  // A hand-edited registry can hold our prefix twice. Every occurrence is
+  // rewritten to the same content (a stale duplicate would mislead the next
+  // agent), but nothing the user wrote is deleted.
   const body = lines.slice(header + 2, end).flatMap((line) => {
     const prefix = rowPrefix(line)
     const row = prefix === undefined ? undefined : pending.get(prefix)
     if (!row || prefix === undefined) return [line]
-    pending.delete(prefix)
-    return [registryRow(row)]
+    seen.add(prefix)
+    return [`${patchRow(line, row, columns)}${eolOf(line) || eol}`]
   })
-  for (const row of pending.values()) body.push(registryRow(row))
+  for (const [prefix, row] of pending) {
+    if (!seen.has(prefix)) body.push(`${registryRow(row, columns)}${eol}`)
+  }
 
-  return [...lines.slice(0, header + 2), ...body, ...lines.slice(end)].join(eol)
+  return [...lines.slice(0, header + 2), ...body, ...lines.slice(end)].join('')
 }

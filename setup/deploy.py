@@ -15,7 +15,10 @@ END_MARKER = "<!-- unified-agent-memory:end -->"
 # Headings written by pre-marker deployments; only a heading naming one of these
 # is a legacy section, never any heading that happens to precede it.
 LEGACY_TOKENS = ("统一记忆", "Agent提交区", "50-Agent-Context")
-_LEGACY_NUMBERING = re.compile(r"^\s*(?:\d+[.、)]|第[一二三四五六七八九十]+[节章]\s*)\s*")
+_LEGACY_NUMBERING = re.compile(
+    r"^\s*(?:\d+[.、)]|[(（]\d+[)）]|第[0-9一二三四五六七八九十百]+[节章]\s*)\s*"
+)
+FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})")
 LOCK_SUFFIX = ".unified-agent-memory.deploy.lock"
 BACKUP_RE = re.compile(r"\.bak-(\d{8}-\d{6}-\d{3})$")
 
@@ -86,6 +89,33 @@ def _splice(head: str, section: str, tail: str, eol: str) -> str:
     return merged + tail if tail else merged
 
 
+def _fence_mask(lines: list[str]) -> list[bool]:
+    """Per-line "is inside or on a code fence" flags.
+
+    AGENTS.md files quote headings inside ``` blocks. Scanning those as real
+    headings starts a deletion at the quoted line and ends it at the next
+    unquoted `## ` — eating the closing fence and the user's text after it.
+
+    A fence only closes on its own marker character and on a run at least as
+    long as the opening one (what CommonMark requires), so a ```` ``` ```` line
+    inside a `~~~` block — a common way to quote Markdown — does not end it.
+    """
+    mask: list[bool] = []
+    open_marker = ""
+    for line in lines:
+        match = FENCE_RE.match(line)
+        if match:
+            marker = match.group(1)
+            if not open_marker:
+                open_marker = marker
+            elif marker[0] == open_marker[0] and len(marker) >= len(open_marker):
+                open_marker = ""
+            mask.append(True)  # the fence line itself is never a heading
+            continue
+        mask.append(bool(open_marker))
+    return mask
+
+
 def _is_legacy_heading(line: str) -> bool:
     """Whether this heading, and only this heading, names the managed section.
 
@@ -112,9 +142,24 @@ def _replace_section(text: str, section: str, eol: str) -> str:
     # one heading's body, and only that one. Matching further than the heading
     # that names the section deletes whatever came before it.
     lines = text.splitlines(keepends=True)
-    start = next((index for index, line in enumerate(lines) if _is_legacy_heading(line)), None)
+    fenced = _fence_mask(lines)
+    start = next(
+        (
+            index
+            for index, line in enumerate(lines)
+            if not fenced[index] and _is_legacy_heading(line)
+        ),
+        None,
+    )
     if start is not None:
-        end = next((index for index in range(start + 1, len(lines)) if lines[index].startswith("## ")), len(lines))
+        end = next(
+            (
+                index
+                for index in range(start + 1, len(lines))
+                if not fenced[index] and lines[index].startswith("## ")
+            ),
+            len(lines),
+        )
         return _splice("".join(lines[:start]), section, "".join(lines[end:]), eol)
 
     separator = "" if not text or text.endswith(("\n", "\r")) else eol
