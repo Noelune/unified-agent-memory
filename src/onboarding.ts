@@ -19,7 +19,13 @@ export const ONBOARDING_VERSION = 1
 /** Everything a grant covers. Adding a member re-asks, which is the point. */
 export const ONBOARDING_SCOPE = ['vault', 'config', 'instructions', 'shim', 'registry'] as const
 
-export interface OnboardingState {
+/**
+ * What we persist after the user agrees.
+ *
+ * A type alias, not an interface: the tool contract wants an implicit JSON
+ * index signature and TypeScript only infers that for aliases.
+ */
+export type OnboardingState = {
   version: number
   consent: 'granted'
   grantedAt: string

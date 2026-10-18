@@ -43,6 +43,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { resolveConfig, runCore } from './utils.ts'
 import { registerAll } from './tools.ts'
+import type { ApprovalLike } from './tools.ts'
 import { checkForUpdate, getUpdateInfo } from './updater.ts'
 import { buildStatusPayload } from './status-payload.ts'
 import { guard, guardWrite, queryParam, readBody, sendJson } from './routes.ts'
@@ -143,8 +144,30 @@ export function apply(ctx: Context, config: Record<string, unknown> = {}): void 
   const cfg = resolveConfig(config)
   const configured = Boolean(cfg.vaultPath)
 
-  // ---- Register 5 model tools ----
-  registerAll(ctx, cfg, configured)
+  // ---- Optional approval service (memory_setup asks through it) ----
+  // `ctx.inject(deps, cb)` is Cordis' plugin() under the hood: the callback gets
+  // a child context that may read the injected service. Closing over the OUTER
+  // ctx and reading the service from it is exactly what made the webServer
+  // access throw before (see `inject` above). A mutable ref rather than a direct
+  // capture because the service can appear after this plugin starts, and the
+  // tool only reads it at call time.
+  let approvalRef: ApprovalLike | undefined
+  const self = ctx as unknown as {
+    inject?: (deps: string[], apply: (child: { approval?: ApprovalLike }) => void) => unknown
+  }
+  if (typeof self.inject === 'function') {
+    self.inject(['approval'], (child) => {
+      approvalRef = child.approval
+    })
+  }
+
+  // ---- Register the model tools (memory_setup included) ----
+  registerAll(ctx, cfg, configured, {
+    approval: () => approvalRef,
+    // setup writes a vault and a config; the live tools must stop reporting
+    // "not configured" without requiring a restart.
+    reload: () => Object.assign(cfg, resolveConfig(config)),
+  })
 
   // ---- Fire-and-forget update check against npm registry ----
   checkForUpdate()
