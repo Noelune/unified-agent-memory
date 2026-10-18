@@ -26,6 +26,28 @@ class DeployTests(unittest.TestCase):
         self.assertTrue(once.startswith("before\n"))
         self.assertTrue(once.endswith("after\n"))
 
+    def test_legacy_section_replacement_keeps_neighbouring_headings(self):
+        original = "## 0. 全局\n\n保留我\n\n## 1. 统一记忆\n\n旧内容\n\n## 2. 其他\n\n也保留\n"
+        section = build_section("dsh", "<vault>", "dsh")
+        once = replace_section(original, section)
+        self.assertIn("## 0. 全局", once)
+        self.assertIn("保留我", once)
+        self.assertIn("## 2. 其他", once)
+        self.assertIn("也保留", once)
+        self.assertNotIn("旧内容", once)
+        self.assertEqual(once.count(START_MARKER), 1)
+        self.assertEqual(once.count(END_MARKER), 1)
+
+    def test_apply_file_preserves_crlf_line_endings(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "AGENTS.md"
+            path.write_bytes("## 自用\r\n\r\n内容\r\n".encode("utf-8"))
+            section = build_section("dsh", "<vault>", "dsh")
+            apply_file(path, section)
+            data = path.read_bytes().decode("utf-8")
+            self.assertNotIn("\n", data.replace("\r\n", ""))
+            self.assertIn("内容", data)
+
     def test_apply_file_dry_run_does_not_write(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "AGENTS.md"

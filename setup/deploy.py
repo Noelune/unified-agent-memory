@@ -12,6 +12,9 @@ from pathlib import Path
 
 START_MARKER = "<!-- unified-agent-memory:begin -->"
 END_MARKER = "<!-- unified-agent-memory:end -->"
+# Headings written by pre-marker deployments; only a heading naming one of these
+# is a legacy section, never any heading that happens to precede it.
+LEGACY_TOKENS = ("统一记忆", "Agent提交区", "50-Agent-Context")
 LOCK_SUFFIX = ".unified-agent-memory.deploy.lock"
 BACKUP_RE = re.compile(r"\.bak-(\d{8}-\d{6}-\d{3})$")
 
@@ -59,22 +62,44 @@ def build_section(agent: str, vault: str, prefix: str) -> str:
 
 def replace_section(text: str, section: str) -> str:
     """Replace one marker block, or append one when no managed block exists."""
+    # Work in LF and restore the file's own line endings at the end, so a
+    # managed write never rewrites every line of the user's file.
+    crlf = "\r\n" in text and "\n" not in text.replace("\r\n", "")
+    updated = _replace_section_lf(text.replace("\r\n", "\n"), section.replace("\r\n", "\n"))
+    return updated.replace("\n", "\r\n") if crlf else updated
+
+
+def _replace_section_lf(text: str, section: str) -> str:
     start = text.find(START_MARKER)
     end = text.find(END_MARKER)
     if start >= 0 or end >= 0:
         if start < 0 or end < start:
             raise ValueError("deployment markers are incomplete or out of order")
         end += len(END_MARKER)
-        before = text[:start].rstrip("\r\n")
-        after = text[end:].lstrip("\r\n")
+        before = text[:start].rstrip("\n")
+        after = text[end:].lstrip("\n")
         return f"{before}\n{section.rstrip()}\n{after}" if after else f"{before}\n{section.rstrip()}\n"
 
-    # Legacy sections are replaced as a whole, preserving all other headings.
-    legacy = re.compile(r"(?ms)^## .*?(?:统一记忆|Agent提交区|50-Agent-Context).*?(?=^## |\Z)")
-    match = legacy.search(text)
-    if match:
-        return text[: match.start()] + section + text[match.end() :]
-    separator = "" if not text or text.endswith(("\n", "\r")) else "\n"
+    # A pre-marker deployment left a "## 统一记忆…" section behind: replace that
+    # one heading's body, and only that one. Matching further than the heading
+    # that names the section deletes whatever came before it.
+    lines = text.splitlines(keepends=True)
+    start = next(
+        (
+            index
+            for index, line in enumerate(lines)
+            if line.startswith("## ") and any(token in line for token in LEGACY_TOKENS)
+        ),
+        None,
+    )
+    if start is not None:
+        end = next((index for index in range(start + 1, len(lines)) if lines[index].startswith("## ")), len(lines))
+        head = "".join(lines[:start])
+        if head and not head.endswith("\n"):
+            head += "\n"
+        return head + section + "".join(lines[end:])
+
+    separator = "" if not text or text.endswith("\n") else "\n"
     return text + separator + section
 
 
@@ -121,11 +146,16 @@ def _next_backup(path: Path) -> Path:
     return candidate
 
 
+def _read_text(path: Path) -> str:
+    """Read without newline translation so `replace_section` sees the real bytes."""
+    return path.read_bytes().decode("utf-8")
+
+
 def apply_file(path: Path, section: str, *, dry_run: bool = False) -> dict[str, object]:
     path = Path(path).expanduser()
     if not path.is_file():
         raise FileNotFoundError(path)
-    original = path.read_text(encoding="utf-8")
+    original = _read_text(path)
     updated = replace_section(original, section)
     changed = updated != original
     result: dict[str, object] = {"path": path, "changed": changed, "written": False, "backup": None}
@@ -133,18 +163,18 @@ def apply_file(path: Path, section: str, *, dry_run: bool = False) -> dict[str, 
         return result
     with deployment_lock(path):
         # Re-read after locking so concurrent deployment cannot overwrite newer content.
-        original = path.read_text(encoding="utf-8")
+        original = _read_text(path)
         updated = replace_section(original, section)
         if updated == original:
             result["changed"] = False
             return result
         backup = _next_backup(path)
-        backup.write_text(original, encoding="utf-8", newline="")
+        backup.write_bytes(original.encode("utf-8"))
         temporary = path.with_name(path.name + ".tmp-deploy")
         try:
-            temporary.write_text(updated, encoding="utf-8", newline="")
+            temporary.write_bytes(updated.encode("utf-8"))
             os.replace(temporary, path)
-            verified = path.read_text(encoding="utf-8")
+            verified = _read_text(path)
             if verified != updated or verified.count(START_MARKER) != 1 or verified.count(END_MARKER) != 1:
                 raise OSError("post-write verification failed")
         except Exception:
