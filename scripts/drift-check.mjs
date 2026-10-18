@@ -77,7 +77,9 @@ const utilsPath = resolve(ROOT, 'src/utils.ts')
 if (existsSync(utilsPath)) {
   const utilsContent = readFileSync(utilsPath, 'utf-8')
 
-  const expectedKeys = ['vaultPath', 'pythonPath', 'corePath', 'remoteEnabled']
+  // agentName is in this list on purpose: it decides the submission prefix, so
+  // silently dropping it would send every runtime back to a single `dsh-*`.
+  const expectedKeys = ['vaultPath', 'pythonPath', 'corePath', 'remoteEnabled', 'agentName']
   for (const key of expectedKeys) {
     if (utilsContent.includes(key)) {
       ok(`Config key '${key}' found in src/utils.ts`)
@@ -86,7 +88,7 @@ if (existsSync(utilsPath)) {
     }
   }
 
-  const expectedEnvs = ['UNIFIED_MEMORY_VAULT', 'UNIFIED_MEMORY_PYTHON', 'UNIFIED_MEMORY_COREPATH']
+  const expectedEnvs = ['UNIFIED_MEMORY_VAULT', 'UNIFIED_MEMORY_PYTHON', 'UNIFIED_MEMORY_COREPATH', 'UNIFIED_MEMORY_AGENT']
   for (const env of expectedEnvs) {
     if (utilsContent.includes(env)) {
       ok(`Env var '${env}' found in src/utils.ts`)

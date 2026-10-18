@@ -111,8 +111,18 @@ export function resolveConfig(config: Record<string, unknown> = {}): PluginConfi
   const vaultPath = String(
     config.vaultPath || env.UNIFIED_MEMORY_VAULT || readCoreConfigVault() || '',
   )
+  // The agent name is the submission file prefix, i.e. the attribution of every
+  // fact this runtime writes. Several DSH runtimes can share one vault (desktop,
+  // web, tui, headless…), so the fallback follows DSH_PROFILE — which the host
+  // always sets — instead of collapsing them all into "dsh".
+  const agentName = String(
+    config.agentName ||
+      env.UNIFIED_MEMORY_AGENT ||
+      (env.DSH_PROFILE ? `dsh-${env.DSH_PROFILE}` : 'dsh'),
+  )
   return {
     vaultPath,
+    agentName,
     pythonPath: String(
       config.pythonPath ?? env.UNIFIED_MEMORY_PYTHON ?? 'python',
     ),
@@ -200,6 +210,19 @@ export function buildSearchArgv(query: string, opts: SearchOptions = {}): string
     argv.push('--budget', String(opts.budget))
   }
   return argv
+}
+
+// ── Submit argv builder ─────────────────────────────────────────────
+
+/**
+ * Build the argv for `memory submit`.
+ *
+ * Pure and side-effect free, mirroring buildSearchArgv/buildPreviewArgv. The
+ * `--agent` value is the submission file's prefix, so it decides who the facts
+ * are attributed to: it must come from config rather than be hardcoded.
+ */
+export function buildSubmitArgv(cfg: PluginConfig, fact: string): string[] {
+  return ['submit', fact, '--agent', cfg.agentName || 'dsh']
 }
 
 // ── Preview argv builder ─────────────────────────────────────────────

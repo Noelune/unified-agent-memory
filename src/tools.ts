@@ -15,7 +15,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { PluginConfig } from './types.ts'
-import { runCore, renderText, notConfigured, buildSearchArgv, buildPreviewArgv, validateDocId, DEPLOY_TASKBOOK } from './utils.ts'
+import { runCore, renderText, notConfigured, buildSearchArgv, buildPreviewArgv, buildSubmitArgv, validateDocId, DEPLOY_TASKBOOK } from './utils.ts'
 
 // ── Common output schema ────────────────────────────────────────────
 
@@ -163,7 +163,7 @@ function defineSubmitTool(cfg: PluginConfig, configured: boolean) {
     output: { schema: TOOL_OUTPUT_SCHEMA, render: renderText },
     async execute(args: { facts?: string }) {
       if (!configured) return notConfigured('memory_submit needs vaultPath')
-      return runCore(cfg, ['submit', String(args.facts ?? ''), '--agent', 'dsh'])
+      return runCore(cfg, buildSubmitArgv(cfg, String(args.facts ?? '')))
     },
   })
 }

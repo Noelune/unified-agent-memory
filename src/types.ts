@@ -15,6 +15,14 @@ export interface PluginConfig {
   corePath: string
   /** Whether the remote index server is enabled. */
   remoteEnabled: boolean
+  /**
+   * Submission prefix this runtime writes under (`<agentName>-<stamp>-<nn>.md`).
+   *
+   * Configurable because several DSH runtimes (desktop, web, tui…) can share
+   * one vault: with a hardcoded prefix every one of them looked like the same
+   * agent. Never empty — resolveConfig always yields a usable name.
+   */
+  agentName: string
 }
 
 // ── Core execution results ───────────────────────────────────────────

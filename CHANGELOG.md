@@ -2,6 +2,25 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Fixed — 提交前缀不再硬编码
+
+- **`memory_submit` 把身份写死成 `dsh`**：插件层（`src/tools.ts`）原样调用
+  `--agent dsh`，而 core 的 `memory submit` 早已支持任意 agent 名。后果是同一台
+  机器上多个 dsh 运行时共用一个 vault 时（桌面端 `desktop`、浏览器端 `web`、
+  `tui`、`headless`……）全部写成 `dsh-<时间戳>.md`，既无法按前缀隔离，也追不出
+  是哪一端写的；同一个桌面端里 Lead 与 teammate 并行写时同样无法区分。
+  现在前缀取自 `agentName` 配置：`config.agentName` → `UNIFIED_MEMORY_AGENT`
+  → `dsh-<DSH_PROFILE>` → `dsh`。宿主每次都会设置 `DSH_PROFILE`，因此零配置
+  即得 `dsh-desktop` / `dsh-web` 等可辨前缀；不设该变量的环境仍回落 `dsh`，
+  升级不会改变既有安装的文件名。
+- **配套**：新增纯函数 `buildSubmitArgv`（与 `buildSearchArgv` /
+  `buildPreviewArgv` 同构），argv 契约可单测而无需启动 Python core；
+  `scripts/drift-check.mjs` 把 `agentName` 与 `UNIFIED_MEMORY_AGENT` 纳入必须
+  存在的键，防止将来又退回硬编码。文档同步：`docs/DESKTOP.md` 配置项一节、
+  `docs/AGENT-DEPLOY.md` 的 dsh 规则层模板（前缀写 `dsh-<profile>`）。
+
 ## [0.8.0] — 2026-10-18
 
 以真实 Obsidian vault（460 条事实 / 20 份 canonical 笔记）为基准做的

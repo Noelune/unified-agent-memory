@@ -176,8 +176,12 @@ To set it explicitly instead, add the configuration to the **desktop** profile's
 
 A patch entry replaces the matched entry's whole config, so keep every field you
 want to keep. Optional keys: `pythonPath` (default `python`), `corePath`
-(defaults to the plugin's bundled `core/`, auto-added to `PYTHONPATH`) and
-`remoteEnabled` (default `false`).
+(defaults to the plugin's bundled `core/`, auto-added to `PYTHONPATH`),
+`remoteEnabled` (default `false`) and `agentName` — the submission prefix in
+`Agent提交区/`. `agentName` defaults to `dsh-<DSH_PROFILE>` (so desktop and web
+runtimes sharing one vault stay distinguishable) and falls back to plain `dsh`
+when `DSH_PROFILE` is unset; `UNIFIED_MEMORY_AGENT` overrides it when the plugin
+config does not set it.
 
 ---
 

@@ -20,6 +20,7 @@ import {
   notConfigured,
   buildSearchArgv,
   buildPreviewArgv,
+  buildSubmitArgv,
   readCoreConfigVault,
   DEPLOY_TASKBOOK,
 } from '../src/utils.ts'
@@ -36,6 +37,10 @@ describe('resolveConfig', () => {
     delete process.env.UNIFIED_MEMORY_PYTHON
     delete process.env.UNIFIED_MEMORY_COREPATH
     delete process.env.UNIFIED_MEMORY_REMOTE
+    delete process.env.UNIFIED_MEMORY_AGENT
+    // DSH sets this in every harness process, so a test that inherits the real
+    // value would assert the developer's profile instead of the default.
+    delete process.env.DSH_PROFILE
   })
 
   afterEach(() => {
@@ -68,6 +73,26 @@ describe('resolveConfig', () => {
     expect(cfg.pythonPath).toBe('python')
     expect(cfg.remoteEnabled).toBe(false)
     expect(cfg.corePath).toContain('core')
+  })
+
+  it('defaults the agent name to dsh when neither config nor DSH_PROFILE is set', () => {
+    expect(resolveConfig().agentName).toBe('dsh')
+  })
+
+  it('derives the agent name from DSH_PROFILE so runtimes sharing one vault stay separate', () => {
+    process.env.DSH_PROFILE = 'desktop'
+    expect(resolveConfig().agentName).toBe('dsh-desktop')
+  })
+
+  it('reads UNIFIED_MEMORY_AGENT when there is no explicit config', () => {
+    process.env.UNIFIED_MEMORY_AGENT = 'team-lead'
+    expect(resolveConfig().agentName).toBe('team-lead')
+  })
+
+  it('prefers an explicit agentName over UNIFIED_MEMORY_AGENT and DSH_PROFILE', () => {
+    process.env.UNIFIED_MEMORY_AGENT = 'team-lead'
+    process.env.DSH_PROFILE = 'desktop'
+    expect(resolveConfig({ agentName: 'auditor' }).agentName).toBe('auditor')
   })
 
   it('treats an absent core config file as "no vault from that source"', () => {
@@ -301,6 +326,23 @@ describe('buildSearchArgv', () => {
   it('ignores non-positive budget', () => {
     expect(buildSearchArgv('staging', { budget: 0 })).toEqual([
       'search', 'staging', '--limit', '8',
+    ])
+  })
+})
+
+// ── buildSubmitArgv ─────────────────────────────────────────────────
+
+describe('buildSubmitArgv', () => {
+  it('passes the resolved agent name to --agent', () => {
+    const cfg = { agentName: 'dsh-desktop' } as never
+    expect(buildSubmitArgv(cfg, '- a fact')).toEqual([
+      'submit', '- a fact', '--agent', 'dsh-desktop',
+    ])
+  })
+
+  it('falls back to dsh when the config carries no agent name', () => {
+    expect(buildSubmitArgv({} as never, '- a fact')).toEqual([
+      'submit', '- a fact', '--agent', 'dsh',
     ])
   })
 })
