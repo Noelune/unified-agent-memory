@@ -67,21 +67,35 @@ export async function runSetup(plan: SetupPlan, deps: SetupDeps): Promise<SetupR
   // --force"), and --force copies the template over the user's files. A vault
   // that already has the structure is the reuse case the consent text promises,
   // so probe first and skip init entirely.
-  const reusesVault = deps.exists?.(join(plan.vaultPath, '50-Agent-Context')) === true
-  let initialised = false
+  const structure = join(plan.vaultPath, '50-Agent-Context')
+  const reusesVault = deps.exists?.(structure) === true
+  // A folder named 50-Agent-Context is not a vault: without the index the
+  // readers have nothing to show, and init cannot fill the gap (it refuses an
+  // existing structure). Stop and say so instead of reporting success.
+  if (reusesVault && deps.exists?.(join(structure, '上下文索引.md')) !== true) {
+    steps.push({
+      name: 'vault',
+      ok: false,
+      detail: `${structure} 已存在但缺少 上下文索引.md，不是完整的记忆库：先移走或改名该目录，再让 setup 重建。`,
+    })
+    return { ok: false, steps }
+  }
+
   if (reusesVault) {
-    steps.push({ name: 'vault', ok: true, detail: `复用已存在的记忆库 ${plan.vaultPath}` })
+    // Skipping init must not skip the config write: `vault:` is what every
+    // reader and the PATH shim resolve, and nothing else on this path writes it.
+    const use = await deps.exec(plan.pythonPath, ['-m', 'unified_memory.memory', 'use', '--vault', plan.vaultPath], pythonEnv)
+    steps.push({ name: 'vault', ok: use.code === 0, detail: failureDetail(use) ?? `复用已存在的记忆库 ${plan.vaultPath}` })
+    if (use.code !== 0) return { ok: false, steps }
   } else {
     const vault = await deps.exec(plan.pythonPath, ['-m', 'unified_memory.memory', 'init', '--vault', plan.vaultPath], pythonEnv)
     steps.push({ name: 'vault', ok: vault.code === 0, detail: failureDetail(vault) })
     if (vault.code !== 0) return { ok: false, steps }
-    initialised = true
   }
 
-  // A failure from here on leaves `vault:` in the core config pointing at the
-  // new vault for every runtime on the machine. Say so instead of only echoing
-  // the failing step's stderr.
-  const repointNote = initialised ? `；注意：本机默认记忆库(vault:)已指向 ${plan.vaultPath}` : ''
+  // Both branches persist `vault:`, so every runtime on the machine now
+  // resolves this vault. Say so if a later step fails.
+  const repointNote = `；注意：本机默认记忆库(vault:)已指向 ${plan.vaultPath}`
 
   const instructions = await deps.exec(
     plan.pythonPath,

@@ -27,6 +27,7 @@ function recorder(code = 0) {
 /** Which core action a recorded call represents, so order assertions stay readable. */
 function actionOf(args: string[]): string {
   if (args.includes('init')) return 'init'
+  if (args.includes('use')) return 'use'
   if (args.includes('apply')) return 'apply'
   if (args.includes('status')) return 'selfcheck'
   return 'unknown'
@@ -74,12 +75,32 @@ describe('runSetup', () => {
     // existing Obsidian vault is the advertised reuse case, and the 0.8.0
     // upgrade case, so it must skip init entirely.
     const { calls, exec } = recorder()
-    const exists = (path: string) => path === 'C:\\Vault\\50-Agent-Context'
+    const exists = (path: string) =>
+      path === 'C:\\Vault\\50-Agent-Context' || path === 'C:\\Vault\\50-Agent-Context\\上下文索引.md'
     const result = await runSetup(plan(), { exec, writeFile: () => {}, exists })
     expect(result.ok).toBe(true)
-    expect(calls.map((call) => actionOf(call.args))).toEqual(['apply', 'selfcheck'])
+    // `use` is what persists `vault:` on this path. init is the only other
+    // writer, and it is skipped here, so without this call every reader — and
+    // the shim, which runs without UNIFIED_MEMORY_VAULT — keeps the old vault.
+    expect(calls.map((call) => actionOf(call.args))).toEqual(['use', 'apply', 'selfcheck'])
+    expect(calls[0]?.args).toEqual(['-m', 'unified_memory.memory', 'use', '--vault', 'C:\\Vault'])
+    expect(calls[0]?.env.UNIFIED_MEMORY_VAULT).toBe('C:\\Vault')
     expect(result.steps[0]).toMatchObject({ name: 'vault', ok: true })
     expect(result.steps[0]?.detail).toContain('复用')
+  })
+
+  it('treats a directory without the index as half-built and stops', async () => {
+    // Reusing a folder that merely happens to be named 50-Agent-Context would
+    // report success while search/show have nothing to read, and init cannot
+    // repair it (it refuses an existing structure).
+    const { calls, exec } = recorder()
+    const exists = (path: string) => path === 'C:\\Vault\\50-Agent-Context'
+    const result = await runSetup(plan(), { exec, writeFile: () => {}, exists })
+    expect(result.ok).toBe(false)
+    expect(calls).toEqual([])
+    expect(result.steps).toHaveLength(1)
+    expect(result.steps[0]).toMatchObject({ name: 'vault', ok: false })
+    expect(result.steps[0]?.detail).toContain('上下文索引.md')
   })
 
   it('merges the registry so other agents keep their rows', async () => {
@@ -98,7 +119,8 @@ describe('runSetup', () => {
       exec,
       writeFile: (path, content) => written.push({ path, content }),
       readFile: (path) => (path.includes('前缀登记') ? existing : undefined),
-      exists: (path) => path === 'C:\\Vault\\50-Agent-Context',
+      exists: (path) =>
+        path === 'C:\\Vault\\50-Agent-Context' || path === 'C:\\Vault\\50-Agent-Context\\上下文索引.md',
     })
     const registry = written.find((item) => item.path.includes('前缀登记'))
     expect(registry?.content).toContain('`dsh-web-`')

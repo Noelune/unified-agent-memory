@@ -495,11 +495,17 @@ else:
 - 授权记录只免掉「再问一次」，不免掉「干活」：`apply: true` 即使已有授权也照样重跑一遍，
   用来补写上次失败的步骤（`init` 已成功时不会重复初始化）。
 - `steps[].name` 取值：`vault` / `instructions` / `shim` / `registry` / `selfcheck`；首个失败即中止，
-  `ok` 为 `false`，`detail` 带退出码与截断后的 stderr。`init` 真的跑过而后续步骤失败时，
-  该步 `detail` 末尾追加 `；注意：本机默认记忆库(vault:)已指向 <path>`——`init` 会写
-  `~/.unified-memory.yaml`，那台机器此后所有运行时都指向新 vault，不能只报一句失败。
-- `vault` 步骤是**幂等**的：`<vault>/50-Agent-Context` 已存在时跳过 `memory init`（`init` 对已存在的
-  vault 会直接 `SystemExit`，`--force` 又会用模版覆盖用户笔记），`detail` 写「复用已存在的记忆库」。
+  `ok` 为 `false`，`detail` 带退出码与截断后的 stderr。`vault` 步骤成功后的任何一步失败时，
+  该步 `detail` 末尾追加 `；注意：本机默认记忆库(vault:)已指向 <path>`——`init` 与 `use` 都会写
+  `~/.unified-memory.yaml`（详见下条），那台机器此后所有运行时都指向新 vault，不能只报一句失败。
+- `vault` 步骤是**幂等**的：`<vault>/50-Agent-Context` 已存在时改跑 `memory use --vault <vault>`
+  （`init` 对已存在的 vault 会直接 `SystemExit`，`--force` 又会用模版覆盖用户笔记），
+  `detail` 写「复用已存在的记忆库」。
+  - 复用时**必须**仍然写配置：`vault:` 是读取工具与 PATH 包装器（不设 `UNIFIED_MEMORY_VAULT`）唯一的
+    解析来源，`init` 是另一条路径上的唯一写者；跳过它会让五个读工具继续「未配置」，包装器退回
+    `~/AgentMemory`。`memory use` 只改 `~/.unified-memory.yaml` 的 `vault:` 行，不写库内任何文件。
+  - 复用探针要求 `<vault>/50-Agent-Context/上下文索引.md` 存在：只有同名目录时按「不是完整的记忆库」
+    失败并提示移走/改名，绝不用 `--force` 硬覆盖。
 - `shim` 步骤按平台落 `~/.unified-memory/bin/memory.cmd`（win32）或 `memory`（`#!/bin/sh`，
   POSIX 上 `chmod 0o755`）；内容与磁盘一致时跳过。`registry` 步骤**合并**而不是重写
   `50-Agent-Context/Agent提交区/前缀登记.md`，其他运行时的行不会被抹掉。

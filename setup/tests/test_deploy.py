@@ -38,6 +38,28 @@ class DeployTests(unittest.TestCase):
         self.assertEqual(once.count(START_MARKER), 1)
         self.assertEqual(once.count(END_MARKER), 1)
 
+    def test_legacy_migration_is_idempotent(self):
+        # The first deploy migrates a pre-marker section, the second one finds
+        # markers. Both must produce the same bytes, or every run rewrites the
+        # file and takes another backup.
+        original = "## 0. 全局\n\n保留我\n\n## 1. 统一记忆\n\n旧内容\n\n## 2. 其他\n\n也保留\n"
+        section = build_section("dsh", "<vault>", "dsh")
+        once = replace_section(original, section)
+        twice = replace_section(once, section)
+        self.assertEqual(once, twice)
+        self.assertTrue(once.startswith("## 0. 全局\n\n保留我\n"))
+
+    def test_legacy_match_ignores_a_heading_that_only_mentions_the_token(self):
+        # "## 关于 50-Agent-Context 的结构" is the user's own heading. Matching
+        # the token anywhere inside a heading deletes a section the plugin never
+        # owned.
+        original = "## 关于 50-Agent-Context 的结构\n\n用户自己的说明\n\n## 2. 其他\n\n保留\n"
+        section = build_section("dsh", "<vault>", "dsh")
+        once = replace_section(original, section)
+        self.assertIn("用户自己的说明", once)
+        self.assertIn("## 关于 50-Agent-Context 的结构", once)
+        self.assertEqual(once.count(START_MARKER), 1)
+
     def test_apply_file_preserves_crlf_line_endings(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "AGENTS.md"
@@ -47,6 +69,20 @@ class DeployTests(unittest.TestCase):
             data = path.read_bytes().decode("utf-8")
             self.assertNotIn("\n", data.replace("\r\n", ""))
             self.assertIn("内容", data)
+
+    def test_mixed_line_endings_survive_a_managed_write(self):
+        # Files edited on two machines are often mixed. Normalizing the whole
+        # file to one style rewrites every line, so a one-section deploy shows
+        # up as a total diff in the user's repo.
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "AGENTS.md"
+            original = "## 自用\r\n\r\nA\n## 2. 其他\r\n\r\nB\n"
+            path.write_bytes(original.encode("utf-8"))
+            apply_file(path, build_section("dsh", "<vault>", "dsh"))
+            data = path.read_bytes().decode("utf-8")
+            self.assertTrue(data.startswith(original), "the user's lines are byte-identical")
+            self.assertEqual(data.count("\n") - data.count("\r\n"), 2, "no bare LF line was converted")
+            self.assertIn(START_MARKER, data)
 
     def test_apply_file_dry_run_does_not_write(self):
         with tempfile.TemporaryDirectory() as temp:

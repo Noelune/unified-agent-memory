@@ -1,3 +1,5 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { defineSetupTool, registerAll, type SetupDepsForTool } from '../src/tools.ts'
@@ -70,6 +72,20 @@ describe('memory_setup consent gate', () => {
     expect(result.hint).toContain('同意')
     expect(h.calls).toEqual([])
     expect(h.written).toEqual([])
+  })
+
+  it('does not claim to reuse a directory that has no memory structure yet', async () => {
+    // An empty Obsidian folder is not a memory vault: runSetup will create the
+    // structure there, so the prompt must not promise "reuse, no overwrite".
+    const root = mkdtempSync(join(tmpdir(), 'uam-consent-'))
+    try {
+      const h = deps({ cfg: { ...cfg(), vaultPath: root } })
+      const result = (await defineSetupTool(h.deps).execute({}, { agent: 'dsh-desktop' })) as Record<string, unknown>
+      expect(result.reason).toContain('创建记忆库')
+      expect(result.reason).not.toContain('复用已存在的记忆库')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
   it('fails closed when the harness offers no approval channel', async () => {

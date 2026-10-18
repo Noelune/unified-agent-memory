@@ -9,6 +9,7 @@ import {
   buildShim,
   consentSatisfied,
   detectInstructionTargets,
+  mergeRegistry,
   onboardingStatePath,
   readOnboardingState,
   resolveSetupVault,
@@ -123,5 +124,47 @@ describe('shim and registry content', () => {
     ])
     expect(md).toContain('| `dsh-desktop-` | dsh 桌面端 | DSH_PROFILE=desktop |')
     expect(md).toContain('canonical')
+  })
+
+  describe('mergeRegistry', () => {
+    const rows = [{ prefix: 'dsh-desktop-', runtime: 'dsh 桌面端', note: 'DSH_PROFILE=desktop' }]
+
+    it('keeps the user prose, extra columns and CRLF of an existing registry', () => {
+      // The registry is a shared file the user may edit and add columns to.
+      // Regenerating it from parsed rows silently deletes everything the
+      // parser does not understand.
+      const existing = [
+        '# 提交前缀登记',
+        '',
+        '说明：只登记前缀，不登记凭据',
+        '',
+        '| 前缀 | 运行时 | 说明 | 状态 |',
+        '| --- | --- | --- | --- |',
+        '| `codex-` | codex | 手动登记 | 在用 |',
+        '',
+        '尾注：新增运行时请提 PR',
+        '',
+      ].join('\r\n')
+      const merged = mergeRegistry(existing, 'C:\\Vault', rows)
+      expect(merged).toContain('说明：只登记前缀，不登记凭据')
+      expect(merged).toContain('尾注：新增运行时请提 PR')
+      expect(merged).toContain('| `codex-` | codex | 手动登记 | 在用 |')
+      expect(merged).toContain('| `dsh-desktop-` | dsh 桌面端 | DSH_PROFILE=desktop |')
+      expect(merged.replace(/\r\n/g, '')).not.toContain('\n')
+    })
+
+    it('is idempotent and replaces this runtime row in place', () => {
+      const once = mergeRegistry(undefined, 'C:\\Vault', rows)
+      const twice = mergeRegistry(once, 'C:\\Vault', rows)
+      expect(twice).toBe(once)
+      const stale = once.replace(
+        '| `dsh-desktop-` | dsh 桌面端 | DSH_PROFILE=desktop |',
+        '| `dsh-desktop-` | 旧说明 | 旧 |',
+      )
+      const updated = mergeRegistry(stale, 'C:\\Vault', rows)
+      expect(updated).toContain('| `dsh-desktop-` | dsh 桌面端 | DSH_PROFILE=desktop |')
+      expect(updated).not.toContain('旧说明')
+      expect(updated.match(/`dsh-desktop-`/g)).toHaveLength(1)
+    })
   })
 })

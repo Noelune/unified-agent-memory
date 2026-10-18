@@ -146,20 +146,43 @@ export function buildRegistry(vaultPath: string, rows: RegistryRow[]): string {
   ].join('\n')
 }
 
+/** One registry table row: `| \`prefix\` | runtime | note |`. */
+function registryRow(row: RegistryRow): string {
+  return `| \`${row.prefix}\` | ${row.runtime} | ${row.note} |`
+}
+
+/** The prefix of a table row, or undefined when the line is not one. */
+function rowPrefix(line: string): string | undefined {
+  return /^\|\s*`([^`]+)`\s*\|/.exec(line)?.[1]
+}
+
 /**
  * Upsert rows into an existing registry.
  *
- * Two DSH nodes share one vault (`dsh-desktop-`, `dsh-web-`), and codex/claude
- * rows are written by `deploy.py`. Regenerating the file from this process's own
- * rows would silently drop every other writer's row, so existing rows win their
- * position and only matching prefixes are replaced.
+ * Two DSH nodes share one vault (`dsh-desktop-`, `dsh-web-`), and other runtimes
+ * (codex, claude, …) add their own rows. The registry is a shared file people
+ * also edit by hand: prose, extra columns and line endings must survive, so the
+ * table is patched in place instead of regenerated. Our own prefix is rewritten
+ * where it already stands, which keeps the operation idempotent.
  */
 export function mergeRegistry(existing: string | undefined, vaultPath: string, rows: RegistryRow[]): string {
-  const merged = new Map<string, RegistryRow>()
-  for (const line of (existing ?? '').split(/\r?\n/)) {
-    const match = /^\|\s*`([^`]+)`\s*\|\s*([^|]*?)\s*\|\s*([^|]*?)\s*\|\s*$/.exec(line)
-    if (match) merged.set(match[1]!, { prefix: match[1]!, runtime: match[2]!, note: match[3]! })
-  }
-  for (const row of rows) merged.set(row.prefix, row)
-  return buildRegistry(vaultPath, [...merged.values()])
+  if (!existing) return buildRegistry(vaultPath, rows)
+  const eol = existing.includes('\r\n') ? '\r\n' : '\n'
+  const lines = existing.split(/\r?\n/)
+  const header = lines.findIndex((line) => /^\|\s*前缀\s*\|/.test(line))
+  if (header < 0) return buildRegistry(vaultPath, rows)
+  let end = header + 1
+  while (end < lines.length && lines[end]?.trim().startsWith('|')) end += 1
+
+  const pending = new Map(rows.map((row) => [row.prefix, row]))
+  const body = lines.slice(header + 2, end).flatMap((line) => {
+    const prefix = rowPrefix(line)
+    const row = prefix === undefined ? undefined : pending.get(prefix)
+    if (!row || prefix === undefined) return [line]
+    pending.delete(prefix)
+    return [registryRow(row)]
+  })
+  for (const row of pending.values()) body.push(registryRow(row))
+
+  return [...lines.slice(0, header + 2), ...body, ...lines.slice(end)].join(eol)
 }

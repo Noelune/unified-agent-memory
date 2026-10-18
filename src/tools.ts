@@ -342,14 +342,22 @@ function relToHome(home: string, path: string): string {
   return path.slice(root.length).replace(/^[\\/]+/, '').replace(/\\/g, '/')
 }
 
-function planText(vaultPath: string, targets: string[]): string {
+function planText(vaultPath: string, targets: string[], reusesVault: boolean): string {
   return [
-    `1) memory init --vault ${vaultPath}`,
+    reusesVault
+      ? `1) memory use --vault ${vaultPath}（复用已有记忆库，不写入库内容）`
+      : `1) memory init --vault ${vaultPath}`,
     '2) deploy apply：写入/更新托管段落（带 .bak 备份，可回滚）',
     targets.length ? `   目标：${targets.join('、')}` : '   目标：未检测到指令文件，跳过',
-    '3) 生成 ~/.unified-memory/bin/memory.cmd 与 前缀登记.md',
+    '3) 生成 ~/.unified-memory/bin/memory（Windows 为 memory.cmd）与前缀登记.md',
     '4) memory status 自检',
   ].join('\n')
+}
+
+/** Whether the vault already holds the memory structure runSetup would reuse. */
+function structureExists(deps: SetupDepsForTool, vaultPath: string): boolean {
+  const probe = join(vaultPath, '50-Agent-Context')
+  return deps.exists ? deps.exists(probe) : existsSync(probe)
 }
 
 /**
@@ -407,12 +415,12 @@ export function defineSetupTool(deps: SetupDepsForTool) {
         return { ok: true, needsConsent: false, steps: [], message, output: message }
       }
 
-      const reason = buildConsentReason({
-        vaultPath,
-        targets: targetNames,
-        reusesVault: existsSync(vaultPath),
-      })
-      const plan = planText(vaultPath, targetNames)
+      // Same probe as runSetup: an empty Obsidian folder is not a vault, and
+      // init will create the structure inside it. Saying "reuse, nothing is
+      // overwritten" there would describe a different operation.
+      const reusesVault = structureExists(deps, vaultPath)
+      const reason = buildConsentReason({ vaultPath, targets: targetNames, reusesVault })
+      const plan = planText(vaultPath, targetNames, reusesVault)
 
       const approval = deps.approval?.()
       let granted = alreadyGranted

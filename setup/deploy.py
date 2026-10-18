@@ -15,6 +15,7 @@ END_MARKER = "<!-- unified-agent-memory:end -->"
 # Headings written by pre-marker deployments; only a heading naming one of these
 # is a legacy section, never any heading that happens to precede it.
 LEGACY_TOKENS = ("统一记忆", "Agent提交区", "50-Agent-Context")
+_LEGACY_NUMBERING = re.compile(r"^\s*(?:\d+[.、)]|第[一二三四五六七八九十]+[节章]\s*)\s*")
 LOCK_SUFFIX = ".unified-agent-memory.deploy.lock"
 BACKUP_RE = re.compile(r"\.bak-(\d{8}-\d{6}-\d{3})$")
 
@@ -62,45 +63,62 @@ def build_section(agent: str, vault: str, prefix: str) -> str:
 
 def replace_section(text: str, section: str) -> str:
     """Replace one marker block, or append one when no managed block exists."""
-    # Work in LF and restore the file's own line endings at the end, so a
-    # managed write never rewrites every line of the user's file.
-    crlf = "\r\n" in text and "\n" not in text.replace("\r\n", "")
-    updated = _replace_section_lf(text.replace("\r\n", "\n"), section.replace("\r\n", "\n"))
-    return updated.replace("\n", "\r\n") if crlf else updated
+    # The markers are ASCII, so the splice runs on the raw text and only the
+    # inserted block is written in the file's dominant ending. Normalizing the
+    # whole file (what an LF round-trip did) turned a one-section deploy into a
+    # total diff of a mixed-ending file.
+    crlf = text.count("\r\n")
+    eol = "\r\n" if crlf * 2 > text.count("\n") else "\n"
+    body = section.replace("\r\n", "\n").replace("\n", eol).rstrip()
+    return _replace_section(text, body, eol)
 
 
-def _replace_section_lf(text: str, section: str) -> str:
+def _splice(head: str, section: str, tail: str, eol: str) -> str:
+    """Join one managed section between the surrounding text.
+
+    Every path goes through here so that migrating a legacy section and then
+    re-running on the migrated file produce identical bytes; otherwise the
+    second run rewrites the file and takes another backup.
+    """
+    head = head.rstrip("\r\n")
+    tail = tail.lstrip("\r\n")
+    merged = f"{head}{eol}{section}{eol}" if head else f"{section}{eol}"
+    return merged + tail if tail else merged
+
+
+def _is_legacy_heading(line: str) -> bool:
+    """Whether this heading, and only this heading, names the managed section.
+
+    The title has to *start* with a token (after optional numbering). A heading
+    that merely mentions one — "## 关于 50-Agent-Context 的结构" — is the user's,
+    and treating it as ours deletes their text.
+    """
+    if not line.startswith("## "):
+        return False
+    title = _LEGACY_NUMBERING.sub("", line[3:]).lstrip()
+    return title.startswith(LEGACY_TOKENS)
+
+
+def _replace_section(text: str, section: str, eol: str) -> str:
     start = text.find(START_MARKER)
     end = text.find(END_MARKER)
     if start >= 0 or end >= 0:
         if start < 0 or end < start:
             raise ValueError("deployment markers are incomplete or out of order")
         end += len(END_MARKER)
-        before = text[:start].rstrip("\n")
-        after = text[end:].lstrip("\n")
-        return f"{before}\n{section.rstrip()}\n{after}" if after else f"{before}\n{section.rstrip()}\n"
+        return _splice(text[:start], section, text[end:], eol)
 
     # A pre-marker deployment left a "## 统一记忆…" section behind: replace that
     # one heading's body, and only that one. Matching further than the heading
     # that names the section deletes whatever came before it.
     lines = text.splitlines(keepends=True)
-    start = next(
-        (
-            index
-            for index, line in enumerate(lines)
-            if line.startswith("## ") and any(token in line for token in LEGACY_TOKENS)
-        ),
-        None,
-    )
+    start = next((index for index, line in enumerate(lines) if _is_legacy_heading(line)), None)
     if start is not None:
         end = next((index for index in range(start + 1, len(lines)) if lines[index].startswith("## ")), len(lines))
-        head = "".join(lines[:start])
-        if head and not head.endswith("\n"):
-            head += "\n"
-        return head + section + "".join(lines[end:])
+        return _splice("".join(lines[:start]), section, "".join(lines[end:]), eol)
 
-    separator = "" if not text or text.endswith("\n") else "\n"
-    return text + separator + section
+    separator = "" if not text or text.endswith(("\n", "\r")) else eol
+    return text + separator + section + eol
 
 
 def detect_targets(home: Path | None = None) -> list[dict[str, object]]:

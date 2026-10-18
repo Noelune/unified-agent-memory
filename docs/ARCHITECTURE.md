@@ -131,7 +131,7 @@ layout; the index/model layer organizes content across layers.
 
 ## Interfaces
 
-- **CLI** — `memory init|search|show|submit|status|embed|digest|graph|doctor|gc`
+- **CLI** — `memory init|use|search|show|submit|status|embed|digest|graph|doctor|gc`
 - **dsh plugin** — `memory_search` (`hybrid` 开启三流融合检索；可选 `format`/`budget` 控制输出形态与预算),
   `memory_show`, `memory_submit`, `memory_status`
 - **Hermes integration** — `daily_cron.py` (promote/repair/forget),
