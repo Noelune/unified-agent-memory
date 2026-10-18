@@ -12,8 +12,9 @@ from unified_memory import graph as graph_mod
 
 
 class TrigramFusionTest(unittest.TestCase):
-    def test_default_weights_cover_four_streams(self):
-        self.assertEqual(len(search.DEFAULT_WEIGHTS), 4)
+    def test_default_weights_cover_all_streams(self):
+        # bm25, vector, graph, trigram, bigram
+        self.assertEqual(len(search.DEFAULT_WEIGHTS), 5)
 
     def test_rrf_fuse_accepts_four_streams(self):
         streams = [

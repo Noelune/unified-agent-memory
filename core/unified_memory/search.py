@@ -1,14 +1,15 @@
 # -*- coding: utf-8 -*-
 """search — hybrid retrieval over the memory database.
 
-Four retrieval streams are fused with weighted Reciprocal Rank Fusion (RRF),
+Five retrieval streams are fused with weighted Reciprocal Rank Fusion (RRF),
 borrowed from rohitg00/agentmemory:
 
   1. BM25 per memory line  (index.bm25_memory_search)
-  2. Cosine over semantic vectors (embed.vector_search, SiliconFlow)
-  3. Entity-graph expansion (graph.py, optional — skipped when the graph is
+  2. CJK bigram BM25       (index.bm25_bigram_search — Chinese substring recall)
+  3. Cosine over semantic vectors (embed.vector_search, SiliconFlow)
+  4. Entity-graph expansion (graph.py, optional — skipped when the graph is
      empty or disabled)
-  4. Trigram substring match (index.trigram_memory_search, optional — skipped
+  5. Trigram substring match (index.trigram_memory_search, optional — skipped
      when the trigram table/tokenizer is unavailable)
 
 The fused ranking is then:
@@ -28,7 +29,7 @@ from . import embed, index
 from .common import redact
 
 RRF_K = 60
-DEFAULT_WEIGHTS = (1.0, 1.0, 0.8, 0.9)  # bm25, vector, graph, trigram
+DEFAULT_WEIGHTS = (1.0, 1.0, 0.8, 0.9, 1.0)  # bm25, vector, graph, trigram, bigram
 MAX_PER_DOC = 3
 FORMATS = ("full", "compact", "narrative")
 
@@ -84,16 +85,19 @@ def hybrid_search(
     missing vectors; a few lines is a handful of cheap calls), so semantic
     recall is always up to date without a manual ``memory embed``.
     """
-    index.update_index(vault)  # self-healing derived db
-    if embed.configured():
-        embed.embed_missing(vault, limit=64)  # top up vectors for new facts
+    index_info = index.update_index(vault)  # self-healing derived db
+    # Top up vectors only when the vault actually changed. This used to run on
+    # every search, adding a provider round-trip to the hot path even when no
+    # fact was new.
+    if index_info["changed_docs"] and embed.configured():
+        embed.embed_missing(vault, limit=64, update=False)
     query = query.strip()
     pool = max(limit * 3, 20)
 
     bm25 = index.bm25_memory_search(vault, query, limit=pool)
 
     vec: list[dict] = []
-    query_vec = embed.embed_one(query)
+    query_vec = embed.embed_query_cached(vault, query)
     if query_vec is not None:
         vec = embed.vector_search(vault, query_vec, limit=pool)
 
@@ -106,12 +110,16 @@ def hybrid_search(
         graph = []
 
     tri = index.trigram_memory_search(vault, query, limit=pool)
+    # CJK bigram BM25: the default FTS tokenizer cannot match a Chinese
+    # substring, so without this stream Chinese queries were carried entirely
+    # by the unranked trigram/fallback scan.
+    bigram = index.bm25_bigram_search(vault, query, limit=pool)
 
-    fused = rrf_fuse([bm25, vec, graph, tri])
+    fused = rrf_fuse([bm25, vec, graph, tri, bigram])
     # Diversify: at most MAX_PER_DOC from one note.
     seen_docs: dict[str, int] = {}
     selected: list[tuple[str, float]] = []
-    doc_by_id = _doc_map(bm25, vec, graph, tri)
+    doc_by_id = _doc_map(bm25, vec, graph, tri, bigram)
     for mid, score in fused:
         doc = doc_by_id.get(mid, "")
         if seen_docs.get(doc, 0) >= MAX_PER_DOC:
@@ -158,6 +166,7 @@ def hybrid_search(
             "vector": len(vec),
             "graph": len(graph),
             "trigram": len(tri),
+            "bigram": len(bigram),
         },
     }
 
@@ -192,6 +201,23 @@ def _records_for(vault: Path, ids: list[str]) -> list[dict]:
 # --------------------------------------------------------------------------
 
 
+def estimate_tokens(text: str) -> int:
+    """Rough token count: 1 per CJK char, 1 per 4 non-CJK chars.
+
+    The previous budget check multiplied the token budget by four, which
+    counted a Chinese line of 40 characters as 10 tokens instead of ~40 and
+    let the output overshoot the caller's budget by 4×.
+    """
+    cjk = 0
+    other = 0
+    for char in text or "":
+        if "\u3400" <= char <= "\u9fff":
+            cjk += 1
+        else:
+            other += 1
+    return cjk + (other + 3) // 4
+
+
 def _format_results(results: list[dict], format_: str, budget: int | None) -> list[dict]:
     if format_ not in FORMATS:
         format_ = "full"
@@ -201,13 +227,11 @@ def _format_results(results: list[dict], format_: str, budget: int | None) -> li
                 r["line"] = r["line"][:77] + "…"
     # narrative: keep lines as-is (callers may join them); full: as-is.
     if budget:
-        # Rough token estimate: 1 CJK char ≈ 1 token, ASCII ≈ 4 chars/token.
-        budget_chars = budget * 4
         used = 0
         kept: list[dict] = []
         for r in results:
-            cost = max(1, len(r["line"]))
-            if used + cost > budget_chars:
+            cost = estimate_tokens(r["line"]) + 4  # doc/type/score overhead
+            if used + cost > budget:
                 break
             used += cost
             kept.append(r)

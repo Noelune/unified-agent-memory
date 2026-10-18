@@ -183,6 +183,26 @@ def session_dir(vault: Path) -> Path:
     return canonical_dir(vault) / SESSION_DIR
 
 
+# Sync clients (OneDrive, Dropbox, iCloud) create a second file instead of
+# merging when two machines edit the same note. Those copies are not canonical
+# notes: indexing them makes every fact appear twice with different "truth",
+# and the promoter may then classify conflicts against the copy. Detect the
+# common naming schemes and keep them out of the derived index. The user still
+# sees the files in Obsidian and can decide which copy wins.
+CONFLICT_COPY_RE = re.compile(
+    r"(?:[ _]\d+\.md$"                       # "note 2.md" / "note_2.md"
+    r"|[（(]\d+[)）]\.md$"                    # "note(2).md"
+    r"|[-_ ](?:副本|冲突副本|copy)\.md$"       # "note-副本.md"
+    r"|(?:conflicted copy|冲突副本)[^/]*\.md$)",  # "note (conflicted copy).md"
+    re.I,
+)
+
+
+def is_conflict_copy(name: str) -> bool:
+    """True for a sync-client conflict copy, never for a normal dated note."""
+    return bool(CONFLICT_COPY_RE.search(Path(name).name))
+
+
 # --------------------------------------------------------------------------
 # Atomic writes & file locking (multi-agent safe)
 # --------------------------------------------------------------------------
@@ -357,18 +377,77 @@ def file_lock(vault: Path, timeout_s: float = 30.0, poll_s: float = 0.5):
 # Fact-line helpers
 # --------------------------------------------------------------------------
 
-WRITTEN_SUFFIX_RE = re.compile(
-    r"\s*（写入 \d{4}-\d{2}-\d{2}｜来源：[^）]*）"
-    r"|\s*\(written \d{4}-\d{2}-\d{2}｜source:[^)]*\)"
+# Promotion stamps come in two dialects:
+#
+#   repo / dsh   （写入 2026-08-16｜来源：Agent提交区/dsh-20260816-001-01.md）
+#   Hermes       （写入 2026-09-22｜来源：[[Agent提交区/dsh-20260922-000818-01.md]]）
+#                （写入 2026-09-23｜来源：[[Hermes会话自动归档/2026-09-23]]，事件 `3d2f428c…`）
+#
+# Both may carry optional `｜使用 N 次·最近 YYYY-MM-DD` and `｜有效至 YYYY-MM-DD`
+# segments. Hermes is the writer that actually owns the live vault, so parsing
+# only the repo dialect silently dropped dates/sources for every real fact
+# (0/460 on the reference vault) — which in turn disabled decay-by-age and left
+# superseded versions searchable. One parser covers both.
+STAMP_RE = re.compile(
+    r"\s*（"
+    r"(?:(?:写入\s*)?(?P<date>\d{4}-\d{2}-\d{2})\s*｜\s*)?"
+    r"来源[:：]\s*(?P<source>[^）]+?)"
+    r"(?:[，,]\s*事件\s*`[^`]*`)?"
+    r"(?:｜使用\s*\d+\s*次(?:·最近\s*\d{4}-\d{2}-\d{2})?)?"
+    r"(?:｜有效至\s*(?P<valid_until>\d{4}-\d{2}-\d{2}))?"
+    r"）"
 )
+# Legacy English stamp kept for backwards compatibility with older vaults.
+EN_STAMP_RE = re.compile(
+    r"\s*\(written (?P<date>\d{4}-\d{2}-\d{2})｜source:\s*(?P<source>[^)]*)\)"
+)
+# Backwards-compatible alias: older callers imported WRITTEN_SUFFIX_RE.
+WRITTEN_SUFFIX_RE = STAMP_RE
 USAGE_TAG_RE = re.compile(r"｜使用 \d+ 次(·最近 \d{4}-\d{2}-\d{2})?")
-VERSIONED_RE = re.compile(r"｜有效至 \d{4}-\d{2}-\d{2}）")
+VERSIONED_RE = re.compile(r"｜有效至 \d{4}-\d{2}-\d{2}")
+
+
+def parse_stamp(line: str) -> tuple[str | None, str, str | None]:
+    """Return (written_date, source, valid_until) from a canonical fact line.
+
+    ``source`` keeps the vault-relative form (``Agent提交区/x.md`` or
+    ``Hermes会话自动归档/2026-09-23``) with any ``[[...]]`` link wrapper
+    removed. Missing pieces are ``None`` / ``""``.
+    """
+    match = STAMP_RE.search(line or "") or EN_STAMP_RE.search(line or "")
+    if not match:
+        return None, "", None
+    source = (match.group("source") or "").strip()
+    if source.startswith("[[") and source.endswith("]]"):
+        source = source[2:-2].strip()
+    else:
+        source = source.strip("[]").strip()
+    return match.group("date"), source, match.groupdict().get("valid_until")
+
+
+def source_agent(source: str) -> str:
+    """Best-effort agent name from a stamp source.
+
+    Submission files start with the agent prefix (``dsh-2026...md``); archive
+    sources carry the archive name instead, so map the known archives to their
+    owning runtime rather than returning a date fragment.
+    """
+    text = (source or "").strip().strip("[]").replace("\\", "/")
+    if not text:
+        return ""
+    compact = text.replace(" ", "")
+    if "Hermes会话自动归档" in compact:
+        return "hermes"
+    if "会话归档" in compact:
+        return "archive"
+    name = text.rsplit("/", 1)[-1]
+    agent = name.split("-", 1)[0].strip()
+    return agent if agent and not agent[0].isdigit() else ""
 
 
 def strip_suffix(line: str) -> str:
     """Remove promotion/usage/version suffixes, returning the bare fact text."""
-    out = line
-    out = WRITTEN_SUFFIX_RE.sub("", out)
+    out = EN_STAMP_RE.sub("", STAMP_RE.sub("", line or ""))
     out = USAGE_TAG_RE.sub("", out)
     out = out.strip()
     return out

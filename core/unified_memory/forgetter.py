@@ -39,9 +39,10 @@ from .common import (
     ensure_vault,
     file_lock,
     forget_dir,
+    is_versioned,
+    parse_stamp,
     read_maybe,
     resolve_vault,
-    strip_suffix,
 )
 
 # Scoring knobs.
@@ -54,29 +55,39 @@ DURABLE_FLOOR = 0.45      # importance never fully decays; the floor keeps
 MAX_REINFORCEMENT = 0.2   # access-reinforcement cap
 
 # Durable topics are never demoted: paths, configs, preferences, accounts,
-# servers, credentials references, and agent coordination rules.
+# servers, credentials references, and agent coordination rules. The Chinese
+# terms mirror the vault's own 记忆系统规范 list — without them the protection
+# only worked for English facts, while the live vault is mostly Chinese.
 PROTECTED_RE = re.compile(
     r"path|directory|config|prefer|account|server|port|credential|password|secret|"
-    r"model|domain|backup|script|rule|coordinat|agent|vault|endpoint|api|url",
+    r"model|domain|backup|script|rule|coordinat|agent|vault|endpoint|api|url|"
+    r"路径|目录|配置|偏好|账号|账户|服务器|端口|凭据|密码|密钥|模型|域名|备份|"
+    r"脚本|规则|协作|代理|仓库|接口|地址|环境|版本|工具|项目|红线|流程",
     re.I,
 )
-WRITTEN_RE = re.compile(r"（写入 (\d{4}-\d{2}-\d{2})｜来源：([^）]*)）")
 USAGE_RE = re.compile(r"｜使用 (\d+) 次(·最近 (\d{4}-\d{2}-\d{2}))?")
 
 
 def parse_line(line: str) -> dict:
-    bare = strip_suffix(line)
-    written = None
+    # bare_fact_line strips the bullet too: the memories table stores the fact
+    # without "- ", so a bullet-prefixed key never matched _index_stats and
+    # importance/access reinforcement was silently ignored for every line.
+    bare = bare_fact_line(line)
+    written, _source, valid_until = parse_stamp(line)
     used = 0
     last_used = None
-    m = WRITTEN_RE.search(line)
-    if m:
-        written = m.group(1)
     u = USAGE_RE.search(line)
     if u:
         used = int(u.group(1))
         last_used = u.group(3)
-    return {"line": line, "bare": bare, "written": written, "used": used, "last_used": last_used}
+    return {
+        "line": line,
+        "bare": bare,
+        "written": written,
+        "valid_until": valid_until,
+        "used": used,
+        "last_used": last_used,
+    }
 
 
 def memory_score(importance: float, access_count: int, age_days: float) -> float:
@@ -91,26 +102,46 @@ def memory_score(importance: float, access_count: int, age_days: float) -> float
     return min(1.0, importance * decay + reinforcement)
 
 
-def _index_stats(vault: Path, doc: str, bare: str) -> tuple[float, int] | None:
-    """Return (importance, access_count) for a memory line, or None."""
+def _index_stats(vault: Path, doc: str, bare: str) -> tuple[float, int, str] | None:
+    """Return (importance, access_count, last_access_at) for a memory line.
+
+    ``updated_at`` is unusable as a "last used" signal: indexing and embedding
+    also touch it. The access_log timestamp is the actual read receipt, which
+    is what the reinforcement model is supposed to reward.
+    """
     try:
         conn = index.get_conn(vault)
         try:
             row = conn.execute(
-                "SELECT importance, access_count FROM memories WHERE doc = ? AND line = ? LIMIT 1",
+                "SELECT m.importance, m.access_count, "
+                "(SELECT MAX(a.at) FROM access_log a WHERE a.memory_id = m.id) AS last_access "
+                "FROM memories m WHERE m.doc = ? AND m.line = ? LIMIT 1",
                 (doc, bare),
             ).fetchone()
             if row is None:
                 row = conn.execute(
-                    "SELECT importance, access_count FROM memories WHERE line = ? LIMIT 1",
+                    "SELECT m.importance, m.access_count, "
+                    "(SELECT MAX(a.at) FROM access_log a WHERE a.memory_id = m.id) AS last_access "
+                    "FROM memories m WHERE m.line = ? LIMIT 1",
                     (bare,),
                 ).fetchone()
             if row is None:
                 return None
-            return float(row["importance"]), int(row["access_count"])
+            return float(row["importance"]), int(row["access_count"]), str(row["last_access"] or "")
         finally:
             conn.close()
     except Exception:  # noqa: BLE001 — never let the index break forgetting
+        return None
+
+
+def _days_since(value: str, now: float) -> float | None:
+    """Days between a stored ``YYYY-MM-DD…`` timestamp and ``now``."""
+    text = (value or "")[:10]
+    if len(text) != 10:
+        return None
+    try:
+        return max(0.0, (now - time.mktime(time.strptime(text, "%Y-%m-%d"))) / 86400)
+    except (ValueError, OverflowError):
         return None
 
 
@@ -128,6 +159,10 @@ def demote(vault: Path, dry_run: bool = True) -> list[str]:
             if not line.strip().startswith("-"):
                 continue
             parsed = parse_line(line)
+            # ｜有效至 marks a historical version, not current truth. It is
+            # already excluded from search; decaying it is meaningless.
+            if parsed["valid_until"] or is_versioned(line):
+                continue
             if PROTECTED_RE.search(parsed["bare"]):
                 continue
             if not parsed["written"]:
@@ -140,11 +175,16 @@ def demote(vault: Path, dry_run: bool = True) -> list[str]:
             # salience and the line's own usage tag.
             stats = _index_stats(vault, str(path), parsed["bare"])
             if stats is not None:
-                importance, access = stats
+                importance, access, last_access = stats
             else:
                 importance = index.salience_for(index.classify_type(parsed["bare"]))
                 access = parsed["used"]
-            score = memory_score(importance, access, age_days)
+                last_access = ""
+            # Ebbinghaus-style reinforcement: a recently recalled fact has not
+            # "gone unused", even if it was written long ago.
+            touched_age = _days_since(last_access, today)
+            effective_age = min(age_days, touched_age) if touched_age is not None else age_days
+            score = memory_score(importance, access, effective_age)
             if score >= FORGET_THRESHOLD:
                 continue
             candidates.append((path, line))

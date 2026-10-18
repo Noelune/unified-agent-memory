@@ -444,6 +444,110 @@ def cmd_stats_cli(args: argparse.Namespace) -> None:
     print(f"memories={data['totals']['memories']} accesses={data['totals']['accesses']}")
 
 
+def cmd_doctor(args: argparse.Namespace) -> None:
+    """Read-only health report over vault, index and lifecycle queues."""
+    from . import health as health_mod
+
+    vault = resolve_vault()
+    try:
+        report = health_mod.doctor(vault)
+    except Exception as exc:  # noqa: BLE001 — doctor must report, not crash
+        code = "vault-missing" if isinstance(exc, RuntimeError) else "doctor-failed"
+        hint = (
+            "Run `memory init --vault <path>` or fix ~/.unified-memory.yaml."
+            if code == "vault-missing"
+            else "Check the index database; `memory gc --apply` can rebuild derived tables."
+        )
+        report = {
+            "ok": False,
+            "vault": str(vault),
+            "issues": [
+                {
+                    "severity": "error",
+                    "code": code,
+                    "message": str(exc),
+                    "hint": hint,
+                }
+            ],
+        }
+    if getattr(args, "json", False):
+        emit_json("doctor", report)
+    else:
+        if "index" in report:
+            idx = report["index"]
+            print(
+                f"index: {idx['memories']} memories ({idx['active']} active, "
+                f"{idx['superseded']} superseded), {idx['vectors']} vectors, "
+                f"{idx['graphEdges']} graph edges, {idx['bytes'] / 1e6:.1f} MB, "
+                f"journal={idx['journalMode']}"
+            )
+            print(
+                f"inbox: {report['inbox']['count']} file(s)"
+                + (
+                    f" (oldest {report['inbox']['oldestDays']}d)"
+                    if report["inbox"].get("oldestDays") is not None
+                    else ""
+                )
+            )
+            print(
+                f"canonical: {report['canonical']['files']} note(s), "
+                f"{len(report['canonical']['duplicateLines'])} duplicate line(s), "
+                f"{len(report['canonical']['conflictCopies'])} conflict copy/copies"
+            )
+            print(f"conflicts: {report['conflicts']['count']}")
+            print(
+                f"embeddings: {report['embeddings']['coverage'] * 100:.0f}% coverage "
+                f"(configured={report['embeddings']['configured']})"
+            )
+        issues = report.get("issues", [])
+        if issues:
+            print("issues:")
+            for issue in issues:
+                print(f"  [{issue['severity']}] {issue['code']}: {issue['message']}")
+                if issue.get("hint"):
+                    print(f"           -> {issue['hint']}")
+        else:
+            print("no issues found")
+    has_error = any(issue.get("severity") == "error" for issue in report.get("issues", []))
+    has_warning = any(issue.get("severity") == "warn" for issue in report.get("issues", []))
+    if has_error or (getattr(args, "strict", False) and has_warning):
+        sys.exit(1)
+
+
+def cmd_gc(args: argparse.Namespace) -> None:
+    """Prune derived data (orphan indexes, old access log, bloated graph)."""
+    from . import health as health_mod
+
+    vault = resolve_vault()
+    ensure_vault(vault)
+    report = health_mod.gc(
+        vault,
+        apply=getattr(args, "apply", False),
+        older_than_days=getattr(args, "older_than", 30),
+        vacuum=not getattr(args, "no_vacuum", False),
+        rebuild_graph=not getattr(args, "no_graph", False),
+        prune_orphans=not getattr(args, "keep_orphans", False),
+    )
+    if getattr(args, "json", False):
+        emit_json("gc", report)
+        return
+    mode = "applied" if report["apply"] else "dry-run (re-run with --apply to change anything)"
+    print(f"gc: {mode}")
+    print(f"orphan index databases: {len(report['orphanIndexes'])}")
+    for item in report["orphanIndexes"]:
+        print(f"  {item['path']} ({item['bytes'] / 1e6:.1f} MB, {item['ageDays']}d old)")
+    print(f"access_log rows pruned: {report['accessPruned']}")
+    print(f"query-cache rows pruned: {report.get('queryCachePruned', 0)}")
+    if report.get("graphEdges"):
+        before = report["graphEdges"]["before"]
+        after = report["graphEdges"]["after"]
+        print(f"graph edges: {before}" + (f" -> {after}" if after is not None else ""))
+    if report["apply"]:
+        if report.get("indexBytes") is not None:
+            print(f"index size: {report['indexBytes'] / 1e6:.1f} MB")
+        print(f"vacuumed: {'yes' if report['vacuumed'] else 'no'}")
+
+
 def cmd_graph(args: argparse.Namespace) -> None:
     vault = resolve_vault()
     ensure_vault(vault)
@@ -507,7 +611,12 @@ def cmd_status(args: argparse.Namespace) -> None:
             if not getattr(args, "json", False):
                 print("memories: unavailable")
         inbox = canonical_dir(vault) / "Agent提交区"
-        pending = len(list(inbox.glob("*.md"))) if inbox.is_dir() else 0
+        # README.md documents the inbox; it is not a submission.
+        pending = (
+            len([p for p in inbox.glob("*.md") if p.name != "README.md"])
+            if inbox.is_dir()
+            else 0
+        )
         data["inboxPending"] = pending
         if not getattr(args, "json", False):
             print(f"inbox pending files: {pending}")
@@ -599,6 +708,20 @@ def main(argv: list[str] | None = None) -> None:
     p_stats = sub.add_parser("stats", help="read-only aggregates for the memory console")
     p_stats.add_argument("--json", action="store_true", help="emit the JSON envelope")
     p_stats.set_defaults(fn=cmd_stats_cli)
+
+    p_doctor = sub.add_parser("doctor", help="read-only health report (vault, index, queues)")
+    p_doctor.add_argument("--json", action="store_true", help="emit the machine-readable report")
+    p_doctor.add_argument("--strict", action="store_true", help="exit non-zero on warnings too")
+    p_doctor.set_defaults(fn=cmd_doctor)
+
+    p_gc = sub.add_parser("gc", help="prune derived data (orphan indexes, old access log, graph)")
+    p_gc.add_argument("--apply", action="store_true", help="actually delete (default: dry-run)")
+    p_gc.add_argument("--older-than", type=int, default=30, help="only orphan indexes older than N days (default 30)")
+    p_gc.add_argument("--no-vacuum", action="store_true", help="skip VACUUM")
+    p_gc.add_argument("--no-graph", action="store_true", help="skip the bounded graph rebuild")
+    p_gc.add_argument("--keep-orphans", action="store_true", help="do not delete orphan index databases")
+    p_gc.add_argument("--json", action="store_true", help="emit the machine-readable report")
+    p_gc.set_defaults(fn=cmd_gc)
 
     p_drift = sub.add_parser("drift", help="detect code-memory synchronization drift")
     p_drift.add_argument("--vault", "-v", help="path to the vault (default: UNIFIED_MEMORY_VAULT env)")

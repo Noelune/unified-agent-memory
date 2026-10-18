@@ -2,7 +2,77 @@
 
 All notable changes to this project are documented in this file.
 
-## [Unreleased]
+## [0.8.0] — 2026-10-18
+
+以真实 Obsidian vault（460 条事实 / 20 份 canonical 笔记）为基准做的
+正确性、性能与可观测性升级。原有接口全部保持兼容；Python 测试 174 → 198 全绿。
+
+### Fixed — 真实写入格式（最重要）
+
+- **Hermes 方言完全无法解析**：core 只认 `（写入 …｜来源：Agent提交区/x.md）`，
+  而 Hermes 实际写入的是 ``（写入 …｜来源：[[Agent提交区/x.md]]，事件 `…`）``
+  与 `（来源：[[Hermes会话自动归档/…]]）`。真实 vault 的 460 行里 **0 行**能解析出
+  日期/来源，导致按写入时间的遗忘、来源归因、去重全部失效。现由
+  `common.parse_stamp()` 统一覆盖两种方言；实测 83/83 条带来源的行全部解析成功。
+- **`｜有效至` 历史版本仍被当作当前事实召回**：索引现在把它们标记为
+  `superseded`，检索默认不返回；`strip_suffix()` 也会移除
+  `事件`/`使用 N 次`/`有效至` 后缀，去重与冲突检测不再被后缀干扰。
+- **Forgetter 的 bullet 前缀 bug**：`parse_line()` 保留了 `- ` 前缀，导致
+  `memories.line` 永远匹配不上，`importance`/`access_count` 实际从未生效。
+- **中文持久主题不受保护**：`PROTECTED_RE` 只有英文关键词，路径/配置/服务器/
+  凭据等中文事实会被误遗忘；已补齐中文词表。
+- **笔记编辑会清空强化历史与向量**：重建一条笔记时所有行的
+  `access_count`/`created_at` 被重置为 0/今天，`embeddings` 也被整批删除，
+  迫使付费重新嵌入。现在仅对消失的行清理，保留行的统计数据与向量原样保留。
+- **Promoter 的锁内去重从未生效**：比较时一侧带 `- ` 前缀、另一侧不带，
+  重复事实仍可能被写两次；现在两侧统一取 bare fact，且同一目标笔记批量写入一次。
+- **Digest 游标在写收件箱失败时仍前进**：提炼出的事实会永久丢失；现在写失败
+  不推进游标，下次重试。
+- **`fts_search` 中文无结果、英文只回文件名**：改为先用记忆行级流排序并返回
+  命中行作为 snippet，doc 级 FTS 仅作兜底。
+
+### Added
+
+- **中文 bigram BM25 召回流**：`fts_mem_bigram` 把中文切成重叠 bigram
+  （ASCII 词小写），`memory search` 与 `--hybrid` 都能命中“记忆/路径/环境”
+  这类 2 字查询；混合检索从 4 路变 5 路。
+- **`memory doctor`**：只读健康报告（索引规模、收件箱最老积压、冲突、精确重复行、
+  向量覆盖率、图谱边数、OneDrive 冲突副本、孤儿索引库），带 `--json`/`--strict`，
+  问题分级 error/warn/info。
+- **`memory gc`**：只清理派生数据——孤儿索引库（源 vault 已不存在且超过 N 天）、
+  过期 `access_log`、过期查询向量、重建有界图谱、VACUUM；默认 dry-run，
+  `--apply` 才执行，`--keep-orphans` 可只做图谱/VACUUM。
+- **查询向量缓存**：`query_cache` 复用 7 天内同一查询的向量，重复主题的
+  hybrid 检索从约 550ms 降到约 250ms。
+- **OneDrive/Dropbox 冲突副本识别**：`note 2.md`、`note-副本.md`、
+  `conflicted copy` 不再进入索引；`doctor` 报 error 提示人工合并。
+- **时序语义**：`｜有效至` 行索引为历史版本；Forgetter 用 `access_log` 的最近
+  访问时间而不是 `updated_at` 计算衰减，最近检索过的事实不会被误降级。
+
+### Changed — 性能与并发
+
+- **有界概念图谱**：旧实现给一行内所有概念两两连边，真实 vault 454 条记忆产生
+  206,831 条边、26 MB 数据库；现在每行最多 16 个概念、每个概念最多 8 个邻居、
+  全局最多 5,000 条边，实测降到 5,000 边 / 5.5 MB（-79%）。
+- **图谱召回改倒排索引**：`expand_search` 从 O(N²) 的“每个直接命中 × 每条记忆”
+  改为一次倒排构建，查询复杂度与命中数线性相关。
+- **SQLite WAL + busy_timeout=5s + synchronous=NORMAL**：检索/控制台读取不再因
+  晋升写入报 `database is locked`。
+- **混合检索只在 vault 变化时补向量**：不再每次搜索都调用一次 embedding provider。
+- **Token 预算按真实 token 估算**：CJK 1 字≈1 token、ASCII 4 字≈1 token，
+  修复旧实现把中文预算放大约 4 倍的问题。
+- **上下文注入只注入事实行**：`inject_context.py` 按事实行 + `--max-chars`
+  全局预算选取，剥掉写入/来源后缀，避免小预算被标题和散文占满。
+
+### Tests
+
+- Python `unittest`: 197 tests（新增 23 项：Hermes 戳解析、`｜有效至`、访问计数/
+  向量跨编辑保留、bigram 检索、冲突副本过滤、图谱上界、查询缓存、GC 孤儿库、
+  doctor 错误分级、digest 游标、promoter 去重）。
+- 既有后端门禁保持全绿：`npm run typecheck`、`test:js`（421）、`test:node`（21）、
+  `setup/tests`（5）。
+
+## [0.7.2] — 2026-10-18
 
 适配 DSH `0.2.1-rc.2`（桌面端 44.7.0 附带的运行时）。**插件代码零改动**：上游这一版只在
 `dsh-tools`、`dsh-host-webserver`、`dsh-client-ui-slots` 上做加法，本插件用到的

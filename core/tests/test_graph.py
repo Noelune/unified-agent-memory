@@ -32,6 +32,19 @@ class GraphTest(unittest.TestCase):
         results = graph.expand_search(self.vault, "编译", limit=5)
         self.assertTrue(any("编译调试" in r["line"] for r in results))
 
+    def test_graph_is_bounded(self):
+        env = common.canonical_path(self.vault, "env")
+        lines = "".join(
+            f"- 记忆 索引 路径 环境 服务 工具 配置 备份 规则 项目 模块 {i}\n"
+            for i in range(80)
+        )
+        env.write_text(env.read_text(encoding="utf-8") + lines, encoding="utf-8")
+        index.update_index(self.vault)
+        graph.build_graph(self.vault)
+        stats = graph.graph_stats(self.vault)
+        self.assertGreater(stats["nodes"], 0)
+        self.assertLessEqual(stats["edges"], graph.MAX_GRAPH_EDGES)
+
     def test_expand_one_hop_finds_related(self):
         env = common.canonical_path(self.vault, "env")
         env.write_text(

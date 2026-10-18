@@ -161,7 +161,8 @@ def _inbox_count(vault: Path) -> int:
     inbox = Path(vault) / INBOX_REL
     if not inbox.is_dir():
         return 0
-    return sum(1 for _ in inbox.glob("*.md"))
+    # README.md is documentation, not a pending submission.
+    return sum(1 for path in inbox.glob("*.md") if path.name != "README.md")
 
 
 def envelope(data: dict) -> str:

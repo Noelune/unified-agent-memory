@@ -201,6 +201,12 @@ def digest(vault: Path, dry_run: bool = False, limit: int = 0) -> dict:
             continue
         if not dry_run:
             written = _write_digest_facts(vault, facts)
+            if facts and not written:
+                # The inbox could not allocate a file. Do NOT advance the
+                # cursor: the old code did, so the extracted facts were lost
+                # permanently even though the next run could have written them.
+                report["skipped"].append(f"{path.name} (could not write inbox)")
+                continue
             report["written"] += 1 if written else 0
             report["facts"] += written
         else:

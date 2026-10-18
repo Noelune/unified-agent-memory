@@ -128,6 +128,26 @@ python -m unified_memory.promoter --apply      # promotes into canonical
 python -m unified_memory.promoter --auto       # or one step (explicit opt-in)
 ```
 
+### Health check and housekeeping
+
+Run `memory doctor` after deployment and whenever memory behaves oddly. It is a
+single read-only pass over the vault, the derived index and the lifecycle
+queues; `--json` returns the same report for a scheduler. A non-zero exit means
+at least one `error` (use `--strict` to fail on warnings too).
+
+```sh
+memory doctor              # human-readable issue list
+memory doctor --json       # {"ok": bool, "command": "doctor", "data": {...}}
+memory gc                  # dry-run: list prunable derived data
+memory gc --apply          # remove orphan index DBs older than 30 days,
+                           # prune old access log/query cache, rebuild the
+                           # bounded graph and VACUUM
+```
+
+`memory gc` never touches canonical notes, the inbox, session archives or the
+forget area. Use `--keep-orphans` when you only want the graph rebuild/VACUUM,
+and `--older-than N` to change the orphan-index age threshold.
+
 ---
 
 ## Full mode (advanced, optional)

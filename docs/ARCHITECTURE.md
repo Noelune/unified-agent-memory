@@ -34,6 +34,7 @@ flowchart TB
         M[memory.py<br/>init · search · show · submit · embed · digest · graph]
         P[promoter.py<br/>review · apply · adjudicate · supersede]
         F[forgetter.py<br/>salience × decay × reinforcement]
+        HC[health.py<br/>doctor · gc]
         I[index.py<br/>index orchestration + public compatibility exports]
         SC[schema.py<br/>SQLite schema + per-vault connection lifecycle]
         MA[maintenance.py<br/>canonical repair + reversible backups]
@@ -84,6 +85,7 @@ to change.
 | `fts_mem` | per-line FTS5 for the BM25 retrieval stream |
 | `memories` | one record per canonical fact line: `type`, `importance`, `status`, `version`, `superseded_by`, `source_agent`, `project`, `created_at`, `updated_at`, `access_count` |
 | `embeddings` | Float32 vectors per memory line (optional) |
+| `query_cache` | recent query vectors (7-day reuse; derived, prunable) |
 | `access_log` | read receipts → reinforcement scoring |
 | `graph_nodes` / `graph_edges` | optional concept co-occurrence graph |
 | `audit` | provenance/accountability for mutations |
@@ -119,13 +121,17 @@ layout; the index/model layer organizes content across layers.
    when `score = importance × (floor + decay) + access-reinforcement` drops
    below threshold, it is old enough, and it is not a durable/protected topic.
    High-importance knowledge (prefs/architecture/rules) persists indefinitely.
-5. **Recall** — hybrid search fuses BM25 + vectors + graph with weighted RRF,
-   diversifies per note, and caps output by a token budget. Everything is
-   wrapped in `<memory-data>` markers and redacted.
+5. **Recall** — hybrid search fuses five streams (BM25, CJK bigram BM25,
+   vectors, graph, trigram) with weighted RRF, diversifies per note, and caps
+   output by a real token budget. Everything is wrapped in `<memory-data>`
+   markers and redacted.
+6. **Observe & maintain** — `memory doctor` reports index size, inbox backlog,
+   conflicts, vector coverage, graph bloat, sync-conflict copies and orphan
+   indexes; `memory gc` prunes only derived data (default dry-run).
 
 ## Interfaces
 
-- **CLI** — `memory init|search|show|submit|status|embed|digest|graph`
+- **CLI** — `memory init|search|show|submit|status|embed|digest|graph|doctor|gc`
 - **dsh plugin** — `memory_search` (`hybrid` 开启三流融合检索；可选 `format`/`budget` 控制输出形态与预算),
   `memory_show`, `memory_submit`, `memory_status`
 - **Hermes integration** — `daily_cron.py` (promote/repair/forget),
@@ -155,6 +161,16 @@ layout; the index/model layer organizes content across layers.
 8. **Everything reversible.** Forgetting demotes to `记忆遗忘区/`; supersession
    moves old lines under `已取代`; migration backs up the vault first and is
    verified against a content baseline.
+9. **Updates never erase learning.** Re-indexing a changed note preserves each
+   unchanged line's access count, created date and embedding. A logic-version
+   marker forces a one-time reparse after parser upgrades.
+10. **Concurrent by default.** The index runs in WAL mode with a 5 s busy
+    timeout, so searches/UI reads do not fail while promotion writes.
+11. **Writer dialect tolerant.** Both the repo stamp and the Hermes
+    `[[…]]`/`事件`/`｜有效至` stamp are parsed; `｜有效至` lines are superseded.
+12. **Sync-client aware.** OneDrive/Dropbox conflict copies are excluded from
+    the index and surfaced as an error by `doctor` instead of becoming a second
+    source of truth.
 
 ## Runtime adapters and responsibility boundaries
 

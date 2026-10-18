@@ -31,16 +31,20 @@ import time
 from pathlib import Path
 
 from .common import (
-    canonical_dir,
-    redact,
-    strip_suffix,
     bare_fact_line,
+    canonical_dir,
+    is_conflict_copy,
+    is_versioned,
+    parse_stamp,
+    redact,
+    source_agent,
 )
 from .schema import SCHEMA_VERSION, index_db_for, get_conn  # noqa: F401  (re-exported API)
 
 __all__ = [
     "SCHEMA_VERSION", "index_db_for", "get_conn", "indexed_files",
     "update_memories", "update_index", "fts_search", "bm25_memory_search",
+    "bm25_bigram_search", "trigram_memory_search", "cjk_tokens",
     "record_access", "record_audit", "active_memories", "memory_count",
 ]
 
@@ -88,26 +92,19 @@ def salience_for(mem_type: str) -> float:
 # Write-stamp parsing  （写入 YYYY-MM-DD｜来源：Agent提交区/<agent>-…）
 # --------------------------------------------------------------------------
 
-WRITTEN_STAMP_RE = re.compile(
-    r"（写入 (\d{4}-\d{2}-\d{2})｜来源：Agent提交区/([^）]*)）"
-    r"|\(written (\d{4}-\d{2}-\d{2})｜source:[^)]*\)"
-)
 SUPERSEDED_HEADING_RE = re.compile(r"已取代|已失效|已废弃|superseded|obsolete", re.I)
 
 
 def parse_write_stamp(line: str) -> tuple[str | None, str]:
     """Return (created_date, source_agent) parsed from a promoted line's stamp.
 
-    source_agent is the submission file prefix (the part before the first "-"),
-    falling back to "" when there is no usable stamp.
+    Delegates to common.parse_stamp so both the repo/dsh dialect and the
+    Hermes ``[[Agent提交区/...]]`` / ``事件`` dialect resolve. Returning ""
+    for every Hermes-written line used to make the whole live vault look
+    undated and unattributed.
     """
-    m = WRITTEN_STAMP_RE.search(line)
-    if not m:
-        return None, ""
-    created = m.group(1) or m.group(3)
-    src = m.group(2) or ""
-    agent = src.split("-", 1)[0].strip() if src else ""
-    return created, agent
+    created, source, _valid_until = parse_stamp(line)
+    return created, source_agent(source)
 
 
 # --------------------------------------------------------------------------
@@ -126,11 +123,54 @@ def parse_write_stamp(line: str) -> tuple[str | None, str]:
 
 
 def indexed_files(vault: Path) -> list[Path]:
-    """Canonical .md files directly under 50-Agent-Context (not subdirs)."""
+    """Canonical .md files directly under 50-Agent-Context (not subdirs).
+
+    Sync-client conflict copies (``note 2.md``, ``note-副本.md`` …) are skipped:
+    they are an unresolved duplicate of a note, not another source of truth.
+    """
     ctx = canonical_dir(vault)
     if not ctx.is_dir():
         return []
-    return [p for p in sorted(ctx.glob("*.md")) if p.is_file()]
+    return [
+        p
+        for p in sorted(ctx.glob("*.md"))
+        if p.is_file() and not is_conflict_copy(p.name)
+    ]
+
+
+# --------------------------------------------------------------------------
+# CJK-aware tokenisation (BM25 stream)
+# --------------------------------------------------------------------------
+
+_CJK_RUN_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]+")
+_WORD_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.\-]*")
+
+
+def cjk_tokens(text: str) -> list[str]:
+    """Overlapping-bigram tokens for Chinese + lowercased ASCII words.
+
+    unicode61 treats a contiguous Chinese run as a single token, so a query
+    like 记忆 can never match a line containing 记忆系统. Bigrams restore
+    ordinary substring recall without a third-party segmenter.
+    """
+    tokens: list[str] = []
+    for run in _CJK_RUN_RE.findall(text or ""):
+        if len(run) == 1:
+            tokens.append(run)
+        else:
+            tokens.extend(run[i : i + 2] for i in range(len(run) - 1))
+    for word in _WORD_RE.findall(text or ""):
+        word = word.lower()
+        if len(word) >= 2:
+            tokens.append(word)
+    # Stable dedupe: repeated tokens add nothing to a BM25 query.
+    seen: set[str] = set()
+    return [t for t in tokens if not (t in seen or seen.add(t))]
+
+
+def _fts_or_query(text: str) -> str:
+    """FTS5 query string that ORs quoted tokens (safe for punctuation)."""
+    return " OR ".join(f'"{t}"' for t in cjk_tokens(text))
 
 
 # --------------------------------------------------------------------------
@@ -167,50 +207,67 @@ def _fts_mem_tri_upsert(conn: sqlite3.Connection, memory_id: str, line: str) -> 
         pass
 
 
+def _fts_mem_bigram_delete(conn: sqlite3.Connection, memory_id: str) -> None:
+    try:
+        conn.execute("DELETE FROM fts_mem_bigram WHERE memory_id = ?", (memory_id,))
+    except sqlite3.Error:
+        pass
+
+
+def _fts_mem_bigram_upsert(conn: sqlite3.Connection, memory_id: str, line: str) -> None:
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO fts_mem_bigram (memory_id, tokens) VALUES (?, ?)",
+            (memory_id, " ".join(cjk_tokens(line))),
+        )
+    except sqlite3.Error:
+        pass
+
+
 def _backfill_fts_mem_tri(conn: sqlite3.Connection) -> int:
-    """One-time fill of fts_mem_tri from the existing memories table.
+    """Refill fts_mem_tri from memories when its row count drifted.
 
-    update_memories is incremental by note digest, so on a database that was
-    already indexed before this table existed every note is skipped and the
-    trigram table would stay empty forever. Backfill once, recorded under its
-    own index_meta key so SCHEMA_VERSION is untouched (bumping it would trip
-    _migrate_schema's destructive row reset).
-
-    Returns the number of rows written (0 when the tokenizer/table is absent).
+    update_memories is incremental by note digest, so notes indexed before
+    this table existed are skipped forever. Comparing counts (instead of
+    trusting a one-shot flag) also heals a dropped or partially-written table.
     """
     try:
-        done = conn.execute(
-            "SELECT value FROM index_meta WHERE key = 'trigram_backfill'"
-        ).fetchone()
-        # Trust the flag only while the table still reflects it: a dropped or
-        # emptied table with live memories must be refilled (self-healing).
-        if done is not None:
-            if conn.execute("SELECT COUNT(*) FROM fts_mem_tri").fetchone()[0]:
-                # ponytail: non-empty is taken as fresh, so a partially-stale
-                # table (some notes never mirrored) never self-heals. Upgrade:
-                # compare COUNT(*) against active memories and refill on drift.
-                return 0
-            if not conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]:
-                return 0
+        total = conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+        if not total:
+            return 0
+        mirrored = conn.execute("SELECT COUNT(*) FROM fts_mem_tri").fetchone()[0]
+        if mirrored == total:
+            return 0
         rows = conn.execute("SELECT id, line FROM memories").fetchall()
         # FTS5 INSERT OR REPLACE appends rather than replacing, so clear first:
-        # memories is the source of truth and we rewrite every row from it.
-        # ponytail: first run rewrites every row in one transaction — fine at
-        # current vault size, but it blocks readers on a large vault. Upgrade:
-        # chunk the rewrite behind a temp table + single atomic rename.
+        # memories is the source of truth and every row is rewritten from it.
         conn.execute("DELETE FROM fts_mem_tri")
         conn.executemany(
             "INSERT INTO fts_mem_tri (memory_id, line) VALUES (?, ?)",
             [(r["id"], r["line"]) for r in rows],
         )
-        conn.execute(
-            "INSERT OR REPLACE INTO index_meta (key, value) VALUES ('trigram_backfill', '1')"
+        return len(rows)
+    except sqlite3.Error:
+        return 0
+
+
+def _backfill_fts_mem_bigram(conn: sqlite3.Connection) -> int:
+    """Refill fts_mem_bigram from memories when its row count drifted."""
+    try:
+        total = conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+        if not total:
+            return 0
+        mirrored = conn.execute("SELECT COUNT(*) FROM fts_mem_bigram").fetchone()[0]
+        if mirrored == total:
+            return 0
+        rows = conn.execute("SELECT id, line FROM memories").fetchall()
+        conn.execute("DELETE FROM fts_mem_bigram")
+        conn.executemany(
+            "INSERT INTO fts_mem_bigram (memory_id, tokens) VALUES (?, ?)",
+            [(r["id"], " ".join(cjk_tokens(r["line"]))) for r in rows],
         )
         return len(rows)
     except sqlite3.Error:
-        # ponytail: one catch covers both "no trigram tokenizer" (expected) and
-        # a real write failure (silently lost recall). Upgrade: probe the
-        # tokenizer once and re-raise anything else as a loud, non-fatal warn.
         return 0
 
 
@@ -233,20 +290,32 @@ def _doc_lines(text: str) -> list[tuple[str, str, str]]:
         bare = bare_fact_line(stripped)
         if not bare:
             continue
-        status = "superseded" if SUPERSEDED_HEADING_RE.search(heading) else "active"
+        # Bi-temporal versioning: a line carrying ｜有效至 is a historical
+        # version even when it is not physically under a 已取代 heading. That
+        # is how the Hermes promoter records supersession, so it must not stay
+        # searchable as current truth.
+        status = (
+            "superseded"
+            if SUPERSEDED_HEADING_RE.search(heading) or is_versioned(stripped)
+            else "active"
+        )
         out.append((status, bare, stripped))
     return out
 
 
-def update_memories(conn: sqlite3.Connection, vault: Path) -> int:
+def update_memories(conn: sqlite3.Connection, vault: Path, sweep_orphans: bool = False) -> int:
     """Re-parse canonical notes into memories/embeddings records.
 
     Incremental per note by content digest: an unchanged note is skipped, a
-    changed note has its memories fully rebuilt. Returns the number of memory
-    lines upserted. Embeddings are left for `embed_missing` (Phase 2).
+    changed note has its memory rows rebuilt. Reinforcement state is preserved
+    for lines whose bare text is unchanged: a one-word edit to a note must not
+    reset every access count in it (that silently made well-used facts
+    forgettable again). Embeddings for unchanged lines are kept too, so an
+    edit no longer forces a paid re-embed of the whole note.
     """
     current_paths: set[str] = set()
     changed = 0
+    now = time.strftime("%Y-%m-%dT%H:%M:%S")
     for path in indexed_files(vault):
         rel = str(path)
         current_paths.add(rel)
@@ -263,32 +332,80 @@ def update_memories(conn: sqlite3.Connection, vault: Path) -> int:
         )
         conn.execute("DELETE FROM fts WHERE path = ?", (rel,))
         conn.execute("INSERT INTO fts (path, title, content) VALUES (?, ?, ?)", (rel, title, text))
-        # Rebuild this note's memories (delete embeddings/fts_mem first — their
-        # ids come from the memories we are about to remove).
-        old_ids = [r["id"] for r in conn.execute("SELECT id FROM memories WHERE doc = ?", (rel,)).fetchall()]
+
+        old_rows = conn.execute(
+            "SELECT id, access_count, created_at, updated_at, version "
+            "FROM memories WHERE doc = ?",
+            (rel,),
+        ).fetchall()
+        old_ids = {r["id"] for r in old_rows}
+        old_stats = {
+            r["id"]: (r["access_count"], r["created_at"], r["updated_at"], r["version"])
+            for r in old_rows
+        }
+
+        records: list[tuple] = []
+        for status, bare, raw_line in _doc_lines(text):
+            mid = hashlib.sha256(bare.encode("utf-8")).hexdigest()
+            created, agent = parse_write_stamp(raw_line)
+            mem_type = classify_type(bare)
+            prior = old_stats.get(mid)
+            records.append(
+                (
+                    mid,
+                    rel,
+                    bare,
+                    mem_type,
+                    salience_for(mem_type),
+                    status,
+                    agent,
+                    prior[1] if prior and prior[1] else (created or now),
+                    prior[2] if prior and prior[2] else now,
+                    prior[0] if prior else 0,
+                    prior[3] if prior else 1,
+                )
+            )
+        new_ids = {record[0] for record in records}
+
+        # Vanished lines lose every derived row, including their vector.
+        for mid in old_ids - new_ids:
+            conn.execute("DELETE FROM fts_mem WHERE memory_id = ?", (mid,))
+            _fts_mem_tri_delete(conn, mid)
+            _fts_mem_bigram_delete(conn, mid)
+            conn.execute("DELETE FROM embeddings WHERE memory_id = ?", (mid,))
+
+        # Rewrite the note's memory rows. Kept ids keep their embedding row;
+        # their FTS rows are re-created below because FTS5 rows carry no
+        # update semantics (INSERT OR REPLACE appends).
+        conn.execute("DELETE FROM memories WHERE doc = ?", (rel,))
         for mid in old_ids:
             conn.execute("DELETE FROM fts_mem WHERE memory_id = ?", (mid,))
             _fts_mem_tri_delete(conn, mid)
-        conn.execute("DELETE FROM embeddings WHERE memory_id IN (SELECT id FROM memories WHERE doc = ?)", (rel,))
-        conn.execute("DELETE FROM memories WHERE doc = ?", (rel,))
-        now = time.strftime("%Y-%m-%dT%H:%M:%S")
-        for status, bare, raw in _doc_lines(text):
-            mid = hashlib.sha256(bare.encode("utf-8")).hexdigest()
-            created, agent = parse_write_stamp(raw)
-            mem_type = classify_type(bare)
+            _fts_mem_bigram_delete(conn, mid)
+
+        seen: set[str] = set()
+        for record in records:
+            mid = record[0]
+            if mid in seen:
+                continue  # the same fact twice in one note is one memory
+            seen.add(mid)
             conn.execute(
                 """INSERT OR REPLACE INTO memories
                    (id, doc, line, type, importance, status, version,
                     superseded_by, source_agent, project, created_at, updated_at,
                     access_count, metadata_json)
-                   VALUES (?, ?, ?, ?, ?, ?, 1, NULL, ?, '', ?, ?, 0, '{}')""",
-                (mid, rel, bare, mem_type, salience_for(mem_type), status, agent, created or now, now),
+                   VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, '', ?, ?, ?, '{}')""",
+                (
+                    record[0], record[1], record[2], record[3], record[4],
+                    record[5], record[10], record[6], record[7], record[8], record[9],
+                ),
             )
             conn.execute(
                 "INSERT OR REPLACE INTO fts_mem (memory_id, line) VALUES (?, ?)",
-                (mid, bare),
+                (mid, record[2]),
             )
-            _fts_mem_tri_upsert(conn, mid, bare)
+            _fts_mem_tri_upsert(conn, mid, record[2])
+            _fts_mem_bigram_upsert(conn, mid, record[2])
         changed += 1
     # Remove stale docs (deleted from the vault).
     stale = [
@@ -301,31 +418,80 @@ def update_memories(conn: sqlite3.Connection, vault: Path) -> int:
         for mid in old_mids:
             conn.execute("DELETE FROM fts_mem WHERE memory_id = ?", (mid,))
             _fts_mem_tri_delete(conn, mid)
+            _fts_mem_bigram_delete(conn, mid)
+            conn.execute("DELETE FROM embeddings WHERE memory_id = ?", (mid,))
         conn.execute("DELETE FROM docs WHERE path = ?", (old,))
         conn.execute("DELETE FROM fts WHERE path = ?", (old,))
-        conn.execute("DELETE FROM embeddings WHERE memory_id IN (SELECT id FROM memories WHERE doc = ?)", (old,))
         conn.execute("DELETE FROM memories WHERE doc = ?", (old,))
+    # A logic-version upgrade clears `docs`, so a note deleted from the vault
+    # no longer appears in the stale list above. Sweep memories whose doc is
+    # not a currently indexed note, whatever the docs table says.
+    orphaned = (
+        [
+            row for row in conn.execute("SELECT id, doc FROM memories").fetchall()
+            if row["doc"] not in current_paths
+        ]
+        if sweep_orphans
+        else []
+    )
+    for row in orphaned:
+        mid = row["id"]
+        conn.execute("DELETE FROM fts_mem WHERE memory_id = ?", (mid,))
+        _fts_mem_tri_delete(conn, mid)
+        _fts_mem_bigram_delete(conn, mid)
+        conn.execute("DELETE FROM embeddings WHERE memory_id = ?", (mid,))
+        conn.execute("DELETE FROM memories WHERE id = ?", (mid,))
     return changed
+
+
+# Bump when the parsing/classification logic changes in a way that must be
+# applied to notes whose bytes did not change. Incremental indexing keys on
+# the file digest, so without this an upgraded install keeps the old index
+# forever (e.g. dates/sources parsed by an older, narrower stamp regex).
+INDEX_LOGIC_VERSION = "3"
+
+
+def _ensure_logic_version(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        "SELECT value FROM index_meta WHERE key = 'logic_version'"
+    ).fetchone()
+    if row is not None and row[0] == INDEX_LOGIC_VERSION:
+        return False
+    # Clearing docs forces update_memories to re-parse every note. Memory ids
+    # are content-derived, so access counts and vectors survive the rebuild.
+    conn.execute("DELETE FROM docs")
+    conn.execute(
+        "INSERT OR REPLACE INTO index_meta (key, value) VALUES ('logic_version', ?)",
+        (INDEX_LOGIC_VERSION,),
+    )
+    return True
 
 
 def update_index(vault: Path, verbose: bool = False) -> dict:
     """Incrementally rebuild the memory database from the vault.
 
-    Returns {"changed_docs": int, "fts": bool, "trigram_backfilled": int}.
-    Embeddings are enriched
-    separately by `embed_missing` (Phase 2).
+    Returns {"changed_docs": int, "fts": bool, "trigram_backfilled": int,
+    "bigram_backfilled": int}. Embeddings are enriched separately by
+    `embed_missing`.
     """
     conn = get_conn(vault)
     try:
         fts_ok = _fts_supported(conn)
-        changed = update_memories(conn, vault)
+        logic_reset = _ensure_logic_version(conn)
+        changed = update_memories(conn, vault, sweep_orphans=logic_reset)
         # Existing databases skip every unchanged note above, so fill the
-        # trigram table once from memories (no-op afterwards).
+        # auxiliary CJK tables from memories (no-op afterwards).
         backed = _backfill_fts_mem_tri(conn)
+        bigram_backed = _backfill_fts_mem_bigram(conn)
         conn.commit()
         if verbose:
             print(f"index: {index_db_for(vault)} (docs changed {changed}, fts5={'yes' if fts_ok else 'no'})")
-        return {"changed_docs": changed, "fts": fts_ok, "trigram_backfilled": backed}
+        return {
+            "changed_docs": changed,
+            "fts": fts_ok,
+            "trigram_backfilled": backed,
+            "bigram_backfilled": bigram_backed,
+        }
     finally:
         conn.close()
 
@@ -336,12 +502,54 @@ def update_index(vault: Path, verbose: bool = False) -> dict:
 
 
 def fts_search(vault: Path, query: str, limit: int) -> dict:
+    """Document search with the best matching fact line as the snippet.
+
+    The old path returned doc-level FTS hits whose ``snippet(fts, content)``
+    was empty whenever the match landed on the title (and returned nothing at
+    all for Chinese), so callers saw a bare list of file names. Line-level
+    streams now supply both the document and the matched line; doc-level FTS
+    remains the fallback when no line matches.
+    """
     update_index(vault)  # self-healing: ensure the derived db is fresh
+    results: list[dict] = []
+    seen_docs: set[str] = set()
+
+    def add(rows: list[dict]) -> None:
+        for row in rows:
+            doc_name = Path(row["doc"]).name
+            if doc_name in seen_docs:
+                continue
+            seen_docs.add(doc_name)
+            results.append(
+                {
+                    "doc": redact(doc_name),
+                    "title": redact(Path(doc_name).stem),
+                    "snippet": redact(row["line"]),
+                    "query": query,
+                }
+            )
+            if len(results) >= limit:
+                return
+
+    for search_fn in (bm25_memory_search, bm25_bigram_search, trigram_memory_search):
+        if len(results) >= limit:
+            break
+        try:
+            add(search_fn(vault, query, limit=limit * 2))
+        except sqlite3.Error:
+            continue
+    if results:
+        return {
+            "ok": True,
+            "query": query,
+            "count": len(results),
+            "results": results[:limit],
+            "index": str(index_db_for(vault)),
+        }
+
     conn = get_conn(vault)
     try:
-        results: list[dict] = []
-        fts_ok = _fts_supported(conn)
-        if fts_ok:
+        if _fts_supported(conn):
             try:
                 rows = conn.execute(
                     "SELECT path, title, snippet(fts, 2, '[', ']', '…', 24) AS snip "
@@ -410,6 +618,32 @@ def bm25_memory_search(vault: Path, query: str, limit: int = 20) -> list[dict]:
                 if len(results) >= limit:
                     break
         return results
+    finally:
+        conn.close()
+
+
+def bm25_bigram_search(vault: Path, query: str, limit: int = 20) -> list[dict]:
+    """CJK-capable BM25 over bigram-tokenised memory lines.
+
+    Returns an empty list when the auxiliary table is unavailable; the
+    trigram stream still covers long Chinese substrings in that case.
+    """
+    # Every token is quoted, so punctuation in the user's query cannot turn
+    # into FTS5 syntax; the whole expression is bound as a parameter.
+    match = _fts_or_query(query)
+    if not match:
+        return []
+    conn = get_conn(vault)
+    try:
+        rows = conn.execute(
+            "SELECT m.id, m.doc, m.line, m.type, m.importance, m.source_agent, "
+            "rank AS rnk FROM fts_mem_bigram f JOIN memories m ON m.id = f.memory_id "
+            "WHERE fts_mem_bigram MATCH ? AND m.status = 'active' ORDER BY rank LIMIT ?",
+            (match, limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+    except sqlite3.Error:
+        return []
     finally:
         conn.close()
 

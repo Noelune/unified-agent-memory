@@ -25,6 +25,12 @@ from . import index
 MIN_CONCEPT_FREQ = 2
 MAX_EXPAND_HOPS = 1
 MAX_CANDIDATES = 60
+# Bounds that keep the persisted graph a useful sketch instead of a quadratic
+# dump. At 454 memories the old all-pairs builder produced 206,831 edges and a
+# 26 MB database; the graph stream never read those tables anyway.
+MAX_CONCEPTS_PER_LINE = 16
+MAX_NEIGHBORS_PER_LINE = 8
+MAX_GRAPH_EDGES = 5000
 
 _ASCII_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_\-]{2,}")
 _CJK_RUN_RE = re.compile(r"[一-鿿]+")
@@ -54,7 +60,14 @@ def _active_lines(conn) -> list[dict]:
 
 
 def build_graph(vault: Path) -> int:
-    """(Re)build the concept graph from active memories. Returns node count."""
+    """(Re)build a bounded concept graph from active memories.
+
+    Concepts must appear in at least ``MIN_CONCEPT_FREQ`` lines. Each line
+    contributes at most ``MAX_CONCEPTS_PER_LINE`` concepts, and each concept
+    links to a small window of neighbours rather than every other concept on
+    the line. The result is finally capped at ``MAX_GRAPH_EDGES`` by weight.
+    This keeps the table proportional to the corpus instead of quadratic.
+    """
     conn = index.get_conn(vault)
     try:
         rows = conn.execute("SELECT line FROM memories WHERE status = 'active'").fetchall()
@@ -67,20 +80,29 @@ def build_graph(vault: Path) -> int:
             if not toks:
                 continue
             line_tokens.append(toks)
-            for t in toks:
-                counts[t] = counts.get(t, 0) + 1
-        concepts = {t for t, c in counts.items() if c >= MIN_CONCEPT_FREQ}
-        for t in concepts:
-            conn.execute("INSERT OR REPLACE INTO graph_nodes (name, kind) VALUES (?, 'concept')", (t,))
+            for token in toks:
+                counts[token] = counts.get(token, 0) + 1
+        concepts = {token for token, count in counts.items() if count >= MIN_CONCEPT_FREQ}
+        for token in concepts:
+            conn.execute("INSERT OR REPLACE INTO graph_nodes (name, kind) VALUES (?, 'concept')", (token,))
         for toks in line_tokens:
-            relevant = sorted(toks & concepts)
-            for i in range(len(relevant)):
-                for j in range(i + 1, len(relevant)):
+            # Rarest concepts first: they are the most specific evidence.
+            relevant = sorted(toks & concepts, key=lambda token: counts[token])[:MAX_CONCEPTS_PER_LINE]
+            for i, src in enumerate(relevant):
+                for dst in relevant[i + 1 : i + 1 + MAX_NEIGHBORS_PER_LINE]:
+                    # Normalise pair order so both directions accumulate into
+                    # the same (src, dst) row.
+                    left, right = (src, dst) if src < dst else (dst, src)
                     conn.execute(
                         """INSERT INTO graph_edges (src, dst, kind, weight) VALUES (?, ?, 'co', 1)
                            ON CONFLICT(src, dst, kind) DO UPDATE SET weight = weight + 1""",
-                        (relevant[i], relevant[j]),
+                        (left, right),
                     )
+        conn.execute(
+            "DELETE FROM graph_edges WHERE rowid NOT IN "
+            "(SELECT rowid FROM graph_edges ORDER BY weight DESC, rowid ASC LIMIT ?)",
+            (MAX_GRAPH_EDGES,),
+        )
         conn.commit()
         return len(concepts)
     finally:
@@ -91,8 +113,9 @@ def expand_search(vault: Path, query: str, limit: int = 20) -> list[dict]:
     """Graph retrieval stream: memories sharing a concept with the query, plus
     one-hop neighbours. Returns memory records shaped like the other streams.
 
-    Implemented in Python over the memory lines — the graph is small and the
-    co-occurrence structure is derived, so a dedicated query plan adds nothing.
+    Uses an inverted concept index built in one pass. The previous version
+    compared every direct hit against every memory, which is O(N²) per query
+    and dominated hybrid-search latency on a vault of a few hundred lines.
     """
     query_toks = _tokens(query)
     if not query_toks:
@@ -102,30 +125,35 @@ def expand_search(vault: Path, query: str, limit: int = 20) -> list[dict]:
         memories = _active_lines(conn)
     finally:
         conn.close()
-    scored: dict[str, float] = {}
-    by_id: dict[str, dict] = {}
+
+    postings: dict[str, list[str]] = {}
     token_by_id: dict[str, set[str]] = {}
+    by_id: dict[str, dict] = {}
     for mem in memories:
         toks = _tokens(mem["line"])
         token_by_id[mem["id"]] = toks
         by_id[mem["id"]] = mem
-        shared = len(toks & query_toks)
-        if shared:
-            scored[mem["id"]] = scored.get(mem["id"], 0.0) + shared * 2.0  # direct hits weighted ×2
-    if not scored:
+        for token in toks:
+            postings.setdefault(token, []).append(mem["id"])
+
+    direct: dict[str, float] = {}
+    for token in query_toks:
+        for mid in postings.get(token, ()):
+            direct[mid] = direct.get(mid, 0.0) + 2.0  # direct hits weighted ×2
+    if not direct:
         return []
-    # One-hop expansion: memories sharing a concept with a direct hit.
+
+    # One-hop expansion: every memory that shares a concept with a direct hit.
     expanded: dict[str, float] = {}
-    for mid in list(scored):
-        for other in memories:
-            if other["id"] in scored:
-                continue
-            shared = len(token_by_id[mid] & token_by_id[other["id"]])
-            if shared:
-                expanded[other["id"]] = expanded.get(other["id"], 0.0) + shared
+    for mid, weight in direct.items():
+        for token in token_by_id[mid]:
+            for other in postings.get(token, ()):
+                if other not in direct:
+                    expanded[other] = expanded.get(other, 0.0) + weight
     for mid, bonus in expanded.items():
-        scored[mid] = scored.get(mid, 0.0) + bonus
-    ranked = sorted(scored.items(), key=lambda pair: pair[1], reverse=True)[:limit]
+        direct[mid] = direct.get(mid, 0.0) + bonus
+
+    ranked = sorted(direct.items(), key=lambda pair: pair[1], reverse=True)[: min(limit, MAX_CANDIDATES)]
     results: list[dict] = []
     for mid, score in ranked:
         rec = dict(by_id[mid])

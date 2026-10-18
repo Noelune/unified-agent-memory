@@ -54,6 +54,31 @@ class HybridSearchTest(unittest.TestCase):
         self.assertEqual(result["streams"]["vector"], 0)
         self.assertTrue(any("indigo" in r["line"] for r in result["results"]))
 
+    def test_hybrid_uses_bigram_stream_for_chinese(self):
+        prefs = common.canonical_path(self.vault, "prefs")
+        prefs.write_text(
+            prefs.read_text(encoding="utf-8") + "\n- 记忆索引保存在本地 SQLite\n",
+            encoding="utf-8",
+        )
+        result = search.hybrid_search(self.vault, "记忆", limit=5)
+        self.assertGreater(result["streams"]["bigram"], 0)
+        self.assertTrue(any("记忆索引" in r["line"] for r in result["results"]))
+
+    def test_embedding_topup_only_runs_when_the_vault_changed(self):
+        from unittest.mock import patch
+
+        with patch.object(search.embed, "configured", return_value=True), patch.object(
+            search.embed,
+            "embed_missing",
+            return_value={"ok": True, "embedded": 0, "total": 0, "reason": ""},
+        ) as topup:
+            search.hybrid_search(self.vault, "indigo", limit=3)
+            first = topup.call_count
+            search.hybrid_search(self.vault, "indigo", limit=3)
+            second = topup.call_count
+        self.assertGreaterEqual(first, 1)
+        self.assertEqual(second, first, "no vault change means no provider call")
+
     def test_hybrid_diversifies_per_doc(self):
         # Many facts in one note; hybrid must not flood a single doc.
         prefs = common.canonical_path(self.vault, "prefs")
@@ -85,6 +110,33 @@ class HybridSearchTest(unittest.TestCase):
         self.assertLessEqual(len(result["results"]), 5)
         # Budget is applied; at least one result fits in 30 "tokens" (~120 chars).
         self.assertGreater(len(result["results"]), 0)
+
+
+class QueryCacheTest(unittest.TestCase):
+    def setUp(self):
+        self.vault = make_scratch_vault()
+
+    def tearDown(self):
+        destroy_scratch(self.vault)
+
+    def test_repeated_query_reuses_the_cached_vector(self):
+        from unittest.mock import patch
+
+        import unified_memory.embed as emb
+
+        calls = []
+        vector = [0.1] * emb.EMBED_DIMS
+
+        def fake_embed(texts):
+            calls.append(list(texts))
+            return [vector for _ in texts]
+
+        with patch.object(emb, "embed_texts", side_effect=fake_embed):
+            first = emb.embed_query_cached(self.vault, "same topic")
+            second = emb.embed_query_cached(self.vault, "same topic")
+        self.assertEqual(len(calls), 1, "the second call must hit the local cache")
+        self.assertEqual(len(first), len(second))
+        self.assertAlmostEqual(first[0], second[0], places=5)  # Float32 round-trip
 
 
 if __name__ == "__main__":

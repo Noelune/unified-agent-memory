@@ -43,7 +43,13 @@
 - **完整知识生命周期控制 (Full Lifecycle Pipeline)**  
   内置完整的状态流转机制：包含写收件箱暂存、Promoter 知识审核归纳、Adjudicator 冲突事实裁决、Atomic Lock 并发文件锁与 Forgetter 定期记忆衰减归档。
 - **混合检索 (Hybrid Retrieval)**  
-  `memory search --hybrid` 融合三重流：BM25 词法 + 语义向量 + 概念图谱，加权 RRF 融合、同文档多样化、Token 预算裁剪。无向量时自动回退纯 BM25。
+  `memory search --hybrid` 融合五路召回：BM25 + 中文 bigram BM25 + 语义向量 + 概念图谱 + trigram，加权 RRF 融合、同文档多样化、按真实 Token 预算裁剪。无向量时自动回退词法检索；查询向量本地缓存，重复主题的混合检索约 250ms。
+- **真实写入方言兼容 (Writer-Dialect Compatibility)**
+  同时解析仓库格式 `（写入 …｜来源：Agent提交区/x.md）` 与 Hermes 实际写入的 `[[Agent提交区/…]]`、`事件 \`…\``、`｜有效至 …` 方言。`｜有效至` 行自动标记为 `superseded`，不再作为当前事实召回。
+- **可观测性与自维护 (Doctor & GC)**
+  `memory doctor` 一次输出索引规模、收件箱积压、冲突、向量覆盖率、图谱膨胀、OneDrive 冲突副本等问题清单；`memory gc` 只清理派生数据（孤儿索引库、过期访问日志、膨胀图谱、VACUUM），默认 dry-run，`--apply` 才执行。
+- **异步同步副本隔离 (Sync-Conflict Isolation)**
+  OneDrive/Dropbox 生成的 `note 2.md`、`note-副本.md` 等冲突副本不会进入索引，避免同一事实以两个“真相”参与检索；`doctor` 会明确报错提示人工合并。
 - **语义向量层 (Semantic Embeddings, 可选)**  
   `memory embed` 用 SiliconFlow `Qwen/Qwen3-Embedding-4B`(1024 维)给每条记忆生成向量，本地 SQLite 存储；搜索“换措辞”也能命中同义事实。API key 存于 `~/.unified-memory/secrets.yaml`(0600/用户 ACL)，失败静默降级。
 - **会话自动提炼 (Session Digest, 默认开启)**  
@@ -51,7 +57,7 @@
 - **版本化取代 (Supersession)**  
   Promoter 识别“改用/迁移到/instead of”等取代信号时，把旧事实移入该笔记 `已取代` 小节并保留历史，索引标记旧行 `superseded`，检索只返回最新。
 - **智能遗忘评分 (Salience × Decay × Reinforcement)**  
-  Forgetter 从“90 天未用”升级为 `重要性 × (持久地板 + 时间衰减) + 访问强化`：偏好/架构/规则等高价值记忆长期保留，普通事实随时间衰减，始终可逆。
+  Forgetter 从“90 天未用”升级为 `重要性 × (持久地板 + 时间衰减) + 访问强化`：偏好/架构/规则等高价值记忆长期保留，普通事实随时间衰减，始终可逆。中文持久主题（路径/配置/服务器/凭据…）同样受保护，最近一次检索会重置衰减时钟；笔记编辑不会清空历史访问计数或已生成的向量。
 
 ---
 

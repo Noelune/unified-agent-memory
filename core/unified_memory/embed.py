@@ -20,6 +20,7 @@ Stdlib only (urllib.request). Endpoint is OpenAI-compatible.
 from __future__ import annotations
 
 import array
+import hashlib
 import json
 import os
 import time
@@ -143,16 +144,20 @@ def cosine(a: list[float], b: list[float]) -> float:
 # --------------------------------------------------------------------------
 
 
-def embed_missing(vault: Path, limit: int = 400) -> dict:
+def embed_missing(vault: Path, limit: int = 400, update: bool = True) -> dict:
     """Embed memory lines that lack a vector yet.
 
     Returns {"ok": bool, "embedded": int, "total": int, "reason": str}. On any
     provider failure returns ok=False with a short reason (caller decides
     whether to surface it). Never raises.
+
+    ``update=False`` lets a caller that just ran ``index.update_index`` skip
+    the second full digest scan.
     """
     if not configured():
         return {"ok": False, "embedded": 0, "total": 0, "reason": "no SiliconFlow API key (set SILICONFLOW_API_KEY or ~/.unified-memory/secrets.yaml)"}
-    index.update_index(vault)  # self-healing: memories must exist before we embed
+    if update:
+        index.update_index(vault)  # self-healing: memories must exist before we embed
     conn = index.get_conn(vault)
     try:
         rows = conn.execute(
@@ -183,6 +188,57 @@ def embed_missing(vault: Path, limit: int = 400) -> dict:
     finally:
         conn.close()
     return {"ok": True, "embedded": len(rows), "total": len(rows), "reason": ""}
+
+
+QUERY_CACHE_TTL_DAYS = 7
+
+
+def _cache_key(text: str) -> str:
+    return hashlib.sha256((text or "").strip().lower().encode("utf-8")).hexdigest()
+
+
+def embed_query_cached(vault: Path, text: str) -> list[float] | None:
+    """Embed a search query, reusing a recent vector for the same query.
+
+    The cache is derived data in the per-vault SQLite db; a miss or any cache
+    failure simply falls through to the provider. Only a successful provider
+    response is stored, so an outage never poisons the cache.
+    """
+    key = _cache_key(text)
+    try:
+        conn = index.get_conn(vault)
+        try:
+            row = conn.execute(
+                "SELECT vector, at FROM query_cache WHERE query_hash = ?", (key,)
+            ).fetchone()
+        finally:
+            conn.close()
+        if row is not None:
+            try:
+                age_days = (time.time() - time.mktime(time.strptime(str(row["at"])[:10], "%Y-%m-%d"))) / 86400
+            except (ValueError, OverflowError):
+                age_days = QUERY_CACHE_TTL_DAYS + 1
+            if age_days <= QUERY_CACHE_TTL_DAYS:
+                return blob_to_vector(row["vector"])
+    except Exception:  # noqa: BLE001 — cache is optional
+        pass
+
+    vector = embed_one(text)
+    if vector is None:
+        return None
+    try:
+        conn = index.get_conn(vault)
+        try:
+            conn.execute(
+                "INSERT OR REPLACE INTO query_cache (query_hash, vector, at) VALUES (?, ?, ?)",
+                (key, vector_to_blob(vector), time.strftime("%Y-%m-%dT%H:%M:%S")),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001 — never fail a search on a cache write
+        pass
+    return vector
 
 
 def vector_search(vault: Path, query_vec: list[float], limit: int = 8) -> list[dict]:

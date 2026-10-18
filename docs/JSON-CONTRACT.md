@@ -9,7 +9,9 @@
 |---|---|
 | `memory status --json` | 配置与索引健康度（§3） |
 | `memory search <query> --json` | 本地 FTS5 检索（plain，§4.1） |
-| `memory search <query> --hybrid --json` | 混合检索（BM25 + 向量 + 图 + trigram，§4.2） |
+| `memory search <query> --hybrid --json` | 混合检索（BM25 + 中文 bigram + 向量 + 图 + trigram，§4.2） |
+| `memory doctor --json` | 只读健康报告；`data.ok` 表示健康，命令本身的 `ok` 固定为 true |
+| `memory gc --json` | 派生数据清理报告（默认 dry-run；`--apply` 才删除） |
 | `memory search <query> --remote --json` | **例外：不产出信封**，见 §1.2 / §4.3 |
 | `memory preview <view> --json` | 只读治理视图（§5） |
 | `memory note <name> --json` | 读**一条**提交区条目的正文（§5.2） |

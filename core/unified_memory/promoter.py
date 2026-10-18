@@ -44,7 +44,6 @@ from .common import (
     resolve_vault,
     situation_dir,
     bare_fact_line,
-    strip_suffix,
     write_stamp,
 )
 from .conflict import (
@@ -96,7 +95,9 @@ def classify(fact: str) -> str:
 
 
 def target_path(vault: Path, doc_id: str) -> Path:
-    if doc_id == "other":
+    if doc_id == "other" or doc_id not in CANONICAL_DOCS:
+        # Unknown category (an old pending list, a hand-edited entry): keep the
+        # fact instead of failing the whole apply with a KeyError.
         return situation_dir(vault) / "未归类事实.md"
     return canonical_path(vault, doc_id)
 
@@ -127,6 +128,10 @@ def review(vault: Path, verbose: bool = True) -> dict:
     conflicts = 0
     supersessions = 0
     source_files: set[str] = set()
+    # Canonical notes do not change during a review pass, so parse each target
+    # once instead of once per submitted fact. On a large inbox that turns an
+    # O(facts × lines) file-read loop into one read per note.
+    existing_cache: dict[Path, list[str]] = {}
     for src in sorted(inbox.glob("*.md")):
         if src.name == "README.md":
             continue
@@ -135,11 +140,13 @@ def review(vault: Path, verbose: bool = True) -> dict:
             clean = redact(fact.strip())
             doc_id = classify(clean)
             target = target_path(vault, doc_id)
-            existing = [
-                bare_fact_line(ln)
-                for ln in read_maybe(target).splitlines()
-                if ln.strip().startswith("-") and "示例" not in ln and "example" not in ln.lower()
-            ]
+            if target not in existing_cache:
+                existing_cache[target] = [
+                    bare_fact_line(ln)
+                    for ln in read_maybe(target).splitlines()
+                    if ln.strip().startswith("-") and "示例" not in ln and "example" not in ln.lower()
+                ]
+            existing = existing_cache[target]
             status, hit = classify_against(clean, existing)
             if status == "duplicate":
                 duplicates += 1
@@ -291,34 +298,57 @@ def promote(vault: Path, entries: list[dict], *, locked: bool = False) -> list[s
     Accepts entries from either source: `apply_pending` (parsed pending list,
     keys `分类`/`内容`/`来源`/`取代`) or `auto_promote` (raw review output, keys
     `doc`/`fact`/`source`/`supersede`). Missing keys fall back to "other"/""/"inbox".
+
+    Entries are grouped per target note and written once per note. The old
+    loop rewrote the whole file for every fact, which on a synced vault meant
+    one cloud-sync event per fact (and O(facts × file size) writes).
     """
     if not locked:
         with file_lock(vault):
             return promote(vault, entries, locked=True)
-    promoted: list[str] = []
-    today = time.strftime("%Y-%m-%d")
+
+    grouped: dict[Path, list[dict]] = {}
     for entry in entries:
         doc = entry.get("分类") or entry.get("doc") or "other"
-        target = target_path(vault, doc)
+        grouped.setdefault(target_path(vault, doc), []).append(entry)
+
+    promoted: list[str] = []
+    today = time.strftime("%Y-%m-%d")
+    for target, group in grouped.items():
         existing = read_maybe(target)
-        if not existing.endswith("\n") and existing:
+        if existing and not existing.endswith("\n"):
             existing += "\n"
-        fact = entry.get("内容") or entry.get("fact") or ""
-        src = entry.get("来源") or entry.get("source") or "inbox"
-        line = f"- {fact}{write_stamp(src, today)}\n"
-        # Re-check dedup under the lock (another promoter may have raced).
-        bare = strip_suffix(line)
-        prior = [bare_fact_line(ln) for ln in existing.splitlines() if ln.strip().startswith("-")]
-        if any(p.strip() == bare.strip() for p in prior):
+        prior = {
+            bare_fact_line(line)
+            for line in existing.splitlines()
+            if line.strip().startswith("-")
+        }
+        additions: list[str] = []
+        supersedes: list[str] = []
+        for entry in group:
+            fact = entry.get("内容") or entry.get("fact") or ""
+            # Re-check dedup under the lock (another promoter may have raced).
+            # Compare bare fact text on both sides — the previous version
+            # compared a bullet-prefixed "bare" against bullet-stripped prior
+            # lines, so this guard never fired.
+            bare = bare_fact_line(f"- {fact}")
+            if not bare or bare in prior:
+                continue
+            src = entry.get("来源") or entry.get("source") or "inbox"
+            line = f"- {fact}{write_stamp(src, today)}\n"
+            additions.append(line)
+            prior.add(bare)
+            old_bare = entry.get("取代") or entry.get("supersede") or ""
+            if old_bare:
+                supersedes.append(old_bare)
+            promoted.append(line.strip())
+        if not additions:
             continue
-        atomic_write(target, existing + line)
-        # Supersession: move the old fact line under 已取代 (keeps history).
-        old_bare = entry.get("取代") or entry.get("supersede") or ""
-        if old_bare:
-            after = _move_to_superseded(existing + line, old_bare)
-            if after != existing + line:
-                atomic_write(target, after)
-        promoted.append(line.strip())
+        text = existing + "".join(additions)
+        # Supersession: move old fact lines under 已取代 (keeps history).
+        for old_bare in supersedes:
+            text = _move_to_superseded(text, old_bare)
+        atomic_write(target, text)
     return promoted
 
 

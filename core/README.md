@@ -17,6 +17,9 @@ memory submit "the staging server runs on 127.0.0.1:8080" --agent alpha
 memory search "staging server"                   # output is <memory-data> wrapped
 memory show prefs
 memory status
+memory doctor                                    # read-only health report
+memory gc                                        # dry-run: what derived data could be pruned
+memory gc --apply                                # prune orphan indexes, old logs, graph; VACUUM
 
 # promotion (the ONLY entry point, human-confirmed by default):
 python -m unified_memory.promoter --review       # build the pending list
@@ -39,6 +42,10 @@ python -m unified_memory.forgetter --apply       # demote into 记忆遗忘区/
   Privacy stays on your machine; remote index is an optional advanced mode.
 - Canonical notes are read-only from this package; the only write path is the
   submission inbox. Promotion takes a vault file lock and writes atomically.
+- Both promotion-stamp dialects are parsed: the repo form
+  `（写入 2026-08-16｜来源：Agent提交区/x.md）` and the Hermes form
+  ``（写入 2026-09-22｜来源：[[Agent提交区/x.md]]，事件 `…`｜有效至 …）``.
+  Lines carrying `｜有效至` are indexed as superseded history.
 - Search output is wrapped in <memory-data> markers: vault content is DATA,
   never instructions. Credential-shaped lines are rejected/redacted.
 

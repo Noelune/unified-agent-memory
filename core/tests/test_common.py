@@ -172,6 +172,55 @@ class ScratchIsolationGuardTest(unittest.TestCase):
         )
 
 
+class StampParsingTest(unittest.TestCase):
+    """Both promotion dialects must resolve; Hermes writes the live vault."""
+
+    def test_repo_dialect(self):
+        line = "- fact（写入 2026-08-16｜来源：Agent提交区/dsh-20260816-001-01.md）"
+        date, source, valid_until = common.parse_stamp(line)
+        self.assertEqual(date, "2026-08-16")
+        self.assertEqual(source, "Agent提交区/dsh-20260816-001-01.md")
+        self.assertIsNone(valid_until)
+        self.assertEqual(common.source_agent(source), "dsh")
+
+    def test_hermes_dialect_with_event(self):
+        line = (
+            "- fact（写入 2026-09-23｜来源：[[Hermes会话自动归档/2026-09-23]]，"
+            "事件 `3d2f428c`）"
+        )
+        date, source, valid_until = common.parse_stamp(line)
+        self.assertEqual(date, "2026-09-23")
+        self.assertEqual(source, "Hermes会话自动归档/2026-09-23")
+        self.assertEqual(common.source_agent(source), "hermes")
+        self.assertIsNone(valid_until)
+
+    def test_valid_until_and_usage_suffix_are_stripped(self):
+        line = (
+            "- old value（写入 2026-01-01｜来源：[[Agent提交区/x-1.md]]"
+            "｜使用 3 次·最近 2026-02-01｜有效至 2026-02-01）"
+        )
+        date, _source, valid_until = common.parse_stamp(line)
+        self.assertEqual(date, "2026-01-01")
+        self.assertEqual(valid_until, "2026-02-01")
+        self.assertTrue(common.is_versioned(line))
+        self.assertEqual(common.strip_suffix(line), "- old value")
+
+    def test_legacy_english_stamp(self):
+        line = "- fact (written 2026-01-01｜source:Agent提交区/x.md)"
+        self.assertEqual(
+            common.parse_stamp(line),
+            ("2026-01-01", "Agent提交区/x.md", None),
+        )
+        self.assertEqual(common.strip_suffix(line), "- fact")
+
+    def test_sync_conflict_copies_are_detected_but_dates_are_not(self):
+        self.assertTrue(common.is_conflict_copy("我的偏好摘要 2.md"))
+        self.assertTrue(common.is_conflict_copy("note-副本.md"))
+        self.assertTrue(common.is_conflict_copy("note (conflicted copy).md"))
+        self.assertFalse(common.is_conflict_copy("2026-10-18.md"))
+        self.assertFalse(common.is_conflict_copy("我的偏好摘要.md"))
+
+
 class RedactTest(unittest.TestCase):
     def test_redacts_short_credential_values(self):
         # Short values (>= 4 chars) after a key must still be redacted so a

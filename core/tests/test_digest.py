@@ -72,6 +72,22 @@ class DigestTest(unittest.TestCase):
             report2 = digest.digest(self.vault)
         self.assertEqual(report2["pending"], 0)
 
+    def test_cursor_is_not_advanced_when_the_inbox_write_fails(self):
+        self._write_session("2026-08-16.md", "body\n")
+        with patch("unified_memory.embed.configured", return_value=True), patch(
+            "unified_memory.digest.chat_extract_facts", return_value=["用户喜欢深色主题"]
+        ), patch("unified_memory.digest._write_digest_facts", return_value=0):
+            report = digest.digest(self.vault)
+        self.assertEqual(report["written"], 0)
+        self.assertTrue(any("could not write inbox" in item for item in report["skipped"]))
+        # The same archive must still be pending: losing the extracted facts
+        # permanently was the previous behaviour.
+        with patch("unified_memory.embed.configured", return_value=True), patch(
+            "unified_memory.digest.chat_extract_facts", return_value=["用户喜欢深色主题"]
+        ):
+            second = digest.digest(self.vault)
+        self.assertEqual(second["pending"], 1)
+
     def test_digest_can_be_disabled_via_config(self):
         common.CONFIG_PATH.write_text("digest.enabled: false\n", encoding="utf-8")
         self.assertFalse(digest.digest_enabled(common.CONFIG_PATH))

@@ -133,6 +133,16 @@ class PromoterTest(unittest.TestCase):
         self.assertTrue((done / pending.name).is_file())
         self.assertTrue(late.is_file(), "apply must not archive files that arrived after review")
 
+    def test_promote_dedups_repeated_pending_entries(self):
+        entries = [
+            {"doc": "env", "fact": "the same fact token", "source": "x.md"},
+            {"doc": "env", "fact": "the same fact token", "source": "x.md"},
+        ]
+        promoted = promoter.promote(self.vault, entries)
+        self.assertEqual(len(promoted), 1)
+        text = read_maybe(canonical_path(self.vault, "env"))
+        self.assertEqual(text.count("the same fact token"), 1)
+
     def test_auto_promotes_in_one_step(self):
         # Use a fact that classifies to rules but is NOT a template placeholder,
         # so the assertion is real (the old test matched a template line).

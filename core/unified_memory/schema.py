@@ -71,6 +71,18 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         conn.execute(
             "CREATE VIRTUAL TABLE IF NOT EXISTS fts_mem_tri USING fts5(memory_id UNINDEXED, line, tokenize='trigram')"
         )
+    # CJK bigram FTS: the default unicode61 tokenizer treats a whole Chinese
+    # run as one token, so BM25 misses 记忆/路径/环境-style queries entirely.
+    # This table stores an overlapping-bigram rendering of each line (ASCII
+    # words lowercased), which gives Chinese the same ranked lexical recall
+    # English already had. Best-effort like fts_mem_tri: absent table = the
+    # stream simply contributes nothing.
+    try:
+        conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS fts_mem_bigram USING fts5(memory_id UNINDEXED, tokens)"
+        )
+    except sqlite3.Error:
+        pass
     conn.execute(
         """CREATE TABLE IF NOT EXISTS memories (
             id TEXT PRIMARY KEY,
@@ -91,6 +103,12 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         "CREATE TABLE IF NOT EXISTS embeddings (memory_id TEXT PRIMARY KEY, dim INTEGER NOT NULL, vector BLOB NOT NULL)"
+    )
+    # Query-vector cache: agent turns often repeat the same topic query. A
+    # provider round-trip is ~300 ms, so caching the query embedding locally
+    # cuts hybrid-search latency roughly in half without affecting recall.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS query_cache (query_hash TEXT PRIMARY KEY, vector BLOB NOT NULL, at TEXT NOT NULL)"
     )
     conn.execute(
         "CREATE TABLE IF NOT EXISTS access_log (memory_id TEXT NOT NULL, at TEXT NOT NULL)"
@@ -119,6 +137,14 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
     conn.execute("DELETE FROM docs")
     conn.execute("DELETE FROM fts")
     conn.execute("DELETE FROM fts_mem")
+    try:
+        conn.execute("DELETE FROM fts_mem_tri")
+    except sqlite3.Error:
+        pass
+    try:
+        conn.execute("DELETE FROM fts_mem_bigram")
+    except sqlite3.Error:
+        pass
     conn.execute("DELETE FROM memories")
     conn.execute("DELETE FROM embeddings")
     conn.execute("DELETE FROM access_log")
@@ -131,11 +157,24 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
 
 
 def get_conn(vault: Path) -> sqlite3.Connection:
-    """Open (creating/upgrading) the per-vault memory database."""
+    """Open (creating/upgrading) the per-vault memory database.
+
+    WAL + a busy timeout matter here because searches and the DSH console can
+    read while the daily promoter writes. The default rollback journal made a
+    concurrent reader fail with "database is locked" instead of waiting; the
+    pragmas are best-effort so exotic filesystems (network mounts without WAL
+    support) still open in the old mode.
+    """
     db_path = index_db_for(vault)
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path))
+    conn = sqlite3.connect(str(db_path), timeout=5.0)
     conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("PRAGMA busy_timeout = 5000")
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
+    except sqlite3.Error:
+        pass
     _ensure_schema(conn)
     _migrate_schema(conn)
     return conn

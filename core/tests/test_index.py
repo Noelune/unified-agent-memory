@@ -84,6 +84,89 @@ class IndexTest(unittest.TestCase):
         self.assertEqual(count, 2)
         self.assertEqual(log_rows, 2)
 
+    def test_hermes_stamp_attributes_date_and_agent(self):
+        self._append(
+            "env",
+            "\n- 线上 Hermes 归档在 D 盘（写入 2026-09-22｜来源：[[Agent提交区/dsh-20260921-223255-01.md]]）\n",
+        )
+        index.update_index(self.vault)
+        with index.get_conn(self.vault) as conn:
+            row = conn.execute(
+                "SELECT created_at, source_agent FROM memories WHERE line LIKE '%Hermes 归档%'"
+            ).fetchone()
+        self.assertTrue(row["created_at"].startswith("2026-09-22"))
+        self.assertEqual(row["source_agent"], "dsh")
+
+    def test_versioned_line_is_superseded(self):
+        self._append(
+            "env",
+            "\n- 旧端口是 8080（写入 2026-01-01｜来源：[[Agent提交区/x-1.md]]｜有效至 2026-02-01）\n",
+        )
+        index.update_index(self.vault)
+        with index.get_conn(self.vault) as conn:
+            row = conn.execute(
+                "SELECT status FROM memories WHERE line = '旧端口是 8080'"
+            ).fetchone()
+        self.assertEqual(row["status"], "superseded")
+        self.assertNotIn("旧端口是 8080", [m["line"] for m in index.active_memories(self.vault)])
+
+    def test_access_count_survives_a_note_edit(self):
+        self._append("prefs", "\n- 用户偏好深色终端\n")
+        index.update_index(self.vault)
+        target = next(m for m in index.active_memories(self.vault) if m["line"] == "用户偏好深色终端")
+        index.record_access(self.vault, [target["id"]])
+        index.record_access(self.vault, [target["id"]])
+        # Edit the same note (adds a different fact) -> full note rebuild.
+        self._append("prefs", "\n- 用户偏好等宽字体\n")
+        index.update_index(self.vault)
+        with index.get_conn(self.vault) as conn:
+            count = conn.execute(
+                "SELECT access_count FROM memories WHERE id = ?", (target["id"],)
+            ).fetchone()["access_count"]
+        self.assertEqual(count, 2, "a note edit must not reset reinforcement history")
+
+    def test_embedding_survives_a_note_edit(self):
+        self._append("prefs", "\n- 用户偏好深色终端\n")
+        index.update_index(self.vault)
+        target = next(m for m in index.active_memories(self.vault) if m["line"] == "用户偏好深色终端")
+        with index.get_conn(self.vault) as conn:
+            conn.execute(
+                "INSERT INTO embeddings (memory_id, dim, vector) VALUES (?, 4, ?)",
+                (target["id"], b"\0" * 16),
+            )
+            conn.commit()
+        self._append("prefs", "\n- 用户偏好等宽字体\n")
+        index.update_index(self.vault)
+        with index.get_conn(self.vault) as conn:
+            vectors = conn.execute(
+                "SELECT COUNT(*) FROM embeddings WHERE memory_id = ?", (target["id"],)
+            ).fetchone()[0]
+        self.assertEqual(vectors, 1, "an edit must not force a paid re-embed of unchanged lines")
+
+    def test_sync_conflict_copy_is_not_indexed(self):
+        ctx = common.canonical_dir(self.vault)
+        (ctx / "prefs 2.md").write_text(
+            "# conflict copy\n\n- unique-conflict-copy-token\n", encoding="utf-8"
+        )
+        index.update_index(self.vault)
+        with index.get_conn(self.vault) as conn:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM memories WHERE line = 'unique-conflict-copy-token'"
+            ).fetchone()[0]
+        self.assertEqual(count, 0)
+
+    def test_cjk_bigram_search_matches_a_two_char_query(self):
+        self._append("env", "\n- 记忆索引保存在本地 SQLite\n")
+        index.update_index(self.vault)
+        rows = index.bm25_bigram_search(self.vault, "记忆", limit=5)
+        self.assertTrue(any("记忆索引" in row["line"] for row in rows))
+
+    def test_fts_search_returns_the_matched_line(self):
+        self._append("env", "\n- 记忆索引保存在本地 SQLite\n")
+        result = index.fts_search(self.vault, "记忆", 5)
+        self.assertTrue(result["results"])
+        self.assertTrue(any("记忆索引" in r["snippet"] for r in result["results"]))
+
     def test_index_is_isolated_per_vault(self):
         second = self.vault.parent / "second-vault"
         first_db = index.index_db_for(self.vault)

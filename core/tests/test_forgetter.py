@@ -36,16 +36,49 @@ class ForgetterScoreTest(unittest.TestCase):
             ui.write_text(
                 ui.read_text(encoding="utf-8")
                 + "\n- 架构上采用微服务拆分（写入 2020-01-01｜来源：Agent提交区/codex-20200101-001-01.md）\n"
-                + "- 临时服务器地址备忘（写入 2020-01-01｜来源：Agent提交区/codex-20200101-002-01.md）\n",
+                + "- 临时会议纪要备忘（写入 2020-01-01｜来源：Agent提交区/codex-20200101-002-01.md）\n"
+                + "- 服务器地址备忘（写入 2020-01-01｜来源：Agent提交区/codex-20200101-003-01.md）\n",
                 encoding="utf-8",
             )
             index.update_index(vault)
             candidates = forgetter.demote(vault, dry_run=True)
             text = "\n".join(candidates)
-            self.assertIn("临时服务器地址备忘", text)
+            self.assertIn("临时会议纪要备忘", text)
             self.assertNotIn("架构上采用微服务拆分", text)
+            # Chinese durable topics must be protected too: the live vault is
+            # mostly Chinese, and the old English-only regex forgot them.
+            self.assertNotIn("服务器地址备忘", text)
         finally:
             destroy_scratch(vault)
+
+
+class ForgetterSafetyTest(unittest.TestCase):
+    def setUp(self):
+        self.vault = make_scratch_vault()
+
+    def tearDown(self):
+        destroy_scratch(self.vault)
+
+    def _append(self, fact):
+        ui = canonical_path(self.vault, "ui")
+        ui.write_text(ui.read_text(encoding="utf-8") + fact, encoding="utf-8")
+
+    def test_versioned_history_is_never_demoted(self):
+        self._append(
+            "- 旧配色是蓝色（写入 2020-01-01｜来源：[[Agent提交区/x-1.md]]｜有效至 2020-02-01）\n"
+        )
+        index.update_index(self.vault)
+        self.assertNotIn("旧配色是蓝色", "\n".join(forgetter.demote(self.vault, dry_run=True)))
+
+    def test_recent_access_rescues_an_old_transient_fact(self):
+        self._append("- 临时会议纪要备忘（写入 2020-01-01｜来源：Agent提交区/x-1.md）\n")
+        index.update_index(self.vault)
+        target = next(m for m in index.active_memories(self.vault) if m["line"] == "临时会议纪要备忘")
+        # Before any read receipt the old transient fact is a candidate…
+        self.assertIn("临时会议纪要备忘", "\n".join(forgetter.demote(self.vault, dry_run=True)))
+        # …after a read receipt it is not: reinforcement resets the decay clock.
+        index.record_access(self.vault, [target["id"]])
+        self.assertNotIn("临时会议纪要备忘", "\n".join(forgetter.demote(self.vault, dry_run=True)))
 
 
 class ForgetterScheduleTest(unittest.TestCase):
