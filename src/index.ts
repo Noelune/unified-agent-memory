@@ -65,7 +65,7 @@ import { buildStatusPayload } from './status-payload.ts'
 import { ONBOARDING_SCOPE, consentSatisfied, readOnboardingState } from './onboarding.ts'
 import { guard, guardWrite, queryParam, readBody, sendJson } from './routes.ts'
 import type { RouteReq, RouteRes } from './routes.ts'
-import { SEARCH_PATH, handleSearch } from './route-search.ts'
+import { SEARCH_PATH, clampSearchLimit, handleSearch } from './route-search.ts'
 import {
   NOTE_PATH, PREVIEW_PATH, PREVIEW_VIEWS, clampPreviewLimit, handleNote, handlePreview,
 } from './route-preview.ts'
@@ -246,7 +246,11 @@ export function apply(ctx: Context, config: Record<string, unknown> = {}): void 
           return
         }
         const hybrid = queryParam(req.url, 'hybrid') === '1'
-        sendJson(res, 200, await handleSearch(cfg, query, hybrid))
+        // `limit` is clamped here for the same reason `/preview` clamps its
+        // own: the value is caller-supplied and would otherwise reach
+        // argparse, where garbage exits non-zero and reads as a dead core.
+        const limit = clampSearchLimit(queryParam(req.url, 'limit'))
+        sendJson(res, 200, await handleSearch(cfg, query, hybrid, limit))
       })()
     },
   })

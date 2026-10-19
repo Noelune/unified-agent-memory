@@ -72,6 +72,9 @@ SITUATION_DIR = "情境信息"
 PENDING_FILE = "待晋升.md"
 CONFLICT_FILE = "事实冲突待裁决.md"
 ADJUDICATED_FILE = "事实冲突已裁决.md"
+# The one note under 情境信息/ that holds facts rather than workflow state.
+# Written by promoter's `other` fallback; indexed by index.indexed_files().
+UNCLASSIFIED_FACT_REL = "情境信息/未归类事实.md"
 FORGET_DIR = "记忆遗忘区"
 SESSION_DIR = "会话归档"
 LOCK_FILE = ".lock"
@@ -498,7 +501,6 @@ def bare_fact_line(line: str) -> str:
 
 def is_versioned(line: str) -> bool:
     return bool(VERSIONED_RE.search(line))
-
 
 def write_stamp(src_name: str, when: str | None = None) -> str:
     day = when or time.strftime("%Y-%m-%d")

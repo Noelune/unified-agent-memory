@@ -31,6 +31,7 @@ import time
 from pathlib import Path
 
 from .common import (
+    UNCLASSIFIED_FACT_REL,
     bare_fact_line,
     canonical_dir,
     is_conflict_copy,
@@ -123,7 +124,14 @@ def parse_write_stamp(line: str) -> tuple[str | None, str]:
 
 
 def indexed_files(vault: Path) -> list[Path]:
-    """Canonical .md files directly under 50-Agent-Context (not subdirs).
+    """Canonical .md files that actually hold facts.
+
+    Top-level notes, plus the one situation note the promoter writes facts
+    into. `情境信息/未归类事实.md` used to be excluded by a top-level-only
+    glob, so every fact the classifier could not place was written, stamped
+    and locked — and then permanently invisible to search. The rest of
+    情境信息/ is workflow state (待晋升 / 冲突 / 已裁决) and 已处理/ is the
+    inbox archive; indexing those would surface duplicates and stale rows.
 
     Sync-client conflict copies (``note 2.md``, ``note-副本.md`` …) are skipped:
     they are an unresolved duplicate of a note, not another source of truth.
@@ -131,11 +139,15 @@ def indexed_files(vault: Path) -> list[Path]:
     ctx = canonical_dir(vault)
     if not ctx.is_dir():
         return []
-    return [
+    files = [
         p
         for p in sorted(ctx.glob("*.md"))
         if p.is_file() and not is_conflict_copy(p.name)
     ]
+    unclassified = ctx / UNCLASSIFIED_FACT_REL
+    if unclassified.is_file() and not is_conflict_copy(unclassified.name):
+        files.append(unclassified)
+    return files
 
 
 # --------------------------------------------------------------------------
@@ -501,6 +513,43 @@ def update_index(vault: Path, verbose: bool = False) -> dict:
 # --------------------------------------------------------------------------
 
 
+def _doc_match(path: Path, query: str) -> tuple[str, str] | None:
+    """Best active evidence for a whole-document hit: (snippet, kind) or None.
+
+    The doc-level FTS table (and the substring scan below) index the *whole*
+    file, history section included, so a note whose only mention of the query
+    sits under 已取代 used to come back as a hit with an empty snippet — the
+    caller could not tell a retired value from a current one. Resolve the hit
+    to a line and grade it instead:
+
+      ("…", "line")  an active fact line matches   — best
+      ("…", "title") no active match, title matches — the note is on topic, so
+                     quote its first active fact as context
+      None           history-only match             — not an answer
+    """
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    keywords = [kw for kw in re.split(r"[\s,，]+", query.lower()) if kw]
+    facts = [raw for status, _bare, raw in _doc_lines(text) if status == "active"]
+    # All terms on one line is the strongest evidence — quote that line.
+    for raw in facts:
+        if all(kw in raw.lower() for kw in keywords):
+            return bare_fact_line(raw), "line"
+    # Otherwise the terms may be spread across the note (that is exactly the
+    # case the line-level streams miss and this fallback exists for). Quote
+    # the best active line that carries any of them.
+    for raw in facts:
+        if any(kw in raw.lower() for kw in keywords):
+            return bare_fact_line(raw), "line"
+    # The note is on topic without quoting it: fall back to its title, with the
+    # first active fact as context so the caller is not handed a bare filename.
+    if facts and all(kw in path.stem.lower() for kw in keywords):
+        return bare_fact_line(facts[0]), "title"
+    return None
+
+
 def fts_search(vault: Path, query: str, limit: int) -> dict:
     """Document search with the best matching fact line as the snippet.
 
@@ -508,7 +557,8 @@ def fts_search(vault: Path, query: str, limit: int) -> dict:
     was empty whenever the match landed on the title (and returned nothing at
     all for Chinese), so callers saw a bare list of file names. Line-level
     streams now supply both the document and the matched line; doc-level FTS
-    remains the fallback when no line matches.
+    remains the fallback when no line matches — resolved back to an active
+    line by ``_doc_match`` so history never leaks into results.
     """
     update_index(vault)  # self-healing: ensure the derived db is fresh
     results: list[dict] = []
@@ -554,29 +604,44 @@ def fts_search(vault: Path, query: str, limit: int) -> dict:
                 rows = conn.execute(
                     "SELECT path, title, snippet(fts, 2, '[', ']', '…', 24) AS snip "
                     "FROM fts WHERE fts MATCH ? ORDER BY rank LIMIT ?",
-                    (query, limit),
+                    (query, limit * 2),
                 ).fetchall()
-                for row in rows:
-                    results.append(
-                        {
-                            "doc": redact(Path(row["path"]).name),
-                            "title": redact(row["title"]),
-                            "snippet": redact(row["snip"] or ""),
-                            "query": query,
-                        }
-                    )
             except sqlite3.Error:
-                results = []
+                rows = []
+            for row in rows:
+                hit = _doc_match(Path(row["path"]), query)
+                if hit is None:
+                    continue
+                snippet, kind = hit
+                results.append(
+                    {
+                        "doc": redact(Path(row["path"]).name),
+                        "title": redact(row["title"]),
+                        "snippet": redact(snippet),
+                        "query": query,
+                        "match": kind,
+                    }
+                )
+                if len(results) >= limit:
+                    break
         if not results:
             keywords = [kw for kw in re.split(r"[\s,，]+", query) if kw]
             for path in indexed_files(vault):
-                text = path.read_text(encoding="utf-8", errors="replace")
-                if all(kw.lower() in text.lower() for kw in keywords):
-                    results.append(
-                        {"doc": redact(path.name), "title": redact(path.stem), "snippet": "", "query": query}
-                    )
-                    if len(results) >= limit:
-                        break
+                hit = _doc_match(path, query)
+                if hit is None:
+                    continue
+                snippet, kind = hit
+                results.append(
+                    {
+                        "doc": redact(path.name),
+                        "title": redact(path.stem),
+                        "snippet": redact(snippet),
+                        "query": query,
+                        "match": kind,
+                    }
+                )
+                if len(results) >= limit:
+                    break
         return {"ok": True, "query": query, "count": len(results), "results": results, "index": str(index_db_for(vault))}
     finally:
         conn.close()

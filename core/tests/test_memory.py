@@ -184,5 +184,54 @@ class MemoryCoreTest(unittest.TestCase):
         self.assertIn("remote index is not configured", str(cm.exception))
 
 
+class DriftSubcommandTest(unittest.TestCase):
+    """`memory drift` is the CLI front door; it must not raise tracebacks.
+
+    `python -m unified_memory.drift` has always translated a missing
+    driftrc.yaml and a PyYAML-less interpreter into one actionable line. The
+    subcommand did not, so on an installed package (where driftrc.yaml was not
+    even shipped) `memory drift`, `--template` and `--strict` all died with a
+    three-frame traceback ending in FileNotFoundError.
+    """
+
+    def _args(self, **kwargs):
+        base = {"vault": None, "template": False, "strict": False}
+        base.update(kwargs)
+        return type("A", (), base)()
+
+    def test_missing_driftrc_becomes_a_systemexit_with_advice(self):
+        with patch(
+            "unified_memory.drift.DriftDetector.run",
+            side_effect=FileNotFoundError("driftrc.yaml not found at /nowhere/driftrc.yaml"),
+        ):
+            with self.assertRaises(SystemExit) as cm:
+                mem_mod.cmd_drift(self._args())
+        message = str(cm.exception)
+        self.assertIn("driftrc.yaml", message)
+        self.assertIn("source repository", message)
+        self.assertNotIn("Traceback", message)
+
+    def test_missing_pyyaml_gets_its_own_message(self):
+        with patch(
+            "unified_memory.drift.DriftDetector.run",
+            side_effect=ModuleNotFoundError("No module named 'yaml'", name="yaml"),
+        ):
+            with self.assertRaises(SystemExit) as cm:
+                mem_mod.cmd_drift(self._args())
+        self.assertIn("PyYAML", str(cm.exception))
+
+    def test_driftrc_is_shipped_in_the_npm_package(self):
+        # The other half of the same defect: `npm files` decides what an
+        # installed user actually gets. Without this entry `memory drift` can
+        # never work outside a git checkout.
+        import json
+        from pathlib import Path
+
+        pkg = Path(__file__).resolve().parent.parent.parent / "package.json"
+        files = json.loads(pkg.read_text(encoding="utf-8"))["files"]
+        self.assertIn("driftrc.yaml", files)
+        self.assertTrue((pkg.parent / "driftrc.yaml").is_file())
+
+
 if __name__ == "__main__":
     unittest.main()

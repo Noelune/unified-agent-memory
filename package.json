@@ -29,6 +29,7 @@
     "cordis.patch.yml",
     "dsh.plugin.json",
     "README.md",
+    "driftrc.yaml",
     "core/pyproject.toml",
     "core/README.md",
     "core/unified_memory/*.py",

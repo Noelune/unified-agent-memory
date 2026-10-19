@@ -23,6 +23,7 @@ Usage:
     python -m unified_memory.digest --dry-run  (preview without writing)
     python -m unified_memory.digest --source state   (read Hermes state.db too)
     python -m unified_memory.digest --off      (disable)
+    python -m unified_memory.digest --on       (re-enable)
 
 Two sources exist because two kinds of session exist. The archive is the
 normal path; ``--source state`` additionally reads Hermes's ``state.db``, which
@@ -294,16 +295,25 @@ def main(argv: list[str] | None = None) -> None:
         help="where to read sessions from: the Markdown archive (default) or Hermes state.db",
     )
     parser.add_argument("--off", action="store_true", help="disable the session digest")
+    parser.add_argument("--on", action="store_true", help="re-enable a digest turned off with --off")
     args = parser.parse_args(argv)
     vault = Path(args.vault) if args.vault else resolve_vault()
     from .common import CONFIG_PATH
 
+    if args.off and args.on:
+        raise SystemExit("digest: --on and --off are mutually exclusive")
     if args.off:
         _set_enabled(CONFIG_PATH, False)
         print("session digest disabled (digest.enabled=false)")
         return
+    if args.on:
+        # --off had no counterpart: once disabled, the only way back was to
+        # hand-edit the config file that --off itself had just written.
+        _set_enabled(CONFIG_PATH, True)
+        print("session digest enabled (digest.enabled=true)")
+        return
     if not digest_enabled(CONFIG_PATH):
-        print("session digest is disabled (set digest.enabled=true to re-enable)")
+        print("session digest is disabled (run `memory digest --on` to re-enable)")
         return
     report = digest(vault, dry_run=args.dry_run, limit=args.limit, source=args.source)
     print(

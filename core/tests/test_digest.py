@@ -5,6 +5,8 @@ The live LLM is never called: chat_extract_facts is patched. Tests cover fact
 parsing/redaction, archive discovery (date files only), cursor idempotency and
 the enable/disable switch.
 """
+import contextlib
+import io
 import os
 import unittest
 from pathlib import Path
@@ -93,6 +95,24 @@ class DigestTest(unittest.TestCase):
         self.assertFalse(digest.digest_enabled(common.CONFIG_PATH))
         digest._set_enabled(common.CONFIG_PATH, True)
         self.assertTrue(digest.digest_enabled(common.CONFIG_PATH))
+
+    def test_cli_on_re_enables_what_off_disabled(self):
+        # --off had no counterpart, so the only way back was to hand-edit the
+        # config file --off itself had just written.
+        common.CONFIG_PATH.write_text("digest.enabled: true\n", encoding="utf-8")
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            digest.main(["--off", "--vault", str(self.vault)])
+        self.assertIn("disabled", buf.getvalue())
+        self.assertFalse(digest.digest_enabled(common.CONFIG_PATH))
+
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            digest.main(["--on", "--vault", str(self.vault)])
+        self.assertIn("enabled", buf.getvalue())
+        self.assertTrue(digest.digest_enabled(common.CONFIG_PATH))
+
+    def test_cli_rejects_on_and_off_together(self):
+        with self.assertRaises(SystemExit):
+            digest.main(["--on", "--off", "--vault", str(self.vault)])
 
 
 if __name__ == "__main__":

@@ -175,6 +175,116 @@ class IndexTest(unittest.TestCase):
         self.assertEqual(first_db.name, f"index-{hashlib_hex(self.vault)[:16]}.db")
 
 
+class UnclassifiedNoteTest(unittest.TestCase):
+    """`情境信息/未归类事实.md` is a fact note, not workflow state.
+
+    The promoter writes every fact its classifier could not place into this
+    one note. `indexed_files` globbed `50-Agent-Context/*.md` only, so those
+    facts were written, stamped and locked — and permanently unsearchable.
+    """
+
+    def setUp(self):
+        self.vault = make_scratch_vault()
+
+    def tearDown(self):
+        destroy_scratch(self.vault)
+
+    def target(self):
+        return common.situation_dir(self.vault) / "未归类事实.md"
+
+    def test_unclassified_note_is_indexed(self):
+        self.target().write_text(
+            "# 未归类事实\n\n- 备用域名指向 mirror 节点（写入 2026-08-16｜来源：Agent提交区/x.md）\n",
+            encoding="utf-8",
+        )
+        index.update_index(self.vault)
+        rows = [m["line"] for m in index.active_memories(self.vault)]
+        self.assertTrue(
+            any("备用域名指向 mirror 节点" in line for line in rows),
+            "the note the promoter writes to is not in the index",
+        )
+
+    def test_unclassified_note_is_searchable_through_every_stream(self):
+        self.target().write_text(
+            "# 未归类事实\n\n- 备用域名指向 mirror 节点\n", encoding="utf-8"
+        )
+        index.update_index(self.vault)
+        self.assertTrue(index.bm25_memory_search(self.vault, "备用域名", limit=5))
+        self.assertTrue(index.trigram_memory_search(self.vault, "备用域名", limit=5))
+        self.assertTrue(index.fts_search(self.vault, "备用域名", 5)["results"])
+
+    def test_workflow_notes_are_not_indexed(self):
+        # 待晋升 / 事实冲突待裁决 / 已裁决 are queues: they duplicate facts that
+        # are already indexed, or hold claims that were rejected. Indexing them
+        # would put rejected values back into recall.
+        (common.situation_dir(self.vault) / common.PENDING_FILE).write_text(
+            "# 待晋升\n\n- queued-fact-token\n", encoding="utf-8"
+        )
+        (common.situation_dir(self.vault) / common.ADJUDICATED_FILE).write_text(
+            "# 事实冲突已裁决\n\n- rejected-fact-token\n", encoding="utf-8"
+        )
+        index.update_index(self.vault)
+        rows = [m["line"] for m in index.active_memories(self.vault)]
+        self.assertFalse(any("queued-fact-token" in line for line in rows))
+        self.assertFalse(any("rejected-fact-token" in line for line in rows))
+
+
+class DocFallbackTest(unittest.TestCase):
+    """The whole-document fallback must not hand back retired values.
+
+    The doc-level FTS table indexes the entire file, history section included,
+    so a note whose only mention of the query sits under 已取代 used to come
+    back as a hit with an empty snippet — indistinguishable from a live fact.
+    """
+
+    def setUp(self):
+        self.vault = make_scratch_vault()
+
+    def tearDown(self):
+        destroy_scratch(self.vault)
+
+    def _write(self, doc_id, body):
+        path = common.canonical_path(self.vault, doc_id)
+        path.write_text(path.read_text(encoding="utf-8") + body, encoding="utf-8")
+        return path
+
+    def test_history_only_doc_is_not_returned(self):
+        # The only occurrence of the token is retired. Nothing active matches,
+        # so the answer is "no result", not "here is the note".
+        self._write("env", "\n## 已取代\n- zqxwv-portal retired on 2026-07-01\n")
+        index.update_index(self.vault)
+        result = index.fts_search(self.vault, "zqxwv", 5)
+        self.assertEqual(result["results"], [], "a retired value was returned as a hit")
+
+    def test_snippet_comes_from_the_active_line(self):
+        # Unit-level: the line-level streams answer most queries before this
+        # fallback runs, so the boundary is asserted directly rather than
+        # through a query that may never reach it.
+        path = self._write(
+            "env",
+            "\n- zqxwv-portal lives on host alpha\n\n## 已取代\n- zqxwv-portal lived on host beta\n",
+        )
+        snippet, kind = index._doc_match(path, "zqxwv")
+        self.assertIn("alpha", snippet)
+        self.assertNotIn("beta", snippet)
+        self.assertEqual(kind, "line")
+
+    def test_doc_match_refuses_a_history_only_hit(self):
+        path = self._write("env", "\n## 已取代\n- zqxwv-portal retired\n")
+        self.assertIsNone(index._doc_match(path, "zqxwv"))
+
+    def test_title_match_quotes_the_first_active_line(self):
+        # No fact line contains the token, but the note is *about* it. Return
+        # the note with real context instead of an empty snippet.
+        path = self._write("env", "\n- pkghost runs on the lab machine\n")
+        path.rename(path.with_name("pkghost-notes.md"))
+        common.canonical_path(self.vault, "env").write_text("# env\n", encoding="utf-8")
+        index.update_index(self.vault)
+        result = index.fts_search(self.vault, "pkghost", 5)
+        self.assertTrue(result["results"])
+        self.assertTrue(result["results"][0]["snippet"])
+
+
 def hashlib_hex(vault):
     import hashlib
     return hashlib.sha256(str(vault.resolve()).encode("utf-8")).hexdigest()

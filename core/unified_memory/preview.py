@@ -80,7 +80,15 @@ def _pending(vault: Path, limit: int) -> list[dict]:
     inbox = Path(vault) / INBOX_REL
     if not inbox.is_dir():
         return []
-    files = sorted(inbox.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True)[:limit]
+    # README.md documents the inbox format; it is not a submission. The
+    # promoter has always skipped it (`review`: `if src.name == "README.md"`)
+    # and `memory status` counts without it, so showing it here made the panel
+    # report one pending item in a vault that had none.
+    files = sorted(
+        (p for p in inbox.glob("*.md") if p.name != "README.md"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )[:limit]
     return [
         {"name": p.name, "path": str(p), "mtime": p.stat().st_mtime, "untrusted": True}
         for p in files

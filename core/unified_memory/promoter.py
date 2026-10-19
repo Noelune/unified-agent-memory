@@ -32,6 +32,7 @@ from .common import (
     CANONICAL_DOCS,
     CONFLICT_FILE,
     PENDING_FILE,
+    UNCLASSIFIED_FACT_REL,
     atomic_write,
     canonical_dir,
     canonical_path,
@@ -69,8 +70,8 @@ CATEGORY_RULES: list[tuple[str, re.Pattern, str]] = [
     ("coord", re.compile(r"coordinat|collaborat|agent|relay|handoff|ownership|boundary|inbox|协作|代理|边界|共享|隔离|提交|relay", re.I), "coord"),
 ]
 
-UNCLASSIFIED_TARGET = "情境信息/未归类事实.md"
-UNCLASSIFIED_DOC = "情境信息/未归类事实.md"
+UNCLASSIFIED_TARGET = UNCLASSIFIED_FACT_REL
+UNCLASSIFIED_DOC = UNCLASSIFIED_FACT_REL
 
 # Template placeholder lines (safe to prune) — matches the starter-vault
 # examples, not real user facts (e.g. a URL containing "example.com").
@@ -127,10 +128,22 @@ def review(vault: Path, verbose: bool = True) -> dict:
     duplicates = 0
     conflicts = 0
     supersessions = 0
+    settled = 0
     source_files: set[str] = set()
+    # Conflicts a human already ruled on. Without this the inbox submission
+    # keeps re-raising the same conflict forever: `保留旧`/`跳过` leave both the
+    # submission and the canonical value untouched, so the next pass reaches
+    # the identical verdict. The adjudication log is the record of "asked and
+    # answered"; honouring it is what makes adjudication final.
+    adjudicated = _adjudicated_facts(vault)
     # Canonical notes do not change during a review pass, so parse each target
     # once instead of once per submitted fact. On a large inbox that turns an
     # O(facts × lines) file-read loop into one read per note.
+    #
+    # Only *active* facts are compared. Reading the whole note made history
+    # indistinguishable from truth: once an old value moved under 已取代 it
+    # stayed in the pool, so the replacement that had just superseded it was
+    # reported as a fresh conflict on every run.
     existing_cache: dict[Path, list[str]] = {}
     for src in sorted(inbox.glob("*.md")):
         if src.name == "README.md":
@@ -138,14 +151,15 @@ def review(vault: Path, verbose: bool = True) -> dict:
         source_files.add(src.name)
         for fact in fact_lines(src.read_text(encoding="utf-8", errors="replace")):
             clean = redact(fact.strip())
+            if bare_fact_line(f"- {clean}") in adjudicated:
+                settled += 1
+                continue
             doc_id = classify(clean)
             target = target_path(vault, doc_id)
             if target not in existing_cache:
-                existing_cache[target] = [
-                    bare_fact_line(ln)
-                    for ln in read_maybe(target).splitlines()
-                    if ln.strip().startswith("-") and "示例" not in ln and "example" not in ln.lower()
-                ]
+                existing_cache[target] = active_fact_lines(
+                    read_maybe(target), drop_examples=True
+                )
             existing = existing_cache[target]
             status, hit = classify_against(clean, existing)
             if status == "duplicate":
@@ -193,11 +207,43 @@ def review(vault: Path, verbose: bool = True) -> dict:
                 }
             )
     if verbose:
-        print(f"review: {len(pending)} pending, {duplicates} duplicate(s), {conflicts} conflict(s), {supersessions} supersession(s)")
+        settled_note = f", {settled} already adjudicated" if settled else ""
+        print(
+            f"review: {len(pending)} pending, {duplicates} duplicate(s), "
+            f"{conflicts} conflict(s), {supersessions} supersession(s){settled_note}"
+        )
         for p in pending:
             mark = f" [取代→{p['supersede'][:40]}]" if p.get("supersede") else ""
             print(f"  -> {p['doc']:6s} | {p['fact'][:60]}{mark}")
-    return {"pending": pending, "duplicates": duplicates, "conflicts": conflicts, "supersessions": supersessions, "source_files": source_files}
+    return {
+        "pending": pending,
+        "duplicates": duplicates,
+        "conflicts": conflicts,
+        "supersessions": supersessions,
+        "adjudicated": settled,
+        "source_files": source_files,
+    }
+
+
+def _adjudicated_facts(vault: Path) -> set[str]:
+    """Bare text of every new fact a human has already ruled on.
+
+    Read straight from ``情境信息/事实冲突已裁决.md`` — one line per decision,
+    ``- <stamp>｜裁决：<choice>｜新：<fact>｜旧：<old>``. Unparseable lines are
+    skipped rather than fatal: the file is user-visible and hand-editable.
+    """
+    path = situation_dir(vault) / ADJUDICATED_FILE
+    if not path.is_file():
+        return set()
+    facts: set[str] = set()
+    for line in read_maybe(path).splitlines():
+        if "｜新：" not in line:
+            continue
+        new = line.split("｜新：", 1)[1].split("｜旧：", 1)[0].strip()
+        bare = bare_fact_line(f"- {new}") if new else ""
+        if bare:
+            facts.add(bare)
+    return facts
 
 
 def write_pending_list(vault: Path, result: dict) -> None:
@@ -260,11 +306,88 @@ def parse_pending_list(vault: Path) -> list[dict]:
     return entries
 
 
-def _move_to_superseded(text: str, old_bare: str) -> str:
-    """Move an old fact line under the note's 已取代 section (create if absent).
+# --------------------------------------------------------------------------
+# Active region vs history region
+# --------------------------------------------------------------------------
+#
+# A canonical note keeps its retired values under a heading like "## 已取代".
+# `index._doc_lines` marks every fact line below such a heading `superseded`,
+# which is what keeps old values out of recall. Both writers in this module
+# therefore have to respect the same boundary — new facts belong *above* it,
+# and conflict detection may only read *above* it.
+#
+# This used to be implicit and wrong in three places: `promote` and
+# `adjudicate` appended to the end of the file (below the history heading once
+# one existed), and `review` collected bullets from the whole file. The first
+# made freshly promoted truth invisible to search; the second made every
+# retired value look like a live fact that the replacement then "conflicted"
+# with. One named boundary closes all three.
 
-    The index rebuild marks lines under a 已取代 heading as ``superseded``, so
-    this keeps history while removing the old value from active recall.
+HISTORY_HEADING_RE = re.compile(
+    r"^#{1,4}\s*(?:已取代|已失效|已废弃|superseded|obsolete|deprecated)", re.I
+)
+
+
+def history_start(lines: list[str]) -> int:
+    """Index of the first history heading in ``lines``, or ``len(lines)``."""
+    return next(
+        (i for i, ln in enumerate(lines) if HISTORY_HEADING_RE.match(ln)),
+        len(lines),
+    )
+
+
+def active_fact_lines(text: str, *, drop_examples: bool = False) -> list[str]:
+    """Bullet facts from the active region only — history sections excluded.
+
+    ``drop_examples`` skips the template's placeholder lines ("示例" /
+    "example"), which is what the conflict detector wants and what the writers
+    must not want (a user's real fact may legitimately mention an example URL).
+    """
+    lines = text.splitlines()
+    active = lines[: history_start(lines)]
+    out: list[str] = []
+    for ln in active:
+        if not ln.lstrip().startswith("-"):
+            continue
+        bare = bare_fact_line(ln)
+        if not bare:
+            continue
+        if drop_examples and ("示例" in ln or "example" in ln.lower()):
+            continue
+        out.append(bare)
+    return out
+
+
+def append_active_facts(text: str, new_lines: list[str]) -> str:
+    """Insert fact lines at the end of a note's *active* region.
+
+    Appending to the end of the file was correct only until the note grew a
+    history section: from then on every new fact landed below that heading,
+    the index marked it ``superseded``, and the value that had just been
+    promoted was unreachable by search. ``_move_to_superseded`` has always
+    inserted *into* that section for the mirror-image reason; this is its
+    complement.
+    """
+    additions = [ln.rstrip("\n") for ln in new_lines if ln.strip()]
+    if not additions:
+        return text
+    lines = text.splitlines()
+    at = history_start(lines)
+    head, tail = lines[:at], lines[at:]
+    while head and not head[-1].strip():
+        head.pop()
+    head.extend(additions)
+    if tail:
+        head.append("")  # keep a blank line between the last fact and the heading
+        head.extend(tail)
+    return "\n".join(head) + "\n"
+
+
+def _move_to_superseded(text: str, old_bare: str) -> str:
+    """Move an old fact line under the note's history section (create if absent).
+
+    The index rebuild marks lines under a history heading as ``superseded``, so
+    this keeps the record while removing the old value from active recall.
     """
     lines = text.splitlines()
     removed: str | None = None
@@ -278,11 +401,12 @@ def _move_to_superseded(text: str, old_bare: str) -> str:
         return text
     removed_stripped = removed.rstrip()
     section_idx = next(
-        (i for i, ln in enumerate(kept) if re.match(r"^#{1,4}\s*已取代", ln)),
+        (i for i, ln in enumerate(kept) if HISTORY_HEADING_RE.match(ln)),
         None,
     )
     if section_idx is None:
         return "\n".join(kept).rstrip() + "\n\n## 已取代\n\n" + removed_stripped + "\n"
+    # Insert at the end of that section: the next heading, or EOF.
     insert_at = len(kept)
     for i in range(section_idx + 1, len(kept)):
         if kept[i].startswith("#"):
@@ -323,11 +447,9 @@ def promote(vault: Path, entries: list[dict], *, locked: bool = False) -> list[s
         existing = read_maybe(target)
         if existing and not existing.endswith("\n"):
             existing += "\n"
-        prior = {
-            bare_fact_line(line)
-            for line in existing.splitlines()
-            if line.strip().startswith("-")
-        }
+        # Active facts only: a value that was retired to the history section is
+        # not a duplicate of itself, so a genuine revert can be re-promoted.
+        prior = set(active_fact_lines(existing))
         additions: list[str] = []
         supersedes: list[str] = []
         for entry in group:
@@ -349,7 +471,7 @@ def promote(vault: Path, entries: list[dict], *, locked: bool = False) -> list[s
             promoted.append(line.strip())
         if not additions:
             continue
-        text = existing + "".join(additions)
+        text = append_active_facts(existing, additions)
         # Supersession: move old fact lines under 已取代 (keeps history).
         for old_bare in supersedes:
             text = _move_to_superseded(text, old_bare)
@@ -471,10 +593,12 @@ def adjudicate(vault: Path) -> None:
                         retained.append(current)
                     existing = "".join(retained)
                 new = entry.get("新", "").strip()
-                prior = [bare_fact_line(line) for line in existing.splitlines() if line.lstrip().startswith("-")]
+                prior = active_fact_lines(existing)
                 if new and new not in prior:
-                    line = f"- {new}{write_stamp(entry.get('来源', 'inbox'))}\n"
-                    existing += ("" if not existing or existing.endswith("\n") else "\n") + line
+                    existing = append_active_facts(
+                        existing,
+                        [f"- {new}{write_stamp(entry.get('来源', 'inbox'))}"],
+                    )
                 atomic_write(target, existing)
                 record_adjudication(vault, entry, choice, locked=True)
                 remove_conflict(vault, entry, locked=True)

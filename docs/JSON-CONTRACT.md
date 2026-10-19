@@ -68,8 +68,11 @@ json.dumps({"ok": result["ok"], "command": "dismiss", "data": result})
   （这正是 Task 6 第三轮修的缺陷）。
 - 正确读法：**只要 `data` 存在就按其内容判定**；`data.ok` 才是业务成败。
 - 仅当 `data` **缺失**（畸形或非 JSON 输出）时，才可视为「core 未给出业务答复」。
-- 其余命令（`status`/`search`/`preview`/`note`）失败时是往 stderr 报错并以非零码退出，
-  与 `dismiss` **不同**：它们没有「业务拒绝」这一档，`--json` 只在成功路径产出信封。
+- 其余命令（`status`/`search`/`preview`）失败时是往 stderr 报错并以非零码退出。
+  `note` 分两种输出形态：`--json` 与 `dismiss` 同理——信封照打、`ok` 恒 `true`、
+  失败写在 `data.reason`（§5.2）；**文本形态**没有信封可承载原因，所以读不到时
+  往 stderr 报错并以**非零码**退出（此前恒退出 0 并打印空行，"文件不存在"与
+  "文件是空的"在管道里无法区分）。
 
 > `preview` 的 `data.status == "unsupported"` 是**成功**信封（`ok: true`），
 > 不是失败——它表示「该视图结构上无法回答」，见 §5.1。
@@ -590,7 +593,7 @@ else:
 | # | 方法 | 路径 | 参数 | 成功 | 失败语义 |
 |---|---|---|---|---|---|
 | 1 | GET/HEAD | `/api/dsh-unified-agent-memory/status` | — | 200（§6） | 非 loopback → 403；非 GET/HEAD → 405 |
-| 2 | GET/HEAD | `/api/dsh-unified-agent-memory/search` | `q`（**必填**）、`hybrid=1` | 200 `{ok,query,count,results}` | 缺 `q`/`q` 空 → **400**；core 不可用 → **200** `{ok:false,...}` |
+| 2 | GET/HEAD | `/api/dsh-unified-agent-memory/search` | `q`（**必填**）、`hybrid=1`、`limit`（默认 8，上限 50，越界夹取） | 200 `{ok,query,count,results}` | 缺 `q`/`q` 空 → **400**；core 不可用 → **200** `{ok:false,...}` |
 | 3 | GET/HEAD | `/api/dsh-unified-agent-memory/preview` | `view` ∈ `pending`\|`recent`\|`forgetting`\|`conflicts`（缺省 `pending`）、`limit` | 200 `{ok,view,status,count,items}` | 非法 `view` → **400**；core 不可用 → **200** `{ok:false,...}` |
 | 4 | GET/HEAD | `/api/dsh-unified-agent-memory/note` | `name`（**必填**，提交区内文件名） | 200 `{ok,name,body,reason,untrusted}` | 缺 `name` → **400**；读不到 → **200** `{ok:true, body:null, reason, untrusted:true}`；core 不可用 → **200** `{ok:false, untrusted:true}` |
 | 5 | **POST** | `/api/dsh-unified-agent-memory/dismiss` | body `{"name":"..."}` | 200 `{ok,name,reason}` | 本地校验拒 → **400**；体超 2048 字节 → **413**；`Host` 非本机或跨站 → **403**；业务拒绝 → **409**；core 不可用 → **409** |

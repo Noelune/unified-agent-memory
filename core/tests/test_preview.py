@@ -77,6 +77,18 @@ class PreviewViewTest(unittest.TestCase):
 
         self.assertEqual(preview.build(self.vault, "pending", 2)["count"], 2)
 
+    def test_readme_in_the_inbox_is_not_a_pending_item(self):
+        # README.md is the inbox's own format documentation. The promoter has
+        # always skipped it and `memory status` counts without it; the panel
+        # counting it meant a vault with an empty inbox reported "1 pending".
+        inbox = _empty_inbox(self.vault)
+        (inbox / "README.md").write_text("# 提交区\n\n一行一条事实。\n", encoding="utf-8")
+
+        data = preview.build(self.vault, "pending", 10)
+
+        self.assertEqual(data["count"], 0)
+        self.assertEqual(data["items"], [])
+
     def test_recent_lists_canonical_notes_newest_first(self):
         doc = canonical_dir(self.vault) / "我的偏好摘要.md"
         _touch(doc, 1_700_000_000)  # older than every other note
@@ -348,6 +360,65 @@ class NoteJsonContractTest(unittest.TestCase):
     def test_cmd_note_text_still_prints_the_bare_body(self):
         # The human path must not regress into printing JSON.
         self.assertEqual(memory.cmd_note(self.tmp, "n.md"), "- 事实\n")
+
+
+class NoteCliExitCodeTest(unittest.TestCase):
+    """`memory note` must not report success for a miss.
+
+    It used to exit 0 while printing an empty line, so in a pipe a missing
+    submission and an empty submission were the same thing. The JSON path is
+    contractual and unchanged (envelope + exit 0 + `data.reason`); the text
+    path has only the exit status to carry the difference.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        inbox = os.path.join(self.tmp, INBOX_REL)
+        os.makedirs(inbox, exist_ok=True)
+        with open(os.path.join(inbox, "here.md"), "w", encoding="utf-8") as fh:
+            fh.write("- 事实\n")
+        # `note` has no --vault flag: it resolves the vault from the
+        # environment or the config file, so the fixture points it there.
+        self._prev_env = os.environ.get("UNIFIED_MEMORY_VAULT")
+        os.environ["UNIFIED_MEMORY_VAULT"] = self.tmp
+
+    def tearDown(self):
+        if self._prev_env is None:
+            os.environ.pop("UNIFIED_MEMORY_VAULT", None)
+        else:
+            os.environ["UNIFIED_MEMORY_VAULT"] = self._prev_env
+
+    def _run(self, argv):
+        out, err = io.StringIO(), io.StringIO()
+        code = 0
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            try:
+                memory.main(argv)
+            except SystemExit as exc:
+                code = exc.code or 0
+        return code, out.getvalue(), err.getvalue()
+
+    def test_text_miss_exits_non_zero_with_nothing_on_stdout(self):
+        code, out, err = self._run(["note", "ghost.md"])
+        self.assertEqual(code, 1)
+        self.assertEqual(out.strip(), "")
+        self.assertIn("not-found", err)
+
+    def test_text_hit_exits_zero(self):
+        code, out, _err = self._run(["note", "here.md"])
+        self.assertEqual(code, 0)
+        self.assertIn("事实", out)
+
+    def test_json_miss_keeps_the_contract_envelope(self):
+        # §5.2: outer ok stays true and the failure rides in data.reason, so
+        # the browser panel can tell "rejected name" from "no such file".
+        code, out, _err = self._run(["note", "../x.md", "--json"])
+        self.assertEqual(code, 0)
+        payload = json.loads(out)
+        self.assertIs(payload["ok"], True)
+        self.assertIsNone(payload["data"]["body"])
+        self.assertEqual(payload["data"]["reason"], "invalid-name")
 
 
 if __name__ == "__main__":

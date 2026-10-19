@@ -245,5 +245,131 @@ class PromoterTest(unittest.TestCase):
         self.assertEqual(result["pending"][0]["doc"], "prefs")
 
 
+class HistorySectionTest(unittest.TestCase):
+    """A note's 已取代 section is history, not truth.
+
+    Every assertion here is a defect that shipped in 0.8.0. The common cause:
+    three places treated "the note" as "the note's active region", and the
+    boundary between the two was never named. A note that had grown a 已取代
+    section once — i.e. any note that had ever been superseded — silently
+    stopped accepting new facts.
+    """
+
+    def setUp(self):
+        self.vault = make_scratch_vault()
+
+    def tearDown(self):
+        destroy_scratch(self.vault)
+
+    def write_inbox(self, name, facts):
+        path = canonical_dir(self.vault) / "Agent提交区" / name
+        path.write_text("\n".join(f"- {f}" for f in facts) + "\n", encoding="utf-8")
+        return path
+
+    def seed_with_history(self, doc, active, retired):
+        path = canonical_path(self.vault, doc)
+        path.write_text(
+            path.read_text(encoding="utf-8")
+            + f"\n- {active}（写入 2026-08-01｜来源：Agent提交区/x.md）\n"
+            + "\n## 已取代\n\n"
+            + f"- {retired}（写入 2026-07-01｜来源：Agent提交区/y.md）\n",
+            encoding="utf-8",
+        )
+        return path
+
+    def test_promote_puts_new_facts_above_the_history_heading(self):
+        # The note already ends with 已取代 (a very ordinary state). Appending
+        # to EOF put the new fact under that heading, where the index marks it
+        # superseded — so it was written, stamped and locked, and unreachable.
+        path = self.seed_with_history(
+            "coord",
+            "the relay broker listens on 19121",
+            "the relay broker once used port 19000",
+        )
+        self.write_inbox("dsh-20260814-120000-01.md", ["the relay broker drains its queue every 30 seconds"])
+        result = promoter.review(self.vault, verbose=False)
+        promoter.write_pending_list(self.vault, result)
+        promoter.apply_pending(self.vault, verbose=False)
+
+        text = read_maybe(path)
+        heading = text.index("## 已取代")
+        self.assertLess(
+            text.index("the relay broker drains its queue every 30 seconds"),
+            heading,
+            "new fact landed under 已取代 — it is now invisible to search",
+        )
+        self.assertGreater(text.index("the relay broker once used port 19000"), heading)
+
+    def test_promote_leaves_exactly_one_history_section(self):
+        path = self.seed_with_history("coord", "the relay broker listens on 19121", "the relay broker listens on 19000")
+        # A supersession arriving at a note that already has the section must
+        # merge into it, not create a second one at EOF.
+        self.write_inbox(
+            "dsh-20260814-120000-01.md",
+            ["the relay broker now listens on 19999 instead of 19121"],
+        )
+        result = promoter.review(self.vault, verbose=False)
+        promoter.write_pending_list(self.vault, result)
+        promoter.apply_pending(self.vault, verbose=False)
+
+        text = read_maybe(path)
+        self.assertEqual(text.count("## 已取代"), 1)
+        self.assertLess(text.index("the relay broker now listens on 19999"), text.index("## 已取代"))
+        self.assertGreater(text.index("the relay broker listens on 19121"), text.index("## 已取代"))
+
+    def test_review_does_not_treat_history_as_an_existing_fact(self):
+        # The retired line is not in the comparison pool, so resubmitting it is
+        # a new fact rather than a duplicate of itself. Reading the whole file
+        # made every retired value answer "already known" and swallow the
+        # submission — the revert could never be recorded.
+        self.seed_with_history(
+            "env",
+            "the build server listens on 9090",
+            "the deploy key rotates monthly on the first Monday",
+        )
+        self.write_inbox("dsh-20260814-120000-01.md", ["the deploy key rotates monthly on the first Monday"])
+        result = promoter.review(self.vault, verbose=False)
+        self.assertEqual(result["duplicates"], 0, "history was treated as a live fact")
+        self.assertEqual(len(result["pending"]), 1)
+
+    def test_adjudication_is_final(self):
+        # `保留旧` and `跳过` leave both the inbox file and the canonical note
+        # untouched, so without a record of the decision the next pass reaches
+        # the same verdict forever. This is the loop the report called
+        # "conflict 复现".
+        self.seed_with_history("env", "the build server listens on 9090", "the build server listens on 8080")
+        append_conflict(
+            self.vault,
+            "the build server listens on 8080",
+            "the build server listens on 9090",
+            "dsh-20260814-120000-01.md",
+            "env",
+        )
+        self.assertEqual(len(read_conflicts(self.vault)), 1)
+
+        answers = iter(["保留旧"])
+        import builtins
+
+        real_input = builtins.input
+        builtins.input = lambda *_a, **_k: next(answers, "跳过")
+        try:
+            promoter.adjudicate(self.vault)
+        finally:
+            builtins.input = real_input
+
+        self.assertEqual(len(read_conflicts(self.vault)), 0)
+        self.write_inbox("dsh-20260814-120000-01.md", ["the build server listens on 8080"])
+        again = promoter.review(self.vault, verbose=False)
+        self.assertEqual(again["conflicts"], 0)
+        self.assertEqual(len(read_conflicts(self.vault)), 0, "adjudicated conflict came back")
+        self.assertEqual(again["adjudicated"], 1)
+
+    def test_active_fact_lines_skips_history(self):
+        path = self.seed_with_history("env", "active line", "retired line")
+        facts = promoter.active_fact_lines(read_maybe(path))
+        self.assertIn("active line", facts)
+        self.assertNotIn("retired line", facts)
+
+
 if __name__ == "__main__":
     unittest.main()

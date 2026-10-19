@@ -512,44 +512,78 @@ def cmd_preview(args: argparse.Namespace) -> None:
     print(payload)
 
 
-def cmd_note(vault: str, name: str, as_json: bool = False) -> str:
-    """Print one inbox submission's body."""
+def cmd_note_result(vault: str, name: str, as_json: bool = False) -> tuple[bool, str]:
+    """Print one inbox submission's body, reporting whether it worked.
+
+    The `ok` flag exists for the *text* path only. `note --json` keeps
+    ``ok: true`` on a miss and expresses the failure in ``data.body`` (null) +
+    ``data.reason``, because the browser panel needs that reason to tell
+    "rejected name" from "no such file" — docs/JSON-CONTRACT.md §5.2.
+    The CLI used to exit 0 on that same miss while printing an empty line, so
+    a script could not tell a missing submission from an empty one.
+    """
     from . import preview as preview_mod
 
     result = preview_mod.read_inbox_item(vault, name)
+    ok = result.get("body") is not None
     if as_json:
-        return json.dumps(
+        return ok, json.dumps(
             {"ok": True, "command": "note", "data": result},
             ensure_ascii=False,
         )
-    return result["body"] if result["body"] is not None else ""
+    if not ok:
+        # Nothing on stdout: an empty body and a missing file must not look
+        # alike in a pipe.
+        print(
+            f"note: {result.get('reason') or 'not-found'}: {name}",
+            file=sys.stderr,
+        )
+        return False, ""
+    return True, result["body"] or ""
+
+
+def cmd_note(vault: str, name: str, as_json: bool = False) -> str:
+    """Print one inbox submission's body."""
+    return cmd_note_result(vault, name, as_json)[1]
 
 
 def cmd_note_cli(args: argparse.Namespace) -> None:
     """CLI adapter for cmd_note: resolves the vault and prints the result."""
     vault = resolve_vault()
     ensure_vault(vault)
-    print(cmd_note(vault=str(vault), name=args.name, as_json=args.json))
+    ok, text = cmd_note_result(vault=str(vault), name=args.name, as_json=args.json)
+    if text:
+        print(text)
+    # JSON output carries the miss inside the envelope (see cmd_note_result);
+    # the human/script path has only the exit status to carry it.
+    if not ok and not args.json:
+        sys.exit(1)
 
 
 def cmd_dismiss(vault: str, name: str, as_json: bool = False) -> str:
     """Retire one inbox item. The only mutating command in the CLI."""
     result = inbox_mod.process_inbox_item(vault, name)
     if as_json:
+        # Envelope shape and exit-0-on-rejection are contractual: §1.1. The
+        # panel reads data.reason, which only survives if the command exits 0
+        # (runCore discards stdout from a failed subprocess).
         return json.dumps(
             {"ok": result["ok"], "command": "dismiss", "data": result},
             ensure_ascii=False,
         )
     if result["ok"]:
         return f"moved to {result['movedTo']}"
-    return f"error: {result['reason']}"
+    print(f"dismiss: {result['reason']}", file=sys.stderr)
+    return ""
 
 
 def cmd_dismiss_cli(args: argparse.Namespace) -> None:
     """CLI adapter for cmd_dismiss: resolves the vault and prints the result."""
     vault = resolve_vault()
     ensure_vault(vault)
-    print(cmd_dismiss(vault=str(vault), name=args.name, as_json=args.json))
+    text = cmd_dismiss(vault=str(vault), name=args.name, as_json=args.json)
+    if text:
+        print(text)
 
 
 def cmd_stats_cli(args: argparse.Namespace) -> None:
@@ -757,7 +791,28 @@ def cmd_drift(args: argparse.Namespace) -> None:
     if args.template:
         vault_path = repo_root / "vault-template" / "50-Agent-Context"
     detector = drift_mod.DriftDetector(repo_root=repo_root, vault_path=vault_path)
-    report = detector.run()
+    # `python -m unified_memory.drift` has always translated these two failures
+    # into one actionable line; this subcommand let them escape as tracebacks.
+    # An installed package is exactly where they happen: npm's `files` list can
+    # omit driftrc.yaml, and PyYAML is not a runtime dependency of the plugin.
+    try:
+        report = detector.run()
+    except FileNotFoundError as exc:
+        raise SystemExit(
+            f"drift: {exc}\n"
+            "There is no drift contract to compare against. driftrc.yaml ships "
+            "with the package, so this means the install is incomplete (or you "
+            "are running from a partial checkout) — reinstall the plugin, or run "
+            "drift from the source repository."
+        )
+    except ModuleNotFoundError as exc:
+        if exc.name != "yaml":
+            raise
+        raise SystemExit(
+            "drift: driftrc.yaml is parsed with PyYAML, which is not installed in "
+            f"this interpreter ({sys.executable}). Run `pip install pyyaml`, or set "
+            "UNIFIED_MEMORY_PYTHON to one that has it."
+        )
     report.print()
     if report.has_errors:
         sys.exit(1)
