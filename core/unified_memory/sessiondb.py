@@ -249,10 +249,11 @@ def export_markdown(
     """Write archive-format ``YYYY-MM-DD.md`` files into ``out_dir``.
 
     This is the backfill path for sessions that predate the archiver. It
-    deliberately writes *outside* the vault: canonical notes have a single
-    declared writer (see ``common.assert_canonical_writable``), and a read-only
-    adapter does not get to become a second one just because its output looks
-    like an archive file. The operator decides whether to import the result.
+    deliberately writes *outside* the vault: canonical notes have exactly three
+    writers (``promoter``, ``forgetter``, ``maintenance``), each of which takes
+    the vault's ``file_lock``, and a read-only adapter does not get to become a
+    fourth one just because its output looks like an archive file. The operator
+    decides whether to import the result.
     """
     target = Path(out_dir).expanduser()
     pairs = dated_transcripts(db, since=since)

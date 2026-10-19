@@ -77,95 +77,24 @@ SESSION_DIR = "会话归档"
 LOCK_FILE = ".lock"
 
 # --------------------------------------------------------------------------
-# Canonical ownership — who may write 50-Agent-Context
+# Write coordination
 # --------------------------------------------------------------------------
 #
-# Hermes记忆系统规范.md opens with one rule: every agent reads the canonical
-# notes, exactly one writer exists. This package used to be a silent second
-# writer: `promoter --apply` rewrote canonical files without any of the
-# double-temporal versioning, TDAI sync or conflict queue the Hermes promoter
-# has. A declaration file turns that silent second write into an explicit
-# refusal, and leaving it absent keeps the historical behaviour intact.
-
-OWNER_LOCK_ENV = "UNIFIED_MEMORY_OWNER_LOCK"
-OWNER_LOCK_NAME = "hermes-owner.lock"
-CANONICAL_OWNERS = ("hermes", "core")
-
-
-class CanonicalOwnerError(RuntimeError):
-    """This package is not the declared writer of the canonical notes."""
-
-
-def owner_lock_path() -> Path:
-    """Where the canonical-owner declaration lives.
-
-    Defaults to ``~/.unified-memory/hermes-owner.lock``, next to the config and
-    the per-vault indexes. ``UNIFIED_MEMORY_OWNER_LOCK`` overrides it — that is
-    what the test suite uses to keep the real home untouched.
-    """
-    override = os.environ.get(OWNER_LOCK_ENV, "").strip()
-    if override:
-        return Path(override).expanduser()
-    return CONFIG_PATH.parent / OWNER_LOCK_NAME
-
-
-def canonical_owner() -> str | None:
-    """The declared writer of the canonical notes, or None when unclaimed."""
-    try:
-        text = owner_lock_path().read_text(encoding="utf-8")
-    except OSError:
-        return None
-    for line in text.splitlines():
-        line = line.strip()
-        if line and not line.startswith("#"):
-            return line.split()[0].lower()
-    return None
-
-
-def claim_canonical_owner(owner: str) -> Path:
-    """Declare ``owner`` as the writer of canonical notes (idempotent)."""
-    owner = owner.strip().lower()
-    if owner not in CANONICAL_OWNERS:
-        raise ValueError(f"owner must be one of {CANONICAL_OWNERS}, got {owner!r}")
-    path = owner_lock_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write(
-        path,
-        "# 谁可以写 50-Agent-Context 的 canonical 笔记\n"
-        "# 依据：Hermes记忆系统规范.md 第一条（Obsidian canonical 唯一事实源，唯一写者）\n"
-        "# 删除本文件 = 回到「没人声明」，本包的 promoter/forgetter 会照旧可写。\n"
-        f"{owner}\n",
-    )
-    return path
-
-
-def release_canonical_owner() -> bool:
-    """Drop the declaration; returns True when a file was actually removed."""
-    try:
-        owner_lock_path().unlink()
-        return True
-    except FileNotFoundError:
-        return False
-
-
-def assert_canonical_writable() -> None:
-    """Refuse a canonical write when another runtime owns the vault.
-
-    Called by the only three functions in this package that rewrite canonical
-    notes (``promoter.promote``, ``forgetter.demote``,
-    ``maintenance.repair_existing``). No declaration means "nobody claimed it",
-    which keeps the previous behaviour for existing installs; a declaration
-    naming another owner turns the write into a ``CanonicalOwnerError`` instead
-    of a silent second source of truth.
-    """
-    owner = canonical_owner()
-    if owner is None or owner == "core":
-        return
-    raise CanonicalOwnerError(
-        f"canonical notes are owned by {owner!r} — this package will not write them. "
-        f"Hand the facts to that writer instead. Declaration: {owner_lock_path()} "
-        "(take ownership back with `memory owner --claim core`)."
-    )
+# Three functions in this package rewrite canonical notes: `promoter.promote`,
+# `forgetter.demote` and `maintenance.repair_existing`. They are the only ones
+# that do, and each takes the same per-vault `file_lock` — see
+# `core/tests/test_write_lock.py`, which runs them concurrently against one
+# vault and fails if any of them forgets.
+#
+# There used to be a second mechanism here: a declaration file naming a single
+# "owner" of the canonical notes, with a claim/release CLI and a refusal in all
+# three writers. It was removed. It described a deployment where some *other*
+# product owns the vault and this package must stand down, which is not a
+# situation a user of this plugin can be in — it ships with dsh and is the only
+# writer. For everyone else the file was either absent (so it did nothing) or
+# present by accident (so it silently refused every promotion, with a message
+# naming a product they had never installed). The hazard it claimed to solve,
+# two writers racing, was already covered by the lock.
 
 # --------------------------------------------------------------------------
 # Secret redaction (never let credential-shaped text reach canonical notes,

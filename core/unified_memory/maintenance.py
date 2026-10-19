@@ -16,7 +16,6 @@ from pathlib import Path
 
 from .common import (
     CANONICAL_DOCS,
-    assert_canonical_writable,
     atomic_write,
     bare_fact_line,
     canonical_path,
@@ -33,14 +32,13 @@ def repair_existing(vault: Path, dry_run: bool = False) -> dict:
     """Conservative canonical hygiene: drop exact duplicate fact lines and
     template placeholder lines. Changed notes are backed up first (reversible).
 
-    This rewrites canonical notes, so it obeys the single-writer rule too — it
-    was the third write path and the easiest to forget, because "hygiene" reads
-    like housekeeping rather than an edit. A dry run changes nothing and stays
-    allowed under any declaration.
+    This rewrites canonical notes, so it is one of the three write paths bound by
+    ``file_lock`` — the easiest of the three to forget, because "hygiene" reads
+    like housekeeping rather than an edit.
+    ``core/tests/test_write_lock.py`` runs all three concurrently against one
+    vault so that forgetting is a test failure rather than a silent race.
     """
     ensure_vault(vault)
-    if not dry_run:
-        assert_canonical_writable()
     touched: dict[str, list[str]] = {}
     backup_root: Path | None = None
     with file_lock(vault):

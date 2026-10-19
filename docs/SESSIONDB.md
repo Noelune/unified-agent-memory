@@ -81,10 +81,11 @@ chars after.
 ## Backfill is not a canonical write
 
 `export_markdown()` writes archive-format `YYYY-MM-DD.md` files into a
-directory **the caller names** — never into the vault. Canonical notes have a
-single declared writer (`common.assert_canonical_writable`), and a read-only
-adapter does not get to become a second writer just because its output looks
-like an archive file. The operator decides whether to import the result:
+directory **the caller names** — never into the vault. Canonical notes have
+exactly three writers (`promoter`, `forgetter`, `maintenance`), each of which
+takes the vault's `file_lock`, and a read-only adapter does not get to become a
+fourth one just because its output looks like an archive file. The operator
+decides whether to import the result:
 
 ```bash
 python -m unified_memory.sessiondb --status
