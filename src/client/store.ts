@@ -792,6 +792,13 @@ export interface RepairEntry {
   sessionId: string | null
   /** Why it failed, or what the doctor still sees. Shown verbatim. */
   note?: string
+  /**
+   * The brief itself. Kept only so a failed hand-off can still be copied:
+   * on a host with no sessions service, "copy it and paste it yourself" is the
+   * last thing that works, and it is the only thing that works for a finding
+   * with no command.
+   */
+  brief?: string
 }
 
 /** What a card needs from the hook; one entry per finding, keyed by code. */
@@ -1001,6 +1008,7 @@ export function useRepair(opts: {
       const code = finding.key
       const sessions = sessionsOf()
       const target = chosen ?? pickTarget(sessions) ?? newSessionTarget()
+      const brief = buildRepairPrompt(finding, envRef.current, new Date().toISOString())
       sawLoading.current = false
       // Baseline for the "did this repair introduce something" check: the list
       // this brief was written from.
@@ -1010,11 +1018,11 @@ export function useRepair(opts: {
       setAdded([])
       entriesRef.current = {
         ...entriesRef.current,
-        [code]: { phase: 'sending', startedAt: Date.now(), sessionId: target.id },
+        [code]: { phase: 'sending', startedAt: Date.now(), sessionId: target.id, brief },
       }
       setEntries(entriesRef.current)
 
-      sendBrief(sessions, buildRepairPrompt(finding, envRef.current, new Date().toISOString()), target)
+      sendBrief(sessions, brief, target)
         .then(function (result) {
           const current = entriesRef.current[code]
           if (!current) return
@@ -1022,7 +1030,7 @@ export function useRepair(opts: {
             ...entriesRef.current,
             [code]: result.ok
               ? { phase: 'sent', startedAt: Date.now(), sessionId: result.sessionId }
-              : { phase: 'failed', startedAt: current.startedAt, sessionId: result.sessionId, note: result.reason },
+              : { phase: 'failed', startedAt: current.startedAt, sessionId: result.sessionId, note: result.reason, brief: current.brief },
           }
           setEntries(entriesRef.current)
         })
@@ -1031,7 +1039,7 @@ export function useRepair(opts: {
           if (!current) return
           entriesRef.current = {
             ...entriesRef.current,
-            [code]: { phase: 'failed', startedAt: current.startedAt, sessionId: current.sessionId, note: error.message },
+            [code]: { phase: 'failed', startedAt: current.startedAt, sessionId: current.sessionId, note: error.message, brief: current.brief },
           }
           setEntries(entriesRef.current)
         })

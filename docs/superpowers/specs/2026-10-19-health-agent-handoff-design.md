@@ -235,7 +235,7 @@ idle → confirming → sending → sent → running → verifying → done
 | `running` | 「Agent 正在处理 · 已 42 秒」+ 细进度条（不确定态） | `byId[id].running` + 本地计时 |
 | `verifying` | 「Agent 停了，正在重新体检…」 | `running` 由 true→false 触发一次 `doctor.reload()` |
 | `done` | 卡片移除，结论条重算 | 该 code 已不在 issues 里 |
-| `failed` | 「没送出去：<原因>」+ 重试 | `prompt` 抛错 / `get('sessions')` 为 undefined |
+| `failed` | 「没送出去：<原因>」+ 重试 + 复制任务包 | `prompt` 抛错 / `get('sessions')` 为 undefined |
 | `mismatch` | 「Agent 说处理完了，但体检仍然报这个」+ 知道了 | 复检结果 |
 
 要点：
@@ -297,7 +297,7 @@ export interface RepairEnv {
 
 `buildRepairPrompt(finding: HealthFinding, env: RepairEnv, at: string): string` 是唯一生成器，纯函数，输入不含会话状态。生成时间作为参数传入，而不是读时钟 —— 测试要能断言确切的字节。
 
-数据段序列化时把 `<` 转成 `<`：`message`/`hint` 摘自被扫描的目录，一条
+数据段序列化时把 `<` 转成 `\u003c`：`message`/`hint` 摘自被扫描的目录，一条
 笔记正文里出现 `</memory-data>` 就足以提前闭合信封，让它后面的内容被当成指令。
 `<` 对 `JSON.parse` 是同一个字符，但无法终止标签。
 
@@ -313,6 +313,9 @@ export interface RepairEnv {
 | `/doctor` 不可用 | 动作行整体不渲染（没问题就没有「修」） |
 
 「复制任务包」是最后一道保险：**任何情况下用户都能拿到那段文本**，功能不会因为平台 API 变化而彻底失效。
+它自己也要降级：没有 `navigator.clipboard`，或 `writeText` 因失焦 reject 时，退成一块
+可框选的 `<pre>`（`.dsh-memory-brief`），把同一份文本原样摊开 —— 按钮点了没反应比没有按钮更糟。
+`RepairEntry.brief` 因此要留着任务包原文，否则失败那一刻就再也拿不到它了。
 
 ## 8. 实施拆解
 
@@ -345,6 +348,13 @@ export interface RepairEnv {
 实现时新发现第五项：客户端的 `ctx.effect` 不是所有宿主都有 —— `test/web-ui-contract`
 的最小 harness 只传 `{ slots }`。清理回调因此改成「有 `effect` 才挂」，而不是
 假定它在；顺带说明不能把任何宿主服务当成立即存在。
+
+第六项是纯类型坑，只影响写法：本文件里的 `Child` 是
+`ReturnType<typeof h> | string | number | …` 这样的联合。`return h('button', {...})`
+把该联合当上下文类型回灌给调用，`createElement` 的重载于是把 `P` 推成 `{}`，
+`type` / `onClick` 全被判成多余属性（`TS2769`）。props 里只有 `className` 时不
+触发，一带函数属性就触发。解法是先落到局部变量再 `return` —— 局部没有上下文类型，
+重载就正常了。`CopyBrief` 上有注释写明，别把它「简化」回去。
 
 这四项都不影响方案形状：任一项失败，降级到「复制任务包」，功能仍可用。
 

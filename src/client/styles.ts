@@ -508,9 +508,24 @@ export const PANEL_CSS = `
   color: var(--dsw-alias-label-tertiary);
 }
 .dsh-memory-repair {
-  display: flex; align-items: center; gap: 7px;
+  display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
   font-size: 11px; line-height: 1.5;
   color: var(--dsw-alias-label-secondary);
+}
+/* The fallback brief: selectable, monospaced, and on its own row so a 380px
+   sheet does not try to lay it out beside the buttons. */
+.dsh-memory-brief {
+  flex: 1 0 100%;
+  margin: 2px 0 0; padding: 6px 8px;
+  max-height: 160px; overflow: auto;
+  background: var(--dsw-alias-bg-layer-3);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px; line-height: 1.45;
+  color: var(--dsw-alias-label-primary);
+  white-space: pre-wrap; word-break: break-all;
+  user-select: text;
 }
 .dsh-memory-repair-text { flex: 1 1 auto; word-break: break-word; }
 .dsh-memory-repair-dot {

@@ -648,6 +648,38 @@ function FindingCard(props: { finding: HealthFinding; repair: RepairApi }): Chil
 }
 
 /**
+ * Copy the brief, or show it so it can be selected by hand.
+ *
+ * The clipboard is not guaranteed in every shell and `writeText` rejects
+ * without focus, so a failed copy degrades to the text in a selectable block
+ * rather than to a button that silently does nothing.
+ */
+function CopyBrief(props: { text: string }): Child {
+  const [state, setState] = useState<'idle' | 'done' | 'manual'>('idle')
+  if (state === 'manual') return h('pre', { className: 'dsh-memory-brief' }, props.text)
+
+  // Built through a local on purpose. `Child` is a union that includes
+  // `ReturnType<typeof h>`, and returning the call directly feeds that union
+  // back in as the contextual type: the `createElement` overloads then resolve
+  // `P` to `{}` and every prop — `type` included — reads as an excess
+  // property. A local carries no contextual type, so the overloads line up.
+  const copy = h('button', {
+    type: 'button',
+    className: 'dsh-memory-act',
+    onClick: function () {
+      const clip = typeof navigator === 'undefined' ? undefined : navigator.clipboard
+      if (!clip || typeof clip.writeText !== 'function') { setState('manual'); return }
+      clip.writeText(props.text).then(
+        function () { setState('done') },
+        function () { setState('manual') },
+      )
+    },
+  }, state === 'done' ? '已复制' : '复制任务包')
+
+  return copy
+}
+
+/**
  * The one-line state of a hand-off, with whatever control is still useful.
  *
  * Elapsed seconds are printed rather than a spinner: the panel cannot see the
@@ -670,6 +702,10 @@ function RepairStatus(props: { entry: RepairEntry; finding: HealthFinding; repai
         className: 'dsh-memory-act',
         onClick: function () { props.repair.clear(code) },
       }, '重试'),
+      // The last thing that still works when the host cannot be driven from
+      // here — and the only thing that works at all for a finding whose fix is
+      // a conversation rather than a command.
+      e.brief ? h(CopyBrief, { text: e.brief }) : null,
     )
   }
 

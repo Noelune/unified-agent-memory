@@ -33,6 +33,10 @@ All notable changes to this project are documented in this file.
   `binding.session.prompt(text, 'queue')`，`retain` 失败再退到
   `scope(id).conversation.send`。`sessions` 不进 `inject`（那是硬依赖，缺服务
   会让整个客户端模块加载失败），改用 `ctx.get` 惰性取，取不到就报「没送出去」。
+- 送不出去也不白写。面板只报「没送出去」等于把任务包吞了，而 `unclassified-facts`
+  这类没有命令的问题，自己动手的唯一途径就是这个包。所以失败卡片带**复制任务包**：
+  剪贴板取不到（没有 `navigator.clipboard`，或 `writeText` 因失焦 reject）时，退成
+  一块可框选的 `<pre>`，把同一份文本原样摊开 —— 按钮点了没反应比没有按钮更糟。
 
 ### Added — 体检页的每个问题都带修法
 
