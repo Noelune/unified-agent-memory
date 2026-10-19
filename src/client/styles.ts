@@ -368,6 +368,96 @@ export const PANEL_CSS = `
   color: var(--dsw-alias-label-secondary);
   word-break: break-word;
 }
+/* The re-measure control rides the verdict, right-aligned, quiet until hover:
+   it is an escape hatch, not the pane's main action. */
+.dsh-memory-health-retry {
+  flex: none; margin-left: auto; align-self: center;
+  padding: 3px 9px; border-radius: 7px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  font-family: inherit; font-size: 11px; line-height: 1.5;
+  cursor: pointer; white-space: nowrap;
+  transition: color .12s, background .12s, border-color .12s;
+}
+.dsh-memory-health-retry:hover {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
+  border-color: var(--dsw-alias-border-l3);
+}
+
+/* ── Health findings ────────────────────────────────────────────────
+   One card per problem, because a warning that does not say what to do is
+   just a louder warning. Severity is carried by the left rule and the dot;
+   the body text keeps its normal label colours so it holds contrast in the
+   light theme, where a red-on-white paragraph at 11.5px disappears. */
+.dsh-memory-findings {
+  display: flex; flex-direction: column; gap: 8px;
+}
+.dsh-memory-finding {
+  padding: 10px 12px 11px;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-left-width: 3px;
+  border-radius: 9px;
+}
+.dsh-memory-finding[data-severity='error'] { border-left-color: var(--dsw-alias-state-error-primary); }
+.dsh-memory-finding[data-severity='warn'] { border-left-color: var(--dsw-alias-state-warn-secondary); }
+.dsh-memory-finding[data-severity='info'] { border-left-color: var(--dsw-alias-border-l3); }
+.dsh-memory-finding-head {
+  display: flex; align-items: center; gap: 7px;
+}
+.dsh-memory-finding-mark {
+  flex: none; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--dsw-alias-border-l3);
+}
+.dsh-memory-finding[data-severity='error'] .dsh-memory-finding-mark {
+  background: var(--dsw-alias-state-error-primary);
+}
+.dsh-memory-finding[data-severity='warn'] .dsh-memory-finding-mark {
+  background: var(--dsw-alias-state-warn-secondary);
+}
+.dsh-memory-finding-title {
+  font-size: 12.5px; font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+.dsh-memory-finding-tag {
+  margin-left: auto;
+  font-size: 10px; letter-spacing: .02em;
+  color: var(--dsw-alias-label-tertiary);
+}
+.dsh-memory-finding-detail {
+  margin: 5px 0 0;
+  font-size: 11.5px; line-height: 1.5;
+  color: var(--dsw-alias-label-secondary);
+  word-break: break-word;
+}
+.dsh-memory-finding-fix {
+  margin: 4px 0 0;
+  font-size: 11.5px; line-height: 1.5;
+  color: var(--dsw-alias-label-primary);
+  word-break: break-word;
+}
+/* Its own block, not an inline span: a command you cannot select cleanly is a
+   command you retype, and the whole point of the card is the last line. */
+.dsh-memory-finding-cmd {
+  display: block; margin-top: 7px;
+  padding: 5px 8px;
+  background: var(--dsw-alias-bg-layer-3);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10.5px; line-height: 1.5;
+  color: var(--dsw-alias-label-primary);
+  white-space: pre-wrap; word-break: break-all;
+  user-select: all;
+}
+.dsh-memory-finding-note {
+  margin: 0;
+  font-size: 10.5px; line-height: 1.5;
+  color: var(--dsw-alias-label-tertiary);
+  word-break: break-word;
+}
 
 /* ── Stats disclosure ───────────────────────────────────────────────
    Composition and the access calendar are real information and the least

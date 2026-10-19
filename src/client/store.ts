@@ -14,6 +14,7 @@
 
 import { useCallback, useEffect, useRef, useState } from '../deps.ts'
 import type {
+  DoctorCounts, DoctorIssue, DoctorPayload,
   PreviewData, PreviewView, SearchHit, StatsData, StatsPayload, StatusPayload,
 } from './types.ts'
 
@@ -28,6 +29,8 @@ export const NOTE_URL = `${BASE_URL}/note`
 export const DOC_URL = `${BASE_URL}/doc`
 export const DISMISS_URL = `${BASE_URL}/dismiss`
 export const STATS_URL = `${BASE_URL}/stats`
+/** The core's own issue list — the health pane's "what do I do about it". */
+export const DOCTOR_URL = `${BASE_URL}/doctor`
 
 /**
  * Default cap on a preview list, matching the host route.
@@ -643,6 +646,113 @@ export function useStats(): {
   return {
     status: state.status,
     data: state.data,
+    reload: function () { setNonce(function (n) { return n + 1 }) },
+  }
+}
+
+// ── Doctor: the findings the health verdict is based on ─────────────
+
+/** Gate for one doctor load. Same lifecycle contract as `StatsGate`. */
+export interface DoctorGate {
+  alive: boolean
+  dispose: () => void
+}
+
+export function newDoctorGate(): DoctorGate {
+  const gate: DoctorGate = {
+    alive: true,
+    dispose: function () { gate.alive = false },
+  }
+  return gate
+}
+
+function doctorUnavailable(): DoctorPayload {
+  return { status: 'unavailable', issues: [], counts: null }
+}
+
+/**
+ * Read the core's issue list.
+ *
+ * `status:'unavailable'` is NOT `issues: []`. The pane prints an empty list as
+ * "没有发现问题", which is a claim about the vault; when the doctor never ran
+ * the only honest thing to say is that it did not run. Every failure path here
+ * — a non-200, a body that is not ours, a transport error — resolves to
+ * `unavailable` and never rejects, so the pane can render without a try/catch.
+ */
+export async function loadDoctor(): Promise<DoctorPayload> {
+  try {
+    const r = await fetch(DOCTOR_URL, {
+      cache: 'no-store',
+      headers: { accept: 'application/json' },
+    })
+    if (!r.ok) return doctorUnavailable()
+    const body = (await r.json()) as { status?: unknown; issues?: unknown; counts?: unknown } | null
+    if (!body || body.status !== 'ok' || !Array.isArray(body.issues)) return doctorUnavailable()
+    const issues: DoctorIssue[] = []
+    for (const raw of body.issues) {
+      if (!raw || typeof raw !== 'object') continue
+      const o = raw as Record<string, unknown>
+      const message = typeof o.message === 'string' ? o.message : ''
+      const code = typeof o.code === 'string' ? o.code : ''
+      if (!message && !code) continue
+      // Unknown severity degrades to `warn`, mirroring the route: a finding
+      // this build does not understand must not be demoted to a footnote.
+      const severity = o.severity === 'error' || o.severity === 'info' ? o.severity : 'warn'
+      issues.push({
+        severity,
+        code,
+        message,
+        hint: typeof o.hint === 'string' ? o.hint : '',
+      })
+    }
+    const c = body.counts
+    const counts = c && typeof c === 'object'
+      ? {
+          memories: Number((c as Record<string, unknown>).memories) || 0,
+          vectors: Number((c as Record<string, unknown>).vectors) || 0,
+          conflicts: Number((c as Record<string, unknown>).conflicts) || 0,
+          inbox: Number((c as Record<string, unknown>).inbox) || 0,
+          duplicates: Number((c as Record<string, unknown>).duplicates) || 0,
+          orphans: Number((c as Record<string, unknown>).orphans) || 0,
+        }
+      : null
+    return { status: 'ok', issues, counts }
+  } catch {
+    return doctorUnavailable()
+  }
+}
+
+/**
+ * Doctor state for the health pane. Loads on mount; `reload` re-reads.
+ *
+ * Deliberately NOT polled. `doctor` walks the canonical notes to look for
+ * duplicate lines, which is the most expensive read in the core; the status
+ * route already carries the numbers that change minute to minute. The pane
+ * offers an explicit "重新体检" instead, so the cost is paid when the user asks
+ * for an answer rather than every ten seconds.
+ */
+export function useDoctor(): {
+  status: DoctorPayload['status']
+  issues: DoctorIssue[]
+  counts: DoctorCounts | null
+  reload: () => void
+} {
+  const [state, setState] = useState<DoctorPayload>({ status: 'loading', issues: [], counts: null })
+  const [nonce, setNonce] = useState(0)
+
+  useEffect(function () {
+    const gate = newDoctorGate()
+    setState({ status: 'loading', issues: [], counts: null })
+    loadDoctor()
+      .then(function (p) { if (canApplyPreview(gate)) setState(p) })
+      .catch(function () { if (canApplyPreview(gate)) setState(doctorUnavailable()) })
+    return gate.dispose
+  }, [nonce])
+
+  return {
+    status: state.status,
+    issues: state.issues,
+    counts: state.counts,
     reload: function () { setNonce(function (n) { return n + 1 }) },
   }
 }

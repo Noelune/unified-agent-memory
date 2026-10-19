@@ -303,6 +303,17 @@ export interface RunCoreOptions {
    * running until its own timeout expires.
    */
   signal?: AbortSignal
+  /**
+   * Keep stdout even when the child exits non-zero.
+   *
+   * Only `doctor` needs this: it prints its report and then exits 1 when it
+   * found an error-severity issue, so discarding stdout would throw away the
+   * findings precisely when they matter. Every other caller treats a non-zero
+   * exit as "there is no answer", which stays the default — a partial write is
+   * worse than no answer for a command whose output is a result rather than a
+   * report.
+   */
+  keepOutputOnFailure?: boolean
 }
 
 /**
@@ -368,7 +379,7 @@ export function runCore(
 
           resolvePromise({
             ok: false,
-            output: '',
+            output: opts.keepOutputOnFailure ? String(stdout ?? '') : '',
             kind,
             error:
               `memory core failed (${err.code ?? 'error'}): ${stderrTail || err.message}\n${hint}`,

@@ -70,6 +70,7 @@ import {
   NOTE_PATH, PREVIEW_PATH, PREVIEW_VIEWS, clampPreviewLimit, handleNote, handlePreview,
 } from './route-preview.ts'
 import { DOC_PATH, handleDoc } from './route-doc.ts'
+import { DOCTOR_PATH, handleDoctor } from './route-doctor.ts'
 import { DISMISS_PATH, handleDismiss, parseDismissBody } from './route-dismiss.ts'
 import { STATS_PATH, buildStatsArgs, shapeStatsResult } from './route-stats.ts'
 import type { PluginConfig } from './types.ts'
@@ -394,6 +395,28 @@ export function apply(ctx: Context, config: Record<string, unknown> = {}): void 
           status: payload.status,
           data: payload.data,
         })
+      })()
+    },
+  })
+  // ---- HTTP doctor route: the findings behind the health verdict ----
+  // Read-only, and the only endpoint that asks the core for its issue list.
+  // Registered after /stats for the same reason /stats came last: existing
+  // routes keep their registration order, and nothing here can shadow them.
+  //
+  // The payload is answered 200 even when the core is unreachable — `status`
+  // carries that, and `issues: []` with `status: 'unavailable'` is emphatically
+  // not the same thing as a clean bill, which the pane renders as "未读取到".
+  ws.webServer.register({
+    kind: 'exact',
+    path: DOCTOR_PATH,
+    handler(req, res) {
+      if (!guard(req, res, ['GET', 'HEAD'])) return
+      return (async () => {
+        try {
+          sendJson(res, 200, await handleDoctor(cfg))
+        } catch {
+          sendJson(res, 500, { ok: false, status: 'unavailable', issues: [], counts: null })
+        }
       })()
     },
   })

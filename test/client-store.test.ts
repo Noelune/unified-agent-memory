@@ -33,6 +33,7 @@ import {
   dismissItem,
   isCurrentSearch,
   loadDoc,
+  loadDoctor,
   loadNote,
   loadPreview,
   loadStats,
@@ -773,5 +774,66 @@ describe('mutation: loadStats ok-gate and shape normalization', () => {
     const res = { json: async () => { throw new DOMException('aborted', 'AbortError') } }
     assert(await loadStatsWith(res))
     await expect(async () => assert(await mutant())).rejects.toThrow()
+  })
+})
+
+describe('loadDoctor', () => {
+  it('reads /doctor and keeps the issue list', async () => {
+    stubFetch({ body: {
+      ok: true,
+      status: 'ok',
+      issues: [{ severity: 'warn', code: 'index-bloat', message: 'index is 90 MB', hint: 'memory gc --apply' }],
+      counts: { memories: 476, vectors: 377, conflicts: 0, inbox: 0, duplicates: 0, orphans: 2 },
+    } })
+
+    const got = await loadDoctor()
+
+    expect(calls[0].url).toBe('/api/dsh-unified-agent-memory/doctor')
+    expect(got.status).toBe('ok')
+    expect(got.issues).toHaveLength(1)
+    expect(got.issues[0].code).toBe('index-bloat')
+    expect(got.counts?.orphans).toBe(2)
+  })
+
+  it('reports an empty list as a clean bill, not as unavailability', async () => {
+    // The distinction the pane prints: a clean bill is a claim about the vault,
+    // "unavailable" is a blind spot. Both arrive as zero issues.
+    stubFetch({ body: { ok: true, status: 'ok', issues: [], counts: null } })
+    const got = await loadDoctor()
+    expect(got.status).toBe('ok')
+    expect(got.issues).toEqual([])
+  })
+
+  it('treats a degraded route as unavailable, never as a clean bill', async () => {
+    stubFetch({ body: { ok: false, status: 'unavailable', issues: [], counts: null } })
+    const got = await loadDoctor()
+    expect(got.status).toBe('unavailable')
+    expect(got.counts).toBeNull()
+  })
+
+  it('treats a transport failure as unavailable', async () => {
+    stubFetch({ throws: true })
+    await expect(loadDoctor()).resolves.toEqual({ status: 'unavailable', issues: [], counts: null })
+  })
+
+  it('degrades an unknown severity to warn rather than dropping the finding', async () => {
+    stubFetch({ body: {
+      ok: true, status: 'ok',
+      issues: [{ severity: 'fatal', code: 'x', message: 'm', hint: '' }],
+      counts: null,
+    } })
+    const got = await loadDoctor()
+    expect(got.issues[0].severity).toBe('warn')
+  })
+
+  it('drops an issue with neither a code nor a sentence', async () => {
+    stubFetch({ body: {
+      ok: true, status: 'ok',
+      issues: [{ severity: 'warn' }, { code: 'ok-one', message: 'm', severity: 'info' }],
+      counts: null,
+    } })
+    const got = await loadDoctor()
+    expect(got.issues).toHaveLength(1)
+    expect(got.issues[0].code).toBe('ok-one')
   })
 })

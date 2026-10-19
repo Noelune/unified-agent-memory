@@ -26,17 +26,17 @@
 
 import { h, useState } from '../deps.ts'
 import type { SearchHit, StatsPayload } from './types.ts'
-import { dismissItem, loadDoc, loadNote, usePreview, useSearch, useStats } from './store.ts'
+import { dismissItem, loadDoc, loadNote, useDoctor, usePreview, useSearch, useStats } from './store.ts'
 import {
   BreakdownDonut, CalendarHeatmap, GrowthChart, TopBars,
 } from './Figures.tsx'
 import {
-  CONSOLE_TABS, PENDING_BADGE_TAB, TAB_LABEL, dismissReasonText, healthRows,
-  healthSummary, highlightParts, inboxSummary, noteDigest, oldestFirst,
-  openFailureText, previewEmptyText, relativeAge, searchFailureText, splitHealth,
-  statKpis,
+  COMMAND_NOTE, CONSOLE_TABS, PENDING_BADGE_TAB, SEVERITY_LABEL, TAB_LABEL,
+  dismissReasonText, healthFindings, healthRows, healthSummary, highlightParts,
+  inboxSummary, noteDigest, oldestFirst, openFailureText, previewEmptyText,
+  relativeAge, rowFindings, searchFailureText, splitHealth, statKpis,
 } from './view.ts'
-import type { TabId } from './view.ts'
+import type { HealthFinding, TabId } from './view.ts'
 
 export { CONSOLE_TABS }
 export type { TabId }
@@ -454,6 +454,7 @@ function SearchTab(): Child {
  */
 function HealthTab(props: { status: ConsoleStatus | null; stats: StatsPayload }): Child {
   const conflicts = usePreview('conflicts')
+  const doctor = useDoctor()
   const rows = healthRows({
     stats: props.status?.stats ?? null,
     indexOk: props.status?.index?.ok ?? null,
@@ -466,14 +467,48 @@ function HealthTab(props: { status: ConsoleStatus | null; stats: StatsPayload })
   const summary = healthSummary(rows)
   const groups = splitHealth(rows)
 
-  return h('div', { className: 'dsh-memory-pane' },
+  // The doctor's list wins when it ran: it sees duplicates, bloat and orphan
+  // indexes that the status rows cannot. The row-derived list is a fallback for
+  // "the doctor never ran", never a supplement — both describe the same
+  // conflicts, and printing them twice reads as two separate problems.
+  const findings = doctor.status === 'ok'
+    ? healthFindings(doctor.issues, doctor.counts)
+    : doctor.status === 'unavailable'
+      ? rowFindings(rows)
+      : []
+  const hasCommand = findings.some(function (f) { return f.command !== null })
+
+  return h('div', { className: 'dsh-memory-pane dsh-memory-pane-scroll' },
     h('div', { className: 'dsh-memory-health', 'data-tone': summary.tone },
       h('i', { className: 'dsh-memory-health-dot', 'aria-hidden': 'true' }),
       h('div', { className: 'dsh-memory-health-copy' },
         h('b', null, summary.title),
         h('span', null, summary.detail),
       ),
+      // The verdict is a measurement, so the control that re-measures belongs
+      // on it. Burying it under the list would make it disappear in the one
+      // state where someone most wants to re-check: everything green.
+      h('button', {
+        type: 'button',
+        className: 'dsh-memory-health-retry',
+        title: '重新跑一次体检',
+        onClick: doctor.reload,
+      }, doctor.status === 'loading' ? '体检中…' : '重新体检'),
     ),
+    findings.length > 0
+      ? h('div', { className: 'dsh-memory-findings' },
+          ...findings.map(function (f) {
+            return h(FindingCard, { key: f.key, finding: f })
+          }),
+          hasCommand ? h('p', { className: 'dsh-memory-finding-note' }, COMMAND_NOTE) : null,
+        )
+      : null,
+    // "No findings" and "no doctor" must not look alike: the first is a clean
+    // bill, the second is a blind spot, and the rows below are all this pane
+    // can still see.
+    doctor.status === 'unavailable'
+      ? h('p', { className: 'dsh-memory-finding-note' }, '详细体检没跑起来，下面是面板能直接读到的几项。')
+      : null,
     h('div', { className: 'dsh-memory-metrics' },
       ...groups.metrics.map(function (r) {
         return h('div', {
@@ -503,6 +538,27 @@ function HealthTab(props: { status: ConsoleStatus | null; stats: StatsPayload })
           )
         })),
     ))
+}
+
+/**
+ * One finding: the problem, its consequence, and the command that closes it.
+ *
+ * The command is rendered in a `code` element on its own line so it can be
+ * selected with one drag without catching the surrounding prose — a fix you
+ * cannot copy is a fix you retype.
+ */
+function FindingCard(props: { finding: HealthFinding }): Child {
+  const f = props.finding
+  return h('div', { className: 'dsh-memory-finding', 'data-severity': f.severity },
+    h('div', { className: 'dsh-memory-finding-head' },
+      h('i', { className: 'dsh-memory-finding-mark', 'aria-hidden': 'true' }),
+      h('b', { className: 'dsh-memory-finding-title' }, f.title),
+      h('span', { className: 'dsh-memory-finding-tag' }, SEVERITY_LABEL[f.severity]),
+    ),
+    h('p', { className: 'dsh-memory-finding-detail' }, f.detail),
+    h('p', { className: 'dsh-memory-finding-fix' }, f.fix),
+    f.command ? h('code', { className: 'dsh-memory-finding-cmd' }, f.command) : null,
+  )
 }
 
 // ── Figures ─────────────────────────────────────────────────────────

@@ -126,3 +126,36 @@ export interface StatsData {
  * vault yields `status:'ok'` with empty arrays, so the UI can say the right thing.
  */
 export interface StatsPayload { status: 'ok' | 'loading' | 'error'; data: StatsData | null }
+
+/** One issue from the core's own health report. */
+export interface DoctorIssue {
+  severity: 'error' | 'warn' | 'info'
+  code: string
+  /** The core's English sentence. A fallback, not the primary copy. */
+  message: string
+  /** The core's English remedy. Same caveat. */
+  hint: string
+}
+
+/** The counts a doctor read carries alongside its issues. */
+export interface DoctorCounts {
+  memories: number
+  vectors: number
+  conflicts: number
+  inbox: number
+  duplicates: number
+  orphans: number
+}
+
+/**
+ * The console's view of a doctor read.
+ *
+ * `unavailable` is a third state on purpose. An empty `issues` list means the
+ * doctor looked and found nothing; `unavailable` means it never looked. The
+ * pane prints the first as reassurance and must not do that for the second.
+ */
+export interface DoctorPayload {
+  status: 'ok' | 'loading' | 'unavailable'
+  issues: DoctorIssue[]
+  counts: DoctorCounts | null
+}

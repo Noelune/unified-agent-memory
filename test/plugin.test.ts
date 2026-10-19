@@ -243,7 +243,7 @@ describe('host plugin contract', () => {
     ])
     // Looked up by path, not by index: appending a route must not silently
     // re-point an assertion at a different endpoint.
-    expect(routes).toHaveLength(7)
+    expect(routes).toHaveLength(8)
     const byPath = new Map(routes.map((r) => [r.path, r.kind]))
     expect(byPath.get('/api/dsh-unified-agent-memory/status')).toBe('exact')
     expect(byPath.get('/api/dsh-unified-agent-memory/search')).toBe('exact')
@@ -254,6 +254,9 @@ describe('host plugin contract', () => {
     expect(byPath.get('/api/dsh-unified-agent-memory/doc')).toBe('exact')
     expect(byPath.get('/api/dsh-unified-agent-memory/dismiss')).toBe('exact')
     expect(byPath.get('/api/dsh-unified-agent-memory/stats')).toBe('exact')
+    // `/doctor` carries the core's issue list — the "what do I do about it"
+    // half of the health verdict. Read-only, like the rest.
+    expect(byPath.get('/api/dsh-unified-agent-memory/doctor')).toBe('exact')
   })
 
   it('answers a loopback GET with the status payload', async () => {

@@ -52,6 +52,8 @@ const ROUTE_PATHS = [
   '/api/dsh-unified-agent-memory/doc',
   '/api/dsh-unified-agent-memory/dismiss',
   '/api/dsh-unified-agent-memory/stats',
+  // The core's own issue list, behind the health pane's verdict.
+  '/api/dsh-unified-agent-memory/doctor',
 ]
 
 /** Every model tool the host half registers, in registration order. */

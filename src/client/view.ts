@@ -13,7 +13,7 @@
  * @module src/client/view
  */
 
-import type { PreviewData, StatsData } from './types.ts'
+import type { DoctorCounts, DoctorIssue, PreviewData, StatsData } from './types.ts'
 
 /** Tab ids, in display order. The console renders these left to right. */
 export const CONSOLE_TABS = ['inbox', 'search', 'health', 'stats'] as const
@@ -467,6 +467,226 @@ export function healthSummary(rows: readonly HealthRow[]): HealthSummary {
     }
   }
   return { tone: 'ok', title: '运行正常', detail: '记忆、索引、召回都在正常工作' }
+}
+
+// ── Health findings: what is wrong, and what fixes it ───────────────
+
+/**
+ * One actionable finding: a problem plus the next step.
+ *
+ * The pane's previous answer to a warning was a label in a headline — "2 项需要
+ * 处理（索引、冲突）" — which names the symptom and stops. A user who does not
+ * already know the CLI cannot act on it. `fix` and `command` are the missing
+ * half: the sentence that says what to do, and the string to paste.
+ */
+export interface HealthFinding {
+  /** Stable React key. The issue code, or `row:<key>` for the fallback list. */
+  key: string
+  severity: 'error' | 'warn' | 'info'
+  title: string
+  /** The consequence, so the reader knows why it matters before the fix. */
+  detail: string
+  /** The next step, in one sentence. */
+  fix: string
+  /** A paste-ready command, or null when there is nothing to run. */
+  command: string | null
+}
+
+/** Severity chip text. */
+export const SEVERITY_LABEL: Record<HealthFinding['severity'], string> = {
+  error: '错误',
+  warn: '待处理',
+  info: '提示',
+}
+
+/** How to read the command lines, printed once under the list. */
+export const COMMAND_NOTE =
+  '命令里的 `memory` 是核心自带的命令行；没装它时等价于 `python -m unified_memory.memory <子命令>`。'
+
+/**
+ * Chinese copy per core issue code.
+ *
+ * Keyed by CODE rather than by severity or position: the core's codes are its
+ * stable identifiers, while messages carry counts and file names that change on
+ * every read. An unknown code falls through to the core's own English text —
+ * worse prose, but never a blank card.
+ */
+const ISSUE_COPY: Record<string, { title: string; detail: string; fix: string; command: string | null }> = {
+  'sync-conflict-copies': {
+    title: '有同步冲突副本',
+    detail: '网盘或 OneDrive 生成了同名副本，库里存在两份内容重叠的笔记，索引会跳过它们。',
+    fix: '打开两份副本，把有用的内容并进保留的那份，再删掉另一份。',
+    command: null,
+  },
+  'conflicts-pending': {
+    title: '事实互相矛盾',
+    detail: '在你裁决之前，冲突双方都不算生效，检索会绕开这段记忆。',
+    fix: '逐条选保留哪一条；判旧的赢，新值会进历史段，不会丢。',
+    command: 'python -m unified_memory.promoter --adjudicate',
+  },
+  'inbox-stale': {
+    title: '待确认积压太久',
+    detail: '收件箱里的提交放了两周以上，越积越多，新事实会排在后面。',
+    fix: '先复查一遍待晋升清单，确认没问题再批量入库。',
+    command: 'python -m unified_memory.promoter --review',
+  },
+  'duplicate-facts': {
+    title: '规范笔记里有重复事实',
+    detail: '完全相同的行出现多次，占掉检索名额，也让「重要度」虚高。',
+    fix: '去重会先备份再删重复行，可以放心跑。',
+    command: 'python -m unified_memory.promoter --repair-existing',
+  },
+  'embedding-coverage': {
+    title: '向量覆盖不全',
+    detail: '部分记忆没有向量，语义检索会退化成关键词匹配——换个说法就搜不到。',
+    fix: '补齐向量，需要先配好 SiliconFlow 的 key。',
+    command: 'memory embed',
+  },
+  'graph-bloat': {
+    title: '概念图边数超标',
+    detail: '联想图超出上限，联想结果会变得又散又慢。',
+    fix: '重建一张有界的概念图。',
+    command: 'memory gc --apply',
+  },
+  'index-bloat': {
+    title: '索引库体积过大',
+    detail: '每次打开索引都要多读一块，搜索会越来越慢。',
+    fix: '整理并压缩索引库。',
+    command: 'memory gc --apply',
+  },
+  'orphan-indexes': {
+    title: '有残留的孤儿索引',
+    detail: '旧 vault 留下的索引文件，和现在的库无关，只是占磁盘。',
+    fix: '清掉孤儿索引库，不影响当前 vault。',
+    command: 'memory gc --apply',
+  },
+  'unclassified-facts': {
+    title: '有未归类的事实',
+    detail: '这些行还停在「未归类事实」里，没归到具体笔记，检索时容易被埋掉。',
+    fix: '让 agent 读一遍，把它们归到对应的笔记。',
+    command: null,
+  },
+  'vault-missing': {
+    title: '核心找不到 vault',
+    detail: '配置里的路径不存在，所有读写都会失败。',
+    fix: '检查 ~/.unified-memory.yaml 里的 vault 是否还在，或重新指定一次。',
+    command: 'memory status',
+  },
+  'doctor-failed': {
+    title: '体检脚本自身失败',
+    detail: '多半是索引库损坏，导致体检读不下去。',
+    fix: '先重建派生数据，再体检一次。',
+    command: 'memory gc --apply',
+  },
+}
+
+/**
+ * Turn the core's issues into cards.
+ *
+ * Three rules:
+ *
+ *  1. **Every card ends in a verb.** A finding without `fix` is just a louder
+ *     warning, and the whole point of this list is to close that gap.
+ *  2. **The count goes in the sentence when the core gave one**, because "有 3
+ *     条冲突" tells the reader the size of the job while "有冲突" does not.
+ *  3. **Unknown codes keep the core's message and hint.** Dropping them would
+ *     hide a genuine finding; showing untranslated English is the lesser cost,
+ *     and the sentence still names the command to run.
+ */
+export function healthFindings(
+  issues: readonly DoctorIssue[],
+  counts?: DoctorCounts | null,
+): HealthFinding[] {
+  return issues.map(function (issue, i) {
+    const copy = ISSUE_COPY[issue.code]
+    const key = issue.code || 'issue-' + i
+    if (!copy) {
+      return {
+        key,
+        severity: issue.severity,
+        title: '核心报了一个问题',
+        detail: issue.message || issue.code,
+        fix: issue.hint || '这条本版面板还不认识，先跑一次 `memory doctor` 看原文。',
+        command: null,
+      }
+    }
+    return {
+      key,
+      severity: issue.severity,
+      title: copy.title,
+      detail: countedDetail(issue.code, copy.detail, counts),
+      fix: copy.fix,
+      command: copy.command,
+    }
+  })
+}
+
+/**
+ * Put the core's count into the sentence when there is one.
+ *
+ * Only the four codes whose message is essentially a number get rewritten, and
+ * each gets a WHOLE sentence rather than a phrase spliced into the base copy:
+ * string surgery on Chinese prose ("有 2 个" + "网盘或 OneDrive 生成了同名副本")
+ * produces grammar that reads like a mail merge. Every other code keeps its
+ * prose, because "部分记忆没有向量" is already as specific as the count.
+ */
+function countedDetail(code: string, base: string, counts?: DoctorCounts | null): string {
+  if (!counts) return base
+  if (code === 'conflicts-pending' && counts.conflicts > 0) {
+    return '共 ' + counts.conflicts + ' 条事实和已有记录互相矛盾；裁决前两条都不生效，检索会绕开这段记忆。'
+  }
+  if (code === 'duplicate-facts' && counts.duplicates > 0) {
+    return '共 ' + counts.duplicates + ' 行完全重复的事实，占掉检索名额，也让「重要度」虚高。'
+  }
+  if (code === 'orphan-indexes' && counts.orphans > 0) {
+    return counts.orphans + ' 个孤儿索引库（旧 vault 留下的），和现在的库无关，只占磁盘。'
+  }
+  if (code === 'inbox-stale' && counts.inbox > 0) {
+    return '收件箱有 ' + counts.inbox + ' 条待确认，最老的超过两周，新事实会排在它们后面。'
+  }
+  return base
+}
+
+/**
+ * The fallback list, built from the pane's own rows.
+ *
+ * Used when `doctor` could not run: the status route already flags three states,
+ * and each has a known remedy. Kept separate from `healthFindings` rather than
+ * merged into it — the doctor's list is authoritative and covers cases the rows
+ * cannot see (duplicates, bloat, orphan indexes), so mixing the two would
+ * double-report the same problem with different wording.
+ */
+export function rowFindings(rows: readonly HealthRow[]): HealthFinding[] {
+  const byKey: Record<string, HealthFinding> = {
+    index: {
+      key: 'row:index',
+      severity: 'warn',
+      title: '索引异常',
+      detail: '派生索引损坏或读不到，搜索会退回逐文件扫描。',
+      fix: '重建一次派生索引，不会动你的笔记。',
+      command: 'memory sync',
+    },
+    conflicts: {
+      key: 'row:conflicts',
+      severity: 'warn',
+      title: '事实互相矛盾',
+      detail: '冲突裁决前，两条都不算生效，检索会绕开这段记忆。',
+      fix: '逐条选保留哪一条。',
+      command: 'python -m unified_memory.promoter --adjudicate',
+    },
+    prefix: {
+      key: 'row:prefix',
+      severity: 'warn',
+      title: '提交前缀没识别出来',
+      detail: '写进库的事实会署名为 fallback，多个 agent 共库时分不清是谁写的。',
+      fix: '在插件设置里填 agentName，或设环境变量 UNIFIED_MEMORY_AGENT。',
+      command: null,
+    },
+  }
+  return rows
+    .filter(function (r) { return r.tone === 'warn' })
+    .map(function (r) { return byKey[r.key] })
+    .filter(function (f): f is HealthFinding { return f !== undefined })
 }
 
 /**
