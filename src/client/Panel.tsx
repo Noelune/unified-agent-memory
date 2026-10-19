@@ -86,13 +86,10 @@ export function MemorySheet() {
       ),
     ),
 
-    h(Console, {
-      status: {
-        stats: data?.stats ?? null,
-        vaultPath: data?.vaultPath ?? null,
-        version: data?.version ?? null,
-      },
-    }),
+    // The whole payload, not a hand-picked subset: the health pane reads the
+    // prefix, the recall mode and the index flag, and a subset assembled here
+    // would silently drop each new field the console learns to use.
+    h(Console, { status: data ?? null }),
 
     notice.text
       ? h('div', { className: 'dsh-memory-note' }, notice.text)

@@ -210,6 +210,23 @@ export const PANEL_CSS = `
   color: var(--dsw-alias-label-secondary);
 }
 .dsh-memory-rows { display: flex; flex-direction: column; }
+/* Inbox rows are wrapped (row + expandable body), so the separator that the
+   search list draws with .row + .row::before has to move to the wrapper —
+   otherwise two adjacent submissions would have no divider at all. */
+.dsh-memory-item + .dsh-memory-item {
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+.dsh-memory-body {
+  /* A submission's own text: rendered as text, never as markup, and clipped by
+     noteDigest before it gets here. break-word keeps a long unbroken token
+     (a path, a hash) from widening the panel. */
+  margin: 0 8px 9px 17px; padding: 7px 10px;
+  border-left: 2px solid var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px; line-height: 1.55;
+  white-space: pre-wrap; word-break: break-word;
+  max-height: 168px; overflow-y: auto;
+}
 .dsh-memory-row {
   display: flex; align-items: center; gap: 9px;
   padding: 8px 8px 8px 6px; border-radius: 8px; position: relative;
@@ -254,6 +271,20 @@ export const PANEL_CSS = `
   opacity: 1; color: var(--dsw-alias-brand-primary);
   border-color: var(--dsw-alias-brand-primary);
 }
+/* A health row that needs attention: the same bar the search list uses, but in
+   the error colour, plus primary text instead of tertiary — the number has to
+   be readable before it can be acted on. */
+.dsh-memory-row[data-tone='warn'] .dsh-memory-rowmeta {
+  color: var(--dsw-alias-label-primary);
+}
+.dsh-memory-row[data-tone='warn'] .dsh-memory-bar {
+  background: var(--dsw-alias-state-error-primary); opacity: .8;
+}
+.dsh-memory-row .dsh-memory-action:disabled {
+  opacity: .4; cursor: default; color: var(--dsw-alias-label-tertiary);
+  border-color: var(--dsw-alias-border-l1);
+}
+.dsh-memory-pane-scroll { overflow-y: auto; }
 .dsh-memory-empty {
   display: flex; flex-direction: column; align-items: center; gap: 6px;
   padding: 22px 14px; color: var(--dsw-alias-label-tertiary);

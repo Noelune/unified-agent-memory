@@ -32,6 +32,7 @@ import {
   canApplyPreview,
   dismissItem,
   isCurrentSearch,
+  loadNote,
   loadPreview,
   loadStats,
   newPreviewGate,
@@ -210,30 +211,55 @@ describe('loadPreview', () => {
   })
 })
 
+describe('loadNote', () => {
+  it('returns the body and encodes the name into the query', async () => {
+    stubFetch({ body: { ok: true, name: 'a b.md', body: '# 标题\n正文', untrusted: true } })
+    await expect(loadNote('a b.md')).resolves.toEqual({ ok: true, body: '# 标题\n正文', reason: null })
+    expect(calls[0].url).toBe('/api/dsh-unified-agent-memory/note?name=a%20b.md')
+  })
+
+  it('keeps a refusal reason instead of collapsing it into "no body"', async () => {
+    // `not-found` and `invalid-name` are different facts with different advice.
+    stubFetch({ body: { ok: false, name: 'x.md', body: null, reason: 'not-found', untrusted: true } })
+    await expect(loadNote('x.md')).resolves.toEqual({ ok: false, body: null, reason: 'not-found' })
+  })
+
+  it('reports an unreadable route as unavailable', async () => {
+    stubFetch({ throws: true })
+    await expect(loadNote('x.md')).resolves.toEqual({ ok: false, body: null, reason: 'unavailable' })
+  })
+})
+
 describe('dismissItem', () => {
   const post = () =>
     calls.length > 0 ? calls[calls.length - 1] : ({} as { url: string; init?: RequestInit })
 
-  it('is true only when the body says ok', async () => {
+  it('is ok ONLY when the body says ok, and carries the reason', async () => {
     stubFetch({ status: 200, body: { ok: true, name: 'a.md', reason: null } })
-    await expect(dismissItem('a.md')).resolves.toBe(true)
+    await expect(dismissItem('a.md')).resolves.toEqual({ ok: true, reason: null })
     expect(post().url).toBe('/api/dsh-unified-agent-memory/dismiss')
     expect(post().init?.method).toBe('POST')
     expect(JSON.stringify(post().init?.headers)).toContain('application/json')
     expect(post().init?.body).toBe('{"name":"a.md"}')
   })
 
-  it('is false for a 200 that still says ok:false', async () => {
-    // HTTP status is not the verdict — only body.ok is.
+  it('is not ok for a 200 that still says ok:false, and keeps the reason', async () => {
+    // HTTP status is not the verdict — only body.ok is. The reason is what lets
+    // the inbox say "该条目不在提交区" instead of "失败了".
     stubFetch({ status: 200, body: { ok: false, name: 'a.md', reason: 'outside-inbox' } })
-    await expect(dismissItem('a.md')).resolves.toBe(false)
+    await expect(dismissItem('a.md')).resolves.toEqual({ ok: false, reason: 'outside-inbox' })
   })
 
-  it('is false for a 409 refusal and for a throw', async () => {
+  it('is not ok for a 409 refusal and carries its reason too', async () => {
+    // A 409 body is still JSON; the old implementation bailed on `!r.ok` before
+    // reading it, so every refusal arrived as a bare `false`.
     stubFetch({ status: 409, body: { ok: false, name: 'a.md', reason: 'not-found' } })
-    await expect(dismissItem('a.md')).resolves.toBe(false)
+    await expect(dismissItem('a.md')).resolves.toEqual({ ok: false, reason: 'not-found' })
+  })
+
+  it('reports a transport failure as unavailable, never as a refusal', async () => {
     stubFetch({ throws: true })
-    await expect(dismissItem('a.md')).resolves.toBe(false)
+    await expect(dismissItem('a.md')).resolves.toEqual({ ok: false, reason: 'unavailable' })
   })
 })
 

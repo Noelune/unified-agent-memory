@@ -35,8 +35,13 @@ import {
   PENDING_BADGE_TAB,
   TAB_LABEL,
   dismissReasonText,
+  healthRows,
   highlightParts,
+  inboxSummary,
+  noteDigest,
+  oldestFirst,
   previewEmptyText,
+  relativeAge,
   searchFailureText,
   updateNotice,
 } from '../src/client/view.ts'
@@ -106,27 +111,36 @@ function preview(over: Partial<PreviewData>): PreviewData {
 // ── Structure ──────────────────────────────────────────────────────
 
 describe('console structure', () => {
-  it('declares exactly the five tab ids, in order', () => {
+  it('declares exactly the four tab ids, in order', () => {
     // A pure-value assertion: stronger than four `toContain` string checks,
-    // because it also pins the order and the absence of extras.
-    expect(CONSOLE_TABS).toEqual(['search', 'activity', 'growth', 'makeup', 'top'])
+    // because it also pins the order and the absence of extras. Order is the
+    // policy — the queue comes first because it is the only pane with a write.
+    expect(CONSOLE_TABS).toEqual(['inbox', 'search', 'health', 'stats'])
   })
 
-  it('has retired the three list tabs', () => {
-    // The old trio carried lists that the figures now answer better; a
-    // leftover id here would render a pane with no copy behind it.
-    for (const gone of ['inbox', 'vault', 'system']) {
+  it('retires the two metadata tabs and the figure-per-tab strip', () => {
+    // 库全貌 / 系统 were read-only KV dumps nobody opened; the four figure tabs
+    // are now one 统计 pane. A leftover id would render a pane with no copy.
+    for (const gone of ['vault', 'system', 'activity', 'growth', 'makeup', 'top']) {
       expect(CONSOLE_TABS as readonly string[]).not.toContain(gone)
       expect(Object.keys(TAB_LABEL)).not.toContain(gone)
     }
     expect(Object.keys(TAB_LABEL)).toEqual([...CONSOLE_TABS])
   })
 
+  it('puts the actionable pane first', () => {
+    // The inversion this test exists for: the console used to open on a chart
+    // while the pending count rode a tab you could not act from. A dashboard
+    // that opens on a heatmap is not a tool, so the queue has to lead.
+    expect(CONSOLE_TABS[0]).toBe('inbox')
+    expect(PENDING_BADGE_TAB).toBe('inbox')
+  })
+
   it('labels every tab, with no stale copy from the deleted ones', () => {
     for (const t of CONSOLE_TABS) expect(TAB_LABEL[t].length).toBeGreaterThan(0)
     // The exact strings the retired tabs used; a label left behind is a tab the
     // user can read but not reach.
-    for (const old of ['待处理', '库全貌', '系统']) {
+    for (const old of ['库全貌', '系统', '访问', '生长', '构成', '排行']) {
       expect(Object.values(TAB_LABEL)).not.toContain(old)
     }
   })
@@ -146,11 +160,23 @@ describe('console structure', () => {
     // Mutation-verified — deleting `useSearch()` *and* its import left the whole
     // file green. So: strip comments, then require the hook to be INVOKED (an
     // assignment `useSearch(`, not a bare mention in an import list). Deleting
-    // either the call or the import now fails here. The preview/dismiss call
-    // sites are gone with the retired list tabs; the reader they moved to is
-    // covered by the figure-wiring block below.
+    // either the call or the import now fails here.
     expect(CONSOLE_CODE).toMatch(/\bconst\s+\w+\s*=\s*useSearch\(/)
     expect(CONSOLE_CODE).not.toMatch(/fetch\(/)
+  })
+
+  it('wires the inbox to the queue, the reader and the one write', () => {
+    // Three call sites, and each one was the difference between a panel and a
+    // decoration: without `usePreview('pending')` there is no queue, without
+    // `loadNote` you cannot judge an entry, without `dismissItem` you cannot
+    // clear one. A bare mention in the import list must not satisfy this, so
+    // every assertion names the call form.
+    expect(CONSOLE_CODE).toMatch(/usePreview\(\s*'pending'\s*\)/)
+    expect(CONSOLE_CODE).toMatch(/\bloadNote\(/)
+    expect(CONSOLE_CODE).toMatch(/\bdismissItem\(/)
+    // The health pane's conflict count is its own read; the figures' feed stays
+    // the single `useStats()` call (asserted below).
+    expect(CONSOLE_CODE).toMatch(/usePreview\(\s*'conflicts'\s*\)/)
   })
 
   it('imports react api from deps only', () => {
@@ -178,7 +204,10 @@ describe('console structure', () => {
 // assertions satisfied by the file's own header comment). So each assertion
 // below names the CALL, and the props object that feeds it.
 
-/** The four figure panes: `[tab id, component]`, in `CONSOLE_TABS` order. */
+/**
+ * The four figures: `[name, component]`. They share one 统计 pane now; the
+ * first element is here to label the failure message, not to name a tab.
+ */
 const FIGURE_TABS: ReadonlyArray<readonly [string, string]> = [
   ['activity', 'CalendarHeatmap'],
   ['growth', 'GrowthChart'],
@@ -215,10 +244,12 @@ function figureCall(name: string): string {
   return ''
 }
 
-describe('wiring: each figure tab draws its figure from one shared stats read', () => {
+describe('wiring: the four figures share one stats read inside one pane', () => {
   it('loads the aggregate feed exactly once, so the four figures share it', () => {
     // A call per figure would be four requests every time the pane mounts, and
-    // four payload copies that can drift apart between panes.
+    // four payload copies that can drift apart between panes. Folding the four
+    // tabs into one pane made this easier to break, not harder: a pane that
+    // called `useStats()` for itself would still render correctly.
     const loads = CONSOLE_CODE.match(/=\s*useStats\(\)/g) ?? []
     expect(loads.length, 'useStats() must be called once, not once per figure').toBe(1)
   })
@@ -241,24 +272,23 @@ describe('wiring: each figure tab draws its figure from one shared stats read', 
   })
 })
 
-describe('wiring: the pending count survives its tab', () => {
+describe('wiring: the pending count rides the queue it counts', () => {
   it('badges a tab the console still renders', () => {
-    // The count used to ride on the retired 待处理 tab. It must be rendered by
-    // SOME tab, or `stats.pending` is computed and never shown — and the class
-    // contract below reports .dsh-memory-pill as styled-but-never-rendered.
-    // The badge's home tab is display policy, so it travels as a view.ts
-    // constant: a second tab-id literal in the component is banned by the test
-    // above ("the tab ids should be declared once, in view.ts").
+    // The count must be rendered by SOME tab, or `stats.pending` is computed and
+    // never shown — and the class contract below reports .dsh-memory-pill as
+    // styled-but-never-rendered. The badge's home tab is display policy, so it
+    // travels as a view.ts constant: a second tab-id literal in the component is
+    // banned by the test above ("the tab ids should be declared once, in view.ts").
     expect(CONSOLE_TABS).toContain(PENDING_BADGE_TAB)
     expect(CONSOLE_CODE).toMatch(/t\s*===\s*PENDING_BADGE_TAB[\s\S]{0,160}dsh-memory-pill/)
   })
 
-  it('names the subject the number has lost by leaving its old tab', () => {
-    // The count used to sit on a tab labelled 待处理, so the digit explained
-    // itself. On the 搜索 tab it reads like "31 search results" unless the
-    // markup says otherwise. `title` is the only thing carrying that meaning,
-    // so it needs an assertion of its own — without one it can be deleted and
-    // every other test in this file stays green.
+  it('spells out the subject for a reader who arrives at the badge cold', () => {
+    // The badge sits on 待确认 now, so the digit is arguably self-explaining —
+    // but the strip is also read by screen readers and by anyone who lands on
+    // the tab stripped of its label. `title` is the only carrier of that
+    // meaning, so it needs an assertion of its own; without one it can be
+    // deleted and every other test in this file stays green.
     expect(CONSOLE_CODE).toMatch(/title:\s*[^\n]*条待处理/)
   })
 
@@ -309,6 +339,164 @@ describe('previewEmptyText', () => {
     // A null payload is "still loading / transport failed", which the console
     // renders as an error state — not as an empty view.
     expect(previewEmptyText(null)).toBeNull()
+  })
+})
+
+// ── Inbox: age, order, summary, body digest ────────────────────────
+
+describe('relativeAge', () => {
+  // A fixed epoch in SECONDS, exactly like `Path.stat().st_mtime`.
+  const T = 1_790_000_000
+  const at = (deltaSec: number) => (T + deltaSec) * 1000
+
+  it('reads st_mtime as seconds, not milliseconds', () => {
+    // The trap this exists for: feeding the core's seconds to a millisecond
+    // helper dates every submission to 1970 and reports the whole queue as
+    // decades old. One hour after the write must say 1 小时前.
+    expect(relativeAge(T, at(3600))).toBe('1 小时前')
+  })
+
+  it('picks the coarsest unit that still says something useful', () => {
+    expect(relativeAge(T, at(30))).toBe('刚刚')
+    expect(relativeAge(T, at(60 * 5))).toBe('5 分钟前')
+    expect(relativeAge(T, at(3600 * 5))).toBe('5 小时前')
+    expect(relativeAge(T, at(86_400 * 5))).toBe('5 天前')
+    expect(relativeAge(T, at(86_400 * 45))).toBe('1 个月前')
+    expect(relativeAge(T, at(86_400 * 400))).toBe('1 年前')
+  })
+
+  it('does not report a future timestamp as a negative age', () => {
+    // Clock skew between the vault and this machine is real; "-3 分钟前" is not.
+    expect(relativeAge(T, at(-600))).toBe('刚刚')
+  })
+
+  it('says so when there is no timestamp to read', () => {
+    expect(relativeAge(0, at(0))).toBe('时间未知')
+    expect(relativeAge(Number.NaN, at(0))).toBe('时间未知')
+  })
+})
+
+describe('inboxSummary', () => {
+  const DAY = 86_400
+  const now = 1_790_000_000_000
+
+  it('says the queue is empty instead of "0 条待确认"', () => {
+    // "0 条待确认" is a count; "提交区是空的" is a state. The second is what
+    // tells a user they do not need to open this tab at all.
+    const s = inboxSummary([], now)
+    expect(s.count).toBe(0)
+    expect(s.oldestDays).toBeNull()
+    expect(s.text).not.toContain('0 条')
+  })
+
+  it('promotes staleness only once it crosses a week', () => {
+    expect(inboxSummary([{ mtime: now / 1000 - 60 }], now).text).toBe('1 条待确认')
+    const stale = inboxSummary([{ mtime: now / 1000 - DAY * 21 }], now)
+    expect(stale.oldestDays).toBe(21)
+    expect(stale.text).toContain('21 天')
+  })
+
+  it('reports the OLDEST item, not the newest', () => {
+    // "Oldest" is the SMALLEST mtime — an absolute timestamp, so the item
+    // written longest ago has the lowest number. Taking the max would report
+    // the freshest submission and make a month-old queue look new.
+    const s = inboxSummary(
+      [{ mtime: now / 1000 - DAY * 10 }, { mtime: now / 1000 - DAY * 2 }],
+      now,
+    )
+    expect(s.oldestDays).toBe(10)
+  })
+})
+
+describe('oldestFirst', () => {
+  it('puts the forgotten item at the top', () => {
+    // The core returns newest-first, which is right for "what did I just
+    // submit" and backwards for a queue: the item most likely to be abandoned
+    // is the one nobody scrolls to.
+    const items = [{ name: 'new', mtime: 30 }, { name: 'old', mtime: 10 }]
+    expect(oldestFirst(items).map(function (i) { return i.name })).toEqual(['old', 'new'])
+  })
+
+  it('does not reorder the caller’s array in place', () => {
+    const items = [{ mtime: 30 }, { mtime: 10 }]
+    oldestFirst(items)
+    expect(items[0].mtime).toBe(30)
+  })
+})
+
+describe('noteDigest', () => {
+  it('drops the trailing write stamp a reader does not need', () => {
+    const body = '# 事实\n服务监听 19121\n\n（写入 2026-10-19｜来源：Agent提交区/a.md）'
+    const out = noteDigest(body)
+    expect(out).toContain('19121')
+    expect(out).not.toContain('来源')
+  })
+
+  it('keeps a stamp that is not the last line', () => {
+    // Only the tail is provenance noise; a stamp quoted mid-note is content.
+    const body = '（来源：a.md）\n然后是别的正文'
+    expect(noteDigest(body)).toContain('来源')
+  })
+
+  it('clips by code point, never through a surrogate pair', () => {
+    const body = '𠀋'.repeat(40) // astral: 2 UTF-16 units, 1 code point
+    const out = noteDigest(body, 10)
+    expect(Array.from(out)).toHaveLength(11) // 10 + the ellipsis
+    expect(out).not.toContain('\uFFFD')
+  })
+
+  it('returns an empty string for an unreadable body', () => {
+    expect(noteDigest(null)).toBe('')
+    expect(noteDigest('   ')).toBe('')
+  })
+})
+
+describe('healthRows', () => {
+  const healthy = {
+    stats: { memories: 460, vectors: 455, pending: 2 },
+    indexOk: true,
+    conflicts: 0,
+    recallMode: 'auto',
+    agentName: 'dsh-desktop',
+    agentSource: 'profile',
+    version: '0.8.0',
+  }
+
+  /** The value of one row, by key. */
+  const value = (rows: ReturnType<typeof healthRows>, key: string) =>
+    rows.find(function (r) { return r.key === key })!.value
+
+  it('renders an unread core as unknown, never as zero', () => {
+    // "0 条记忆" is a claim about the vault. A core that did not answer has made
+    // no claim, so every count must read "—".
+    const rows = healthRows({ ...healthy, stats: null, indexOk: null, conflicts: null })
+    for (const key of ['memories', 'vectors', 'pending', 'index', 'conflicts']) {
+      expect(value(rows, key), `${key} invented a reading`).toBe('—')
+    }
+  })
+
+  it('flags the three states a user may have to act on', () => {
+    const rows = healthRows({
+      ...healthy, indexOk: false, conflicts: 3, agentSource: 'fallback',
+    })
+    const tone = (key: string) => rows.find(function (r) { return r.key === key })!.tone
+    expect(tone('index')).toBe('warn')
+    expect(tone('conflicts')).toBe('warn')
+    expect(tone('prefix')).toBe('warn')
+    expect(value(rows, 'prefix')).toContain('未识别')
+  })
+
+  it('does not shout about a healthy library', () => {
+    const rows = healthRows(healthy)
+    expect(rows.every(function (r) { return r.tone === 'ok' })).toBe(true)
+    expect(value(rows, 'conflicts')).toBe('无')
+  })
+
+  it('says automatic recall is off instead of going silent', () => {
+    // "关闭" and "开着但没命中" look identical from the outside; that ambiguity
+    // is exactly what this row exists to remove.
+    const rows = healthRows({ ...healthy, recallMode: 'off' })
+    expect(value(rows, 'recall')).toBe('已关闭')
   })
 })
 
@@ -1101,6 +1289,45 @@ describe('mutation: updateNotice', () => {
       expect(f('0.8.0', true).text).toContain('重新安装')
     }
     assert(updateNotice)
+    expect(function () { assert(mutant) }).toThrow()
+  })
+})
+
+describe('mutation: relativeAge', () => {
+  it('goes red when the timestamp is treated as milliseconds', () => {
+    // The plausible mistake, in full: `Date.now() - mtime` with the core's
+    // seconds. Every submission then looks ~56 years old and the age column
+    // becomes noise the user learns to ignore.
+    const mutant = function (mtime: number, nowMs: number) {
+      return Math.floor((nowMs - mtime) / 60_000) + ' 分钟前'
+    }
+    const assert = function (f: typeof relativeAge) {
+      expect(f(1_790_000_000, 1_790_003_600_000)).toBe('1 小时前')
+    }
+    assert(relativeAge)
+    expect(function () { assert(mutant) }).toThrow()
+  })
+})
+
+describe('mutation: healthRows', () => {
+  it('goes red when an unread core is reported as zero', () => {
+    // "0 条记忆" is a claim; a dead core has made none. The mutant collapses
+    // the two, which is the exact lie this pane exists to avoid.
+    type Input = Parameters<typeof healthRows>[0]
+    const mutant = function (input: Input) {
+      return healthRows(input).map(function (r) {
+        return input.stats === null ? { ...r, value: '0' } : r
+      })
+    }
+    const assert = function (f: typeof healthRows) {
+      const rows = f({
+        stats: null, indexOk: null, conflicts: null,
+        recallMode: null, agentName: null, agentSource: null, version: null,
+      })
+      const memories = rows.find(function (r) { return r.key === 'memories' })!
+      expect(memories.value).toBe('—')
+    }
+    assert(healthRows)
     expect(function () { assert(mutant) }).toThrow()
   })
 })

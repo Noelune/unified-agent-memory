@@ -16,36 +16,28 @@
 import type { PreviewData } from './types.ts'
 
 /** Tab ids, in display order. The console renders these left to right. */
-export const CONSOLE_TABS = ['search', 'activity', 'growth', 'makeup', 'top'] as const
+export const CONSOLE_TABS = ['inbox', 'search', 'health', 'stats'] as const
 
 /** One tab id. */
 export type TabId = (typeof CONSOLE_TABS)[number]
 
 /** Chinese label per tab. */
 export const TAB_LABEL: Record<TabId, string> = {
+  inbox: '待确认',
   search: '搜索',
-  activity: '访问',
-  growth: '生长',
-  makeup: '构成',
-  top: '排行',
+  health: '健康',
+  stats: '统计',
 }
 
 /**
  * The tab that carries the pending-inbox count.
  *
- * The count used to ride on the 待处理 tab, which the figures retired. It has
- * to ride on SOME tab: the console still polls `stats.pending`, and a count that
- * is computed and never rendered is dead weight the class contract would report
- * as a styled-but-unused `.dsh-memory-pill`. WHICH tab is a display decision, so
- * it lives here beside `TAB_LABEL` — the component is asserted to hold no tab-id
- * literal of its own, so a hardcoded `'search'` there would fork the "tab ids
- * are declared once" rule.
- *
- * 搜索 is the choice because it is the console's only non-figure pane: the four
- * figure tabs are charts of the library, and a badge counting the inbox queue
- * sitting beside a chart axis reads as part of the chart.
+ * It rides on 待确认 because that tab IS the queue: the number and the list it
+ * counts are the same fact, and a user who sees "3" expects the tab to open on
+ * those three. (It rode on 搜索 while the inbox pane did not exist — a count
+ * you could not act on.)
  */
-export const PENDING_BADGE_TAB: TabId = 'search'
+export const PENDING_BADGE_TAB: TabId = 'inbox'
 
 /** One fragment of an annotated string. */
 export interface Part {
@@ -70,13 +62,6 @@ export interface EmptyText {
  *
  * A null payload is "still loading or the transport failed", which the console
  * renders as its error/loading state, so this returns null and leaves it alone.
- *
- * ponytail: NO production caller right now — the list tabs that consumed this
- * were retired when the console became search + four figures. Kept rather than
- * deleted because it is contract knowledge (unsupported ≠ empty) with 15 test
- * assertions behind it, and the same facts are re-asserted server-side by
- * route-preview tests. Ceiling: if no pane ever renders previews again, delete
- * this together with its block in client-console.test.ts, not before.
  */
 export function previewEmptyText(data: PreviewData | null): EmptyText | null {
   if (!data) return null
@@ -93,11 +78,6 @@ export function previewEmptyText(data: PreviewData | null): EmptyText | null {
  * `dismissItem` resolves a reason ∈ `invalid-name` / `not-found` /
  * `outside-inbox` / `io-error:*` / `unavailable`. Showing the raw token makes
  * the user read the machine's vocabulary; this maps it to theirs.
- *
- * ponytail: NO production caller right now — same retirement as
- * `previewEmptyText` above, and the same reason for keeping it: 17 assertions
- * encode the server's `reason` enum, which is a security-relevant contract.
- * Ceiling: delete with its test block if the console never dismisses again.
  */
 export function dismissReasonText(reason: string | null | undefined): string {
   const r = String(reason ?? '')
@@ -190,4 +170,214 @@ export function highlightParts(text: string, term: string): Part[] {
   if (from < src.length) parts.push({ text: src.slice(from), hit: false })
   if (parts.length === 0) parts.push({ text: src, hit: false })
   return parts
+}
+
+// ── Inbox: the queue the panel exists to clear ─────────────────────
+//
+// Everything below turns the governance views into the three things a person
+// opening a side panel actually wants: how much is waiting, how old it is, and
+// what is inside it. The figures were pretty and answered none of those.
+
+/**
+ * How long ago, in the coarsest unit that still answers "how stale is this".
+ *
+ * `mtime` is the core's `Path.stat().st_mtime` — SECONDS since the epoch, not
+ * milliseconds. Passing it through unchanged (a millisecond assumption) would
+ * date every submission to January 1970 and label the whole queue as decades
+ * old, which is why the unit is named here rather than left implicit.
+ *
+ * A timestamp in the future (clock skew between the vault and this machine) is
+ * reported as 刚刚 rather than as a negative age.
+ */
+export function relativeAge(mtimeSeconds: number, nowMs: number): string {
+  if (!Number.isFinite(mtimeSeconds) || mtimeSeconds <= 0) return '时间未知'
+  const secs = nowMs / 1000 - mtimeSeconds
+  if (!Number.isFinite(secs) || secs < 60) return '刚刚'
+  const mins = Math.floor(secs / 60)
+  if (mins < 60) return mins + ' 分钟前'
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return hours + ' 小时前'
+  const days = Math.floor(hours / 24)
+  if (days < 30) return days + ' 天前'
+  const months = Math.floor(days / 30)
+  if (months < 12) return months + ' 个月前'
+  return Math.floor(months / 12) + ' 年前'
+}
+
+/** The one line above the queue: how much is waiting, and how old the worst is. */
+export interface InboxSummary {
+  count: number
+  /** Whole days the oldest item has been waiting, or null when the queue is empty. */
+  oldestDays: number | null
+  text: string
+}
+
+/**
+ * Summarize the queue.
+ *
+ * The count alone is not enough to decide whether to act: "3 条" reads the same
+ * whether they arrived this morning or three weeks ago. Staleness is what makes
+ * an inbox feel urgent, so it is promoted into the sentence once it crosses a
+ * week — and only then, because a "最老 1 小时" line would train people to
+ * ignore the line entirely.
+ */
+export function inboxSummary(
+  items: readonly { mtime: number }[],
+  nowMs: number,
+): InboxSummary {
+  const count = items.length
+  if (count === 0) {
+    return { count: 0, oldestDays: null, text: '提交区是空的，没有等你确认的东西' }
+  }
+  // The oldest item is the SMALLEST mtime: `mtime` is an absolute timestamp,
+  // so "oldest" means "written longest ago". Taking the max here would report
+  // the freshest submission's age and make a month-old queue look new.
+  let oldest = 0
+  for (const it of items) {
+    if (!Number.isFinite(it.mtime) || it.mtime <= 0) continue
+    if (oldest === 0 || it.mtime < oldest) oldest = it.mtime
+  }
+  const oldestDays = oldest > 0
+    ? Math.max(0, Math.floor((nowMs / 1000 - oldest) / 86_400))
+    : null
+  if (oldestDays !== null && oldestDays >= 7) {
+    return {
+      count,
+      oldestDays,
+      text: count + ' 条待确认，最老一条已经积压 ' + oldestDays + ' 天',
+    }
+  }
+  return { count, oldestDays, text: count + ' 条待确认' }
+}
+
+/**
+ * Oldest first, so the top of the list is the thing to deal with first.
+ *
+ * The core returns newest-first. That ordering is right for "what did I just
+ * submit" and wrong for a work queue: the item most likely to have been
+ * forgotten is the one at the bottom, i.e. the one nobody scrolls to.
+ */
+export function oldestFirst<T extends { mtime: number }>(items: readonly T[]): T[] {
+  return items.slice().sort(function (a, b) { return a.mtime - b.mtime })
+}
+
+/**
+ * The readable part of a submission body, clipped for a side panel.
+ *
+ * Clipping counts CODE POINTS, not UTF-16 units: submissions are written by
+ * other agents in any script, and a `.slice()` can land between the halves of
+ * an astral character and render a replacement box.
+ *
+ * The tail of the raw file carries the write stamp (`（写入 …｜来源：…）`), which
+ * is provenance for the core and noise for a human reading a preview — it is
+ * dropped when it is the last non-empty line, and left alone when the note
+ * happens to end with something else.
+ */
+export function noteDigest(body: string | null | undefined, maxChars = 280): string {
+  const raw = String(body ?? '').replace(/\r\n/g, '\n').trim()
+  if (!raw) return ''
+  const lines = raw.split('\n')
+  while (lines.length > 0) {
+    const last = lines[lines.length - 1].trim()
+    if (last === '') { lines.pop(); continue }
+    if (/^（(?:写入|来源)[：\s]/.test(last) || /^\((written|source)[:\s]/i.test(last)) lines.pop()
+    break
+  }
+  const text = lines.join('\n').replace(/\n{3,}/g, '\n\n').trim()
+  const chars = Array.from(text)
+  if (chars.length <= maxChars) return text
+  return chars.slice(0, maxChars).join('').trimEnd() + '…'
+}
+
+// ── Health: the numbers that decide whether the library is working ──
+
+/** One labelled fact in the health pane. */
+export interface HealthRow {
+  key: string
+  label: string
+  value: string
+  /** `warn` marks a row a user may need to act on; `muted` marks "not known". */
+  tone: 'ok' | 'warn' | 'muted'
+}
+
+/** Everything the health pane reads. Nullable fields are "the core did not say". */
+export interface HealthInput {
+  /**
+   * Counts, each independently optional: the host assembles them from a core
+   * read, and a partially degraded read can return some of them. A missing
+   * count renders as "—" — see `num()` in `healthRows`.
+   */
+  stats: { memories?: number; vectors?: number; pending?: number } | null
+  indexOk: boolean | null
+  /** Conflict-note count from the `conflicts` view; null when it could not be read. */
+  conflicts: number | null
+  recallMode: string | null
+  agentName: string | null
+  agentSource: string | null
+  version: string | null
+}
+
+/**
+ * Build the health rows.
+ *
+ * Three rules, each of which was a bug in an earlier shape of this panel:
+ *
+ *  1. **unknown is not zero.** A null reading renders as `—` and never as `0`;
+ *     "0 条记忆" is a claim about the vault, and a core that did not answer has
+ *     made no such claim.
+ *  2. **a warning says what to do next.** 索引异常 / 冲突 3 条 / 前缀未识别 are
+ *     the three states where the number alone leaves the user stuck.
+ *  3. **off is not the same as silent.** Automatic recall prints its mode, since
+ *     "关闭" and "开着但没命中" look identical from the outside.
+ */
+export function healthRows(input: HealthInput): HealthRow[] {
+  const stats = input.stats
+  const num = function (n: number | undefined): string {
+    return typeof n === 'number' && Number.isFinite(n) ? String(n) : '—'
+  }
+  const rows: HealthRow[] = [
+    { key: 'memories', label: '记忆', value: num(stats?.memories), tone: stats ? 'ok' : 'muted' },
+    { key: 'vectors', label: '向量', value: num(stats?.vectors), tone: stats ? 'ok' : 'muted' },
+    {
+      key: 'pending',
+      label: '待确认',
+      value: stats ? num(stats.pending) + ' 条' : '—',
+      tone: stats ? 'ok' : 'muted',
+    },
+    {
+      key: 'index',
+      label: '索引',
+      value: input.indexOk === null ? '—' : input.indexOk ? '正常' : '异常',
+      tone: input.indexOk === null ? 'muted' : input.indexOk ? 'ok' : 'warn',
+    },
+    {
+      key: 'conflicts',
+      label: '冲突',
+      value: input.conflicts === null ? '—' : input.conflicts > 0 ? input.conflicts + ' 条' : '无',
+      tone: input.conflicts === null ? 'muted' : input.conflicts > 0 ? 'warn' : 'ok',
+    },
+    {
+      key: 'recall',
+      label: '自动召回',
+      value: input.recallMode === null ? '—' : input.recallMode === 'off' ? '已关闭' : input.recallMode,
+      tone: input.recallMode === null || input.recallMode === 'off' ? 'muted' : 'ok',
+    },
+    {
+      key: 'prefix',
+      label: '提交前缀',
+      value: input.agentName === null
+        ? '—'
+        : input.agentSource === 'fallback'
+          ? input.agentName + '（未识别 profile）'
+          : input.agentName,
+      tone: input.agentName === null ? 'muted' : input.agentSource === 'fallback' ? 'warn' : 'ok',
+    },
+    {
+      key: 'version',
+      label: '版本',
+      value: input.version === null ? '—' : 'v' + input.version,
+      tone: input.version === null ? 'muted' : 'ok',
+    },
+  ]
+  return rows
 }

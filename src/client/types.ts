@@ -24,6 +24,29 @@ export interface StatusPayload {
   version?: string
   latestVersion?: string | null
   updateAvailable?: boolean | null
+  /**
+   * The submission prefix and where it came from.
+   *
+   * Two runtimes sharing one vault must be visibly different, and a `fallback`
+   * source means they are not — the health pane flags exactly that, so the
+   * field has to survive to the client rather than stopping at the route.
+   */
+  agentName?: string
+  agentSource?: string
+  /**
+   * Automatic recall's live settings.
+   *
+   * Its failure mode is "nothing happens", which is indistinguishable from
+   * "nothing matched" unless the mode is on screen.
+   */
+  recall?: {
+    mode?: string
+    limit?: number
+    maxChars?: number
+    minQueryChars?: number
+    timeoutMs?: number
+    instructions?: boolean
+  }
   index?: { ok: boolean } | null
   stats?: { memories: number; vectors: number; pending: number } | null
 }

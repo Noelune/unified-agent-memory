@@ -23,6 +23,7 @@ export const POLL_INTERVAL_MS = 10000
 export const BASE_URL = '/api/dsh-unified-agent-memory'
 export const SEARCH_URL = `${BASE_URL}/search`
 export const PREVIEW_URL = `${BASE_URL}/preview`
+export const NOTE_URL = `${BASE_URL}/note`
 export const DISMISS_URL = `${BASE_URL}/dismiss`
 export const STATS_URL = `${BASE_URL}/stats`
 
@@ -276,10 +277,6 @@ export function useSearch(): {
  * A view that is not implemented yet still answers `ok:true` with
  * `status:"unsupported"` — that travels through untouched, because the panel
  * must render it differently from a view that is implemented and empty.
- *
- * ponytail: unreachable from the UI since the list tabs were retired; the only
- * caller is `usePreview` below, which itself has no caller. See the note on
- * `previewEmptyText` in view.ts for why this is kept rather than deleted.
  */
 export async function loadPreview(
   view: PreviewView, limit: number = PREVIEW_LIMIT,
@@ -339,14 +336,10 @@ export function previewEffectKey(view: PreviewView, nonce: number): string {
 }
 
 /**
- * Preview state for a tab. Loads once on activation; `reload` re-reads.
+ * Preview state for the inbox pane. Loads once on activation; `reload` re-reads.
  *
- * `busy` starts true because the effect's first act is to load, so the tab
+ * `busy` starts true because the effect's first act is to load, so the pane
  * renders its spinner on mount instead of a flash of "nothing here".
- *
- * ponytail: no caller since the list tabs were retired. Kept with `loadPreview`
- * and `dismissItem` so the preview/dismiss contract keeps its client-side tests;
- * see `previewEmptyText` in view.ts. Ceiling: delete as a set.
  */
 export function usePreview(view: PreviewView): {
   data: PreviewData | null
@@ -372,21 +365,61 @@ export function usePreview(view: PreviewView): {
   return { data, busy, reload: function () { setNonce(function (n) { return n + 1 }) } }
 }
 
+/**
+ * Read one submission's body, by file name.
+ *
+ * `/note` is the only read that carries a whole record rather than a list row,
+ * which is what makes the inbox usable: a queue of file names is a list of
+ * things you cannot judge, and judging is the entire task. The body is vault
+ * text written by another agent, so it is returned as a string to be rendered
+ * as text — never parsed, never treated as markup.
+ *
+ * The core refuses a name it does not accept (`invalid-name`) differently from
+ * an item that is gone (`not-found`); both travel in `reason` instead of
+ * collapsing into "no body".
+ */
+export async function loadNote(
+  name: string,
+): Promise<{ ok: boolean; body: string | null; reason: string | null }> {
+  try {
+    const url = `${NOTE_URL}?name=${encodeURIComponent(name)}`
+    const r = await fetch(url, { cache: 'no-store' })
+    if (!r.ok) return { ok: false, body: null, reason: 'unavailable' }
+    const body = (await r.json()) as { ok?: boolean; body?: unknown; reason?: unknown } | null
+    if (!body || body.ok !== true) {
+      return {
+        ok: false,
+        body: null,
+        reason: typeof body?.reason === 'string' ? body.reason : 'unavailable',
+      }
+    }
+    return {
+      ok: true,
+      body: typeof body.body === 'string' ? body.body : null,
+      reason: null,
+    }
+  } catch {
+    return { ok: false, body: null, reason: 'unavailable' }
+  }
+}
+
 // ── Dismiss ────────────────────────────────────────────────────────
 
 /**
- * Retire one inbox item. True only when the host confirms the move.
+ * Retire one inbox item.
  *
- * The route answers 200 *or* 409 and either can carry `ok:false`, so the HTTP
- * status is not the verdict — `body.ok === true` is. A 200 with `ok:false` is a
- * refusal (e.g. `outside-inbox`), not a success.
+ * `ok` is true only when the host confirms the move. The route answers 200 *or*
+ * 409 and either can carry `ok:false`, so the HTTP status is not the verdict —
+ * `body.ok === true` is. A 200 with `ok:false` is a refusal (e.g.
+ * `outside-inbox`), not a success.
  *
- * ponytail: no caller since the list tabs were retired. This is the CLIENT half
- * of the write contract; the server half is covered independently by
- * route-dismiss*.test.ts. Both halves are kept on purpose — see
- * `previewEmptyText` in view.ts. Ceiling: delete as a set.
+ * `reason` is returned alongside the verdict rather than folded into a boolean:
+ * "该条目不在提交区" and "记忆核心暂不可用" need different words and different
+ * next steps, and a bare `false` cannot tell a user which one happened.
  */
-export async function dismissItem(name: string): Promise<boolean> {
+export async function dismissItem(
+  name: string,
+): Promise<{ ok: boolean; reason: string | null }> {
   try {
     const r = await fetch(DISMISS_URL, {
       method: 'POST',
@@ -394,11 +427,14 @@ export async function dismissItem(name: string): Promise<boolean> {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ name }),
     })
-    if (!r.ok) return false
-    const body = (await r.json()) as { ok?: boolean }
-    return body.ok === true
+    const body = (await r.json().catch(function () { return null })) as
+      { ok?: boolean; reason?: unknown } | null
+    return {
+      ok: body?.ok === true,
+      reason: typeof body?.reason === 'string' ? body.reason : null,
+    }
   } catch {
-    return false
+    return { ok: false, reason: 'unavailable' }
   }
 }
 
