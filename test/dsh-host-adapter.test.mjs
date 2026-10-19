@@ -46,6 +46,10 @@ const ROUTE_PATHS = [
   '/api/dsh-unified-agent-memory/search',
   '/api/dsh-unified-agent-memory/preview',
   '/api/dsh-unified-agent-memory/note',
+  // Canonical-note reader for the search pane. `/note` above reads the
+  // submission inbox and answers `outside-inbox` for a canonical note, so the
+  // two name spaces need two routes.
+  '/api/dsh-unified-agent-memory/doc',
   '/api/dsh-unified-agent-memory/dismiss',
   '/api/dsh-unified-agent-memory/stats',
 ]
@@ -126,7 +130,7 @@ test('registers all six memory tools', () => {
   }
 })
 
-test('registers the six exact HTTP routes for the browser half', () => {
+test('registers the seven exact HTTP routes for the browser half', () => {
   const { ctx, routeList } = makeContext()
   plugin.apply(ctx, {})
 
