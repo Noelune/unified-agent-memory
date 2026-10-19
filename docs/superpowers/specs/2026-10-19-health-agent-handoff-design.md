@@ -69,7 +69,7 @@ list                               // snapshot store：{ ids, byId, phase }
 
 ```ts
 const sessions = ctx.get('sessions')            // reflect 提供的服务，frame ctx 可取
-const id = await sessions.create({})            // 或复用 list 里最近活跃的会话
+const id = await sessions.create({})            // 每次新建，不复用当前会话
 const ref = sessions.retain(id, { source: 'dsh-unified-agent-memory' })
 await ref.ready
 await ref.binding.session.prompt([{ type: 'text', text: task }], 'queue')
@@ -141,12 +141,14 @@ ref.release()
 
 ```
   [ 发送给 Agent ]  [ 取消 ]
-  将发送到：当前会话「修复记忆索引」   |   改成新会话
+  将发送到：一个新会话（不动你正在聊的这个）
   会先做只读检查，改库前会再问你一次。
 ```
 
-- 默认目标是 `sessions.list` 里 `updatedAt` 最新且 `blank !== true` 的会话；没有可复用的就 `create`。
-- 「改成新会话」是一个二态切换，不展开成下拉。
+- **每次都新建会话**，不复用当前会话。一个修复任务要读全库体检再改库，塞进用户自己的
+  对话里会把正在聊的那条埋掉，之后 agent 还会带着修复上下文去做别的事。一次修复一个会话，
+  用户关掉它就是「结束了」。顺带也绕开了根本不能打字的 subagent 行。
+- 因此没有「改发到哪」的选择器：目标不是选项，`send(finding)` 不带目标参数。
 - 超时/失焦回退到动作行，不发任何东西。
 
 ### 5.2 上下文包含什么
@@ -323,7 +325,7 @@ export interface RepairEnv {
 |---|---|
 | `src/client/view.ts` | 新增 `AgentMode` / `AgentAction` / `NO_AGENT`、`AGENT_PLAN` 与 `agentAction(code)`、`issueTitle(code)`；`HealthFinding` 加 `agent` 与 `core` 两个字段 |
 | `src/repair-prompt.ts`（新） | `buildRepairPrompt(finding, env, at)`、`RepairEnv`、`encodePayload()`；纯函数无副作用 |
-| `src/client/agent-bridge.ts`（新） | `sessionsOf()` / `pickTarget()` / `runningOf()` / `sendBrief()` / `setBridgeContext()`；结构类型，`create`/`retain`/`prompt` 全链路 try/catch，失败一律返回 `ok:false` + 原因 |
+| `src/client/agent-bridge.ts`（新） | `sessionsOf()` / `runningOf()` / `sendBrief()` / `setBridgeContext()`；结构类型，`create`/`retain`/`prompt` 全链路 try/catch，失败一律返回 `ok:false` + 原因 |
 | `src/client/store.ts` | `useRepair()`（薄胶水）+ 两个可单测的纯函数 `advanceRepairs()` / `reconcileRepairs()`，另含 `added` 新增问题检测 |
 | `src/client/index.ts` | `apply()` 里 `setBridgeContext(ctx)`；清理回调按 `ctx.effect` 是否存在条件挂载 |
 | `src/client/Console.tsx` | `FindingCard` 增动作行 + 确认态 + 状态行；`HealthTab` 增进行中汇总行与「新增问题」提示 |
@@ -362,4 +364,4 @@ export interface RepairEnv {
 
 1. 是否需要一个「全部让 Agent 处理」的入口？倾向不做——十一个 code 的语义差异太大，批量会把授权压成一次泛泛的「都同意吗」。
 2. `mismatch` 时要不要自动在对话里发一条追问（而不是给按钮让用户点）？自动发省一步，但会让 agent 回合套回合，第一版先给按钮。
-3. 目标会话默认「复用最近活跃」还是「总是新建」？倾向复用，避免侧栏堆积一次性会话；但复用一个很长的会话会把任务包埋在历史里，可能需要 `sessions.fork`。留待 spike 后定。
+3. ~~目标会话默认「复用最近活跃」还是「总是新建」？~~ **已定：总是新建。** 复用的代价是把一次全库读改写塞进用户自己的对话里，污染上下文；侧栏多一个可关闭的会话是更小的代价。副作用是连点两次会得到两个会话，可接受。

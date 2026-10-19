@@ -359,4 +359,15 @@ describe('agentAction — who does the work, and on what terms', () => {
     // host theme; the confirmation belongs in the card.
     expect(CONSOLE_CODE).not.toMatch(/window\.confirm/)
   })
+
+  it('always sends into a conversation of its own', () => {
+    // Reusing whatever session was most recently active put a vault-wide
+    // read-and-edit turn in the middle of the user's own thread, and left the
+    // agent carrying repair context into unrelated work. The confirm row must
+    // promise a fresh one, and the send must carry no target at all.
+    const body = healthBody()
+    expect(body).toContain('一个新会话')
+    expect(body).toMatch(/repair\.send\(f\)/)
+    expect(body).not.toMatch(/最近在用|resolveTarget|setTarget/)
+  })
 })

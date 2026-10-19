@@ -28,7 +28,6 @@ import { h, useState } from '../deps.ts'
 import type { SearchHit, StatsPayload } from './types.ts'
 import { dismissItem, loadDoc, loadNote, useDoctor, usePreview, useRepair, useSearch, useStats } from './store.ts'
 import type { RepairApi, RepairEntry } from './store.ts'
-import type { BridgeTarget } from './agent-bridge.ts'
 import {
   BreakdownDonut, CalendarHeatmap, GrowthChart, TopBars,
 } from './Figures.tsx'
@@ -595,10 +594,10 @@ function HealthTab(props: { status: ConsoleStatus | null; stats: StatsPayload })
 function FindingCard(props: { finding: HealthFinding; repair: RepairApi }): Child {
   const f = props.finding
   const entry = props.repair.entries[f.key]
-  // Resolved once, when the row opens, and handed back on send: re-resolving
-  // at click time could land the brief in a conversation the user never agreed
-  // to, purely because another session became the most recent.
-  const [target, setTarget] = useState<BridgeTarget | null>(null)
+  // Purely local: where the brief goes is not a choice any more (always a
+  // conversation of its own), so a boolean is the whole state. It stays on the
+  // card rather than in `repair` so cancelling one card cannot close another.
+  const [confirming, setConfirming] = useState(false)
 
   return h('div', { className: 'dsh-memory-finding', 'data-severity': f.severity },
     h('div', { className: 'dsh-memory-finding-head' },
@@ -612,10 +611,10 @@ function FindingCard(props: { finding: HealthFinding; repair: RepairApi }): Chil
     f.agent.mode === 'none' && !entry ? null : h('div', { className: 'dsh-memory-finding-actions' },
       entry
         ? h(RepairStatus, { entry, finding: f, repair: props.repair })
-        : target !== null
+        : confirming
           ? h('div', { className: 'dsh-memory-confirm' },
               h('p', { className: 'dsh-memory-confirm-target' },
-                '将发送到：' + (target.id !== null ? '最近在用的会话「' + target.label + '」' : '一个新会话'),
+                '将发送到：一个新会话（不动你正在聊的这个）',
               ),
               h('p', { className: 'dsh-memory-confirm-note' },
                 f.agent.mode === 'analyze'
@@ -626,12 +625,12 @@ function FindingCard(props: { finding: HealthFinding; repair: RepairApi }): Chil
                 h('button', {
                   type: 'button',
                   className: 'dsh-memory-act dsh-memory-act-primary',
-                  onClick: function () { const t = target; setTarget(null); props.repair.send(f, t ?? undefined) },
+                  onClick: function () { setConfirming(false); props.repair.send(f) },
                 }, '发送给 Agent'),
                 h('button', {
                   type: 'button',
                   className: 'dsh-memory-act',
-                  onClick: function () { setTarget(null) },
+                  onClick: function () { setConfirming(false) },
                 }, '取消'),
               ),
             )
@@ -639,7 +638,7 @@ function FindingCard(props: { finding: HealthFinding; repair: RepairApi }): Chil
               h('button', {
                 type: 'button',
                 className: 'dsh-memory-act dsh-memory-act-primary',
-                onClick: function () { setTarget(props.repair.resolveTarget()) },
+                onClick: function () { setConfirming(true) },
               }, f.agent.label),
               h('span', { className: 'dsh-memory-risk' }, f.agent.risk),
             ),
@@ -723,7 +722,10 @@ function RepairStatus(props: { entry: RepairEntry; finding: HealthFinding; repai
   const text = e.phase === 'sending'
     ? '正在发送…'
     : e.phase === 'sent'
-      ? '已交给 Agent，等它开始…'
+      // Names the destination: the host may or may not move focus to a session
+      // it was asked to create, and a card that just says "handed over" leaves
+      // the user looking at this conversation for a turn happening elsewhere.
+      ? '已交给新会话里的 Agent，等它开始…'
       : e.phase === 'running'
         ? 'Agent 正在处理 · 已 ' + elapsed
         : 'Agent 停了，正在重新体检…'

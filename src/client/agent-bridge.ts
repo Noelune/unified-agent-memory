@@ -10,9 +10,17 @@
  *     `conversation.send requires a session scope` on a root context. The
  *     documented way around it is `ctx.sessions.scope(id).conversation` — which
  *     still needs an id, and needs the scope to exist first.
- *  2. Therefore the bridge addresses a session explicitly: pick the most
- *     recently used conversation (or create one), `retain()` it so the scope is
- *     materialized and its binding is live, then `prompt()` on the binding.
+ *  2. Therefore the bridge addresses a session explicitly: for every hand-off
+ *     it creates a fresh conversation, `retain()`s it so the scope is
+ *     materialized and its binding is live, then `prompt()`s on the binding.
+ *
+ * Fresh every time, deliberately. A repair brief asks the agent to read the
+ * whole vault's health and then edit it — parking that in whatever conversation
+ * the user happens to be having buries their own thread under a dozen tool
+ * calls and leaves the agent carrying repair context into unrelated work. One
+ * repair, one conversation; closing it is how the user says "done". Creating
+ * also sidesteps the rows that must not be typed into at all (subagent
+ * sessions, which carry a `parentId` or `origin: "subagent"`).
  *
  * `retain()` is also what makes "is the agent still working?" observable later:
  * the session's summary row carries `running`, and `sessions.list` is a snapshot
@@ -29,12 +37,7 @@
 /** The part of a session summary this module reads. */
 export interface SessionRow {
   id: string
-  displayTitle?: string
   running?: boolean
-  blank?: boolean
-  updatedAt?: number
-  parentId?: string
-  origin?: string
 }
 
 /** The part of `sessions.list` this module reads. */
@@ -73,13 +76,6 @@ export interface SessionsLike {
 
 /** Attribution recorded on the retained reference; shows up in the host log. */
 export const BRIDGE_SOURCE = 'dsh-unified-agent-memory'
-
-/** Where a hand-off should go. `id === null` means "make a new session". */
-export interface BridgeTarget {
-  id: string | null
-  /** Human label for the confirm row. */
-  label: string
-}
 
 /** The outcome. `reason` is a short, already-human-readable string. */
 export interface BridgeResult {
@@ -128,29 +124,6 @@ export function sessionsOf(ctx: unknown = bridgeCtx): SessionsLike | null {
   }
 }
 
-/**
- * The conversation a hand-off should join.
- *
- * Most recently updated wins, which in practice is the one on screen: any turn,
- * steer, or rename bumps `updatedAt`. Subagent rows are excluded — they are not
- * conversations a person types into. Returns null when there is nothing to
- * reuse, which the caller reads as "create one".
- */
-export function pickTarget(sessions: SessionsLike | null): BridgeTarget | null {
-  const snapshot = sessions?.list?.getSnapshot?.()
-  const byId = snapshot?.byId
-  if (!byId) return null
-  let best: SessionRow | null = null
-  for (const id of Object.keys(byId)) {
-    const row = byId[id]
-    if (!row || row.id === undefined) continue
-    if (row.parentId !== undefined || row.origin === 'subagent') continue
-    if (best === null || (row.updatedAt ?? 0) > (best.updatedAt ?? 0)) best = row
-  }
-  if (best === null) return null
-  return { id: best.id, label: best.displayTitle || best.id }
-}
-
 /** What an in-flight hand-off looks like to the watcher. */
 export function runningOf(sessions: SessionsLike | null, id: string | null): boolean | null {
   if (id === null) return null
@@ -161,24 +134,28 @@ export function runningOf(sessions: SessionsLike | null, id: string | null): boo
 }
 
 /**
- * Send one brief to one session.
+ * Send one brief to one session; a null target means "create one first".
  *
  * The three attempts are ordered from the most supported to the least:
  * `retain().binding.session.prompt()` is what the host's own conversation
  * service uses; `scope(id).conversation.send()` is the fallback the host's error
  * message points at; anything else is a host that cannot be driven from here.
+ *
+ * `sessions.list` is never consulted here. There is nothing to choose: every
+ * hand-off gets its own conversation, and reading the list to find a "current"
+ * one is exactly how the brief used to end up in the user's own thread.
  */
 export async function sendBrief(
   sessions: SessionsLike | null,
   text: string,
-  target: BridgeTarget,
+  target: string | null,
 ): Promise<BridgeResult> {
   if (sessions === null) return { ok: false, sessionId: null, reason: '这个宿主没有会话服务' }
 
-  let sessionId = target.id
+  let sessionId = target
   if (sessionId === null) {
     if (typeof sessions.create !== 'function') {
-      return { ok: false, sessionId: null, reason: '没有可复用的会话，也不能新建' }
+      return { ok: false, sessionId: null, reason: '不能新建会话' }
     }
     try {
       sessionId = await sessions.create({})

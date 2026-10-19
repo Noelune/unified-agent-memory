@@ -15,8 +15,9 @@ All notable changes to this project are documented in this file.
   这些可以交给它改；`conflicts-pending`、`sync-conflict-copies`、`vault-missing`
   只能让它先给建议 —— 让 agent「修」一个谁赢的判断题，就是让它替你删东西。
   本版不认识的 code 不给按钮，只保留复制。
-- 点击不弹窗，卡片内换成确认行：发送到哪个会话、会不会改库，一句话说清。目
-  标默认是**最近在用的会话**（`updatedAt` 最新、排除 subagent 行），没有就新建。
+- 点击不弹窗，卡片内换成确认行：会不会改库，一句话说清。**目标是每次都在侧栏新建的
+  一个会话**，不复用你正在聊的那个 —— 一次全库读改写塞进自己的对话里，会把它埋掉，
+  之后 agent 还会带着修复上下文去做别的事。一次修复一个会话，关掉就是结束。
 - 任务包是自足的：核心原文的 `message`/`hint`、面板译好的后果与修法、计数、
   **vault 绝对路径**、核心调用形式、以及「改完必须重跑 doctor 并回帖」的要求。
   vault 路径写进包里是因为面板和 agent 读两个库时双方都正常 —— 这种情况要

@@ -15,8 +15,7 @@
 import { useCallback, useEffect, useRef, useState } from '../deps.ts'
 import { buildRepairPrompt } from '../repair-prompt.ts'
 import type { RepairEnv } from '../repair-prompt.ts'
-import { pickTarget, runningOf, sendBrief, sessionsOf } from './agent-bridge.ts'
-import type { BridgeTarget } from './agent-bridge.ts'
+import { runningOf, sendBrief, sessionsOf } from './agent-bridge.ts'
 import type { HealthFinding } from './view.ts'
 import type {
   DoctorCounts, DoctorIssue, DoctorPayload,
@@ -805,18 +804,16 @@ export interface RepairEntry {
 export interface RepairApi {
   entries: Record<string, RepairEntry>
   /**
-   * Send one finding. Returns nothing — the card reads `entries`.
+   * Send one finding, into a conversation of its own.
    *
-   * `target` is the one the confirmation row showed. Passing it back (instead
-   * of re-resolving here) keeps the promise the row made: the brief lands in
-   * the conversation the user agreed to, even if another session became the
-   * most recent in between.
+   * No target argument: there is nothing to choose. Reusing whatever session
+   * was most recently active put a vault-wide read-and-edit turn in the middle
+   * of the user's own thread, and left the agent carrying that context into
+   * unrelated work afterwards.
    */
-  send: (finding: HealthFinding, target?: BridgeTarget) => void
+  send: (finding: HealthFinding) => void
   /** Forget one finding's state (the retry / dismiss buttons use it). */
   clear: (code: string) => void
-  /** Where a hand-off would go right now; `id: null` means "new session". */
-  resolveTarget: () => BridgeTarget
   /**
    * Codes the doctor reports NOW that it did not report when the brief was
    * sent. A repair that fixes one thing and breaks another is still a repair
@@ -831,10 +828,6 @@ export interface RepairApi {
 const START_GRACE_MS = 4000
 /** How often the session snapshot is re-read while a hand-off is in flight. */
 const WATCH_MS = 1000
-
-function newSessionTarget(): BridgeTarget {
-  return { id: null, label: '新会话' }
-}
 
 /**
  * One watcher tick, as a pure function.
@@ -1004,10 +997,9 @@ export function useRepair(opts: {
 
   return {
     entries,
-    send: function (finding: HealthFinding, chosen?: BridgeTarget) {
+    send: function (finding: HealthFinding) {
       const code = finding.key
       const sessions = sessionsOf()
-      const target = chosen ?? pickTarget(sessions) ?? newSessionTarget()
       const brief = buildRepairPrompt(finding, envRef.current, new Date().toISOString())
       sawLoading.current = false
       // Baseline for the "did this repair introduce something" check: the list
@@ -1018,11 +1010,11 @@ export function useRepair(opts: {
       setAdded([])
       entriesRef.current = {
         ...entriesRef.current,
-        [code]: { phase: 'sending', startedAt: Date.now(), sessionId: target.id, brief },
+        [code]: { phase: 'sending', startedAt: Date.now(), sessionId: null, brief },
       }
       setEntries(entriesRef.current)
 
-      sendBrief(sessions, brief, target)
+      sendBrief(sessions, brief, null)
         .then(function (result) {
           const current = entriesRef.current[code]
           if (!current) return
@@ -1049,9 +1041,6 @@ export function useRepair(opts: {
       delete next[code]
       entriesRef.current = next
       setEntries(next)
-    },
-    resolveTarget: function () {
-      return pickTarget(sessionsOf()) ?? newSessionTarget()
     },
     added,
     dismissAdded: function () {

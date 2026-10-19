@@ -20,7 +20,6 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   BRIDGE_SOURCE,
   clearBridgeContext,
-  pickTarget,
   runningOf,
   sendBrief,
   sessionsOf,
@@ -77,49 +76,6 @@ describe('sessionsOf', () => {
   })
 })
 
-describe('pickTarget', () => {
-  it('picks the most recently updated conversation', () => {
-    const sessions: SessionsLike = {
-      list: {
-        getSnapshot: () => ({
-          byId: {
-            old: { id: 'old', displayTitle: '旧', updatedAt: 10 },
-            fresh: { id: 'fresh', displayTitle: '新', updatedAt: 90 },
-          },
-        }),
-      },
-    }
-    expect(pickTarget(sessions)).toEqual({ id: 'fresh', label: '新' })
-  })
-
-  it('skips subagent rows — they are not conversations a person types into', () => {
-    const sessions: SessionsLike = {
-      list: {
-        getSnapshot: () => ({
-          byId: {
-            child: { id: 'child', displayTitle: '子任务', updatedAt: 99, parentId: 'root' },
-            parent: { id: 'parent', displayTitle: '主会话', updatedAt: 1 },
-          },
-        }),
-      },
-    }
-    expect(pickTarget(sessions)).toEqual({ id: 'parent', label: '主会话' })
-  })
-
-  it('falls back to the id when the row has no title', () => {
-    const sessions: SessionsLike = {
-      list: { getSnapshot: () => ({ byId: { x: { id: 'x', updatedAt: 1 } } }) },
-    }
-    expect(pickTarget(sessions)).toEqual({ id: 'x', label: 'x' })
-  })
-
-  it('returns null when there is nothing to reuse', () => {
-    expect(pickTarget(null)).toBeNull()
-    expect(pickTarget({})).toBeNull()
-    expect(pickTarget({ list: { getSnapshot: () => ({ byId: {} }) } })).toBeNull()
-  })
-})
-
 describe('runningOf', () => {
   const sessions: SessionsLike = {
     list: { getSnapshot: () => ({ byId: { a: { id: 'a', running: true }, b: { id: 'b', running: false } } }) },
@@ -146,14 +102,14 @@ describe('sendBrief', () => {
     const sessions: SessionsLike = {
       retain: () => ({ ready: Promise.resolve(undefined), binding: { session: { prompt } }, release }),
     }
-    const result = await sendBrief(sessions, 'brief', { id: 's1', label: 'S1' })
+    const result = await sendBrief(sessions, 'brief', 's1')
     expect(result).toEqual({ ok: true, sessionId: 's1' })
     expect(prompt).toHaveBeenCalledTimes(1)
     expect(prompt.mock.calls[0][1]).toBe('queue')
     expect(release).toHaveBeenCalledTimes(1)
   })
 
-  it('creates a session when there is nothing to reuse', async () => {
+  it('creates a session for every hand-off', async () => {
     const seen: string[] = []
     const sessions: SessionsLike = {
       create: async () => { seen.push('create'); return 'made' },
@@ -162,9 +118,25 @@ describe('sendBrief', () => {
         return { ready: Promise.resolve(undefined), binding: { session: { prompt: async () => ({ ok: true }) } } }
       },
     }
-    const result = await sendBrief(sessions, 'brief', { id: null, label: '新会话' })
+    const result = await sendBrief(sessions, 'brief', null)
     expect(result).toEqual({ ok: true, sessionId: 'made' })
     expect(seen).toEqual(['create', 'retain:made'])
+  })
+
+  it('never reads the session list to decide where the brief goes', async () => {
+    // The list is how the brief used to land in the user's own thread. Send a
+    // service whose list throws: a hand-off that still succeeds proves the
+    // bridge never asks which conversation is "current".
+    const sessions: SessionsLike = {
+      list: { getSnapshot: () => { throw new Error('should not be read') } },
+      create: async () => 'made',
+      retain: () => ({
+        ready: Promise.resolve(undefined),
+        binding: { session: { prompt: async () => ({ ok: true }) } },
+      }),
+    }
+    const result = await sendBrief(sessions, 'brief', null)
+    expect(result).toEqual({ ok: true, sessionId: 'made' })
   })
 
   it('surfaces a refused prompt as a reason, not an exception', async () => {
@@ -175,7 +147,7 @@ describe('sendBrief', () => {
         release: () => {},
       }),
     }
-    const result = await sendBrief(sessions, 'brief', { id: 's1', label: 'S1' })
+    const result = await sendBrief(sessions, 'brief', 's1')
     expect(result.ok).toBe(false)
     expect(result.reason).toContain('session/queue-full')
   })
@@ -187,7 +159,7 @@ describe('sendBrief', () => {
       retain: () => { throw new Error('scope unavailable') },
       scope: () => ({ conversation: { send } }),
     }
-    const result = await sendBrief(sessions, 'brief', { id: 's1', label: 'S1' })
+    const result = await sendBrief(sessions, 'brief', 's1')
     expect(result).toEqual({ ok: true, sessionId: 's1' })
     expect(send).toHaveBeenCalledWith('brief')
   })
@@ -196,20 +168,20 @@ describe('sendBrief', () => {
     const sessions: SessionsLike = {
       create: async () => { throw new Error('workspace/not-found') },
     }
-    const result = await sendBrief(sessions, 'brief', { id: null, label: '新会话' })
+    const result = await sendBrief(sessions, 'brief', null)
     expect(result.ok).toBe(false)
     expect(result.sessionId).toBeNull()
     expect(result.reason).toContain('workspace/not-found')
   })
 
   it('reports a host with no sessions service', async () => {
-    const result = await sendBrief(null, 'brief', { id: 's1', label: 'S1' })
+    const result = await sendBrief(null, 'brief', 's1')
     expect(result.ok).toBe(false)
     expect(result.reason).toContain('没有会话服务')
   })
 
   it('reports a host that can neither create nor prompt', async () => {
-    const result = await sendBrief({}, 'brief', { id: null, label: '新会话' })
+    const result = await sendBrief({}, 'brief', null)
     expect(result.ok).toBe(false)
     expect(result.reason).toContain('不能新建')
   })
@@ -221,7 +193,7 @@ describe('sendBrief', () => {
       ready: Promise.resolve(undefined),
       binding: { session: { prompt: async () => ({ ok: true }) } },
     }))
-    await sendBrief({ retain } as SessionsLike, 'brief', { id: 's1', label: 'S1' })
+    await sendBrief({ retain } as SessionsLike, 'brief', 's1')
     expect(retain).toHaveBeenCalledWith('s1', { source: BRIDGE_SOURCE })
   })
 })
