@@ -24,9 +24,10 @@
 
 **`unified-agent-memory` 架构旨在为多 Agent 舰队提供统一的知识管理基座**：它允许 `dsh`、`Codex`、`Claude Code` 与 `Hermes` 等多个独立代理共享基于 Markdown 规范的 Obsidian Vault 知识仓库，配合纯 Python 标准库核心与 SQLite FTS5 本地索引，构建涵盖**知识摄取 (Ingestion)、知识晋升 (Promotion)、冲突裁决 (Adjudication) 与衰减遗忘 (Decay/Retention)** 的全闭环生命周期管理系统。
 
-核心与 DSH 适配器分层维护，具体职责和写入边界见
-[docs/DSH-MEMORY-ADAPTERS.md](docs/DSH-MEMORY-ADAPTERS.md)。该文档明确区分
-`unified-agent-memory`、`dsh-hermes-memory` 与 `dsh-memory-discipline`。
+核心与 DSH 适配层分层维护，具体职责和写入边界见
+[docs/DSH-MEMORY-ADAPTERS.md](docs/DSH-MEMORY-ADAPTERS.md)。两者以单个包
+`dsh-unified-agent-memory` 发布：`core/` 是纯 Python 核心，`src/` 是 DSH 宿主
+半边（工具、路由、`agent/pre-step` 自动召回），收件箱是唯一写入通道。
 
 ---
 
@@ -44,6 +45,8 @@
   内置完整的状态流转机制：包含写收件箱暂存、Promoter 知识审核归纳、Adjudicator 冲突事实裁决、Atomic Lock 并发文件锁与 Forgetter 定期记忆衰减归档。
 - **混合检索 (Hybrid Retrieval)**  
   `memory search --hybrid` 融合五路召回：BM25 + 中文 bigram BM25 + 语义向量 + 概念图谱 + trigram，加权 RRF 融合、同文档多样化、按真实 Token 预算裁剪。无向量时自动回退词法检索；查询向量本地缓存，重复主题的混合检索约 250ms。
+- **自动召回 (Automatic Recall, dsh 内置)**
+  插件监听 `agent/pre-step`，在每轮对话开始前判断话题是否「值得查记忆」（偏好、路径、服务器、协作规则、历史等），命中就先把检索结果以 `<memory-data>` 注入上下文——模型不必记得调 `memory_search`。`auto` / `always` / `off` 三档可配，短回复、协作中转消息与插件注入消息一律跳过，检索失败或超时只旁路不阻断。这项能力原先是独立的 `dsh-memory-discipline` 插件，现已并入本包，与工具共用同一套 `vaultPath` / `pythonPath` / `corePath`。
 - **真实写入方言兼容 (Writer-Dialect Compatibility)**
   同时解析仓库格式 `（写入 …｜来源：Agent提交区/x.md）` 与 Hermes 实际写入的 `[[Agent提交区/…]]`、`事件 \`…\``、`｜有效至 …` 方言。`｜有效至` 行自动标记为 `superseded`，不再作为当前事实召回。
 - **可观测性与自维护 (Doctor & GC)**

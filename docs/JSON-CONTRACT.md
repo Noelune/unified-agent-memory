@@ -435,7 +435,7 @@ else:
 
 入参：`(cfg: PluginConfig, ui: UpdateInfo, stats: StatusStats | null, onboarding = { granted: false })`。
 
-九个原有字段 + `index`、`stats`、`agentName`、`agentSource`、`onboarding`：
+九个原有字段 + `index`、`stats`、`agentName`、`agentSource`、`recall`、`onboarding`：
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
@@ -447,6 +447,7 @@ else:
 | `remoteEnabled` | boolean | 是否启用远端索引 |
 | `agentName` | string | 本运行时的提交前缀；同机多端共用一个 vault 时以此区分 |
 | `agentSource` | `"config"\|"env"\|"profile"\|"fallback"` | 前缀来源。`fallback` 表示既没配 `agentName` 也没有 `DSH_PROFILE`，两端会写成同一个前缀——属可见的告警状态 |
+| `recall` | `{"mode":"auto"\|"always"\|"off","limit":number,"maxChars":number,"minQueryChars":number,"timeoutMs":number,"instructions":boolean}` | `agent/pre-step` 自动召回的**生效值**（不是默认值）。发布它的理由：`off`、没命中话题、core 坏掉，从外部看都是「这一轮没有召回」，只有把模式发出来才能区分 |
 | `onboarding` | `{"granted": boolean}` | 当前 vault 是否已完成首次引导（逐个 vault 判定，换 vault 需重新授权） |
 | `version` | string | `ui.currentVersion` |
 | `latestVersion` | string \| null | 注册表检查未返回前为 `null` |

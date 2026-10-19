@@ -187,9 +187,9 @@ The core package is deliberately separated from agent-specific adapters:
 
 | Component | Responsibility | Writes canonical notes? |
 |---|---|---|
-| `unified-agent-memory` core | index, search, promotion, conflicts, forgetting | Only the reviewed promoter path |
-| `dsh-hermes-memory` | dsh tools, status UI, read/show/search and inbox submission | No |
-| `dsh-memory-discipline` | optional pre-step recall and memory-discipline instructions | No |
+| `core/` | index, search, promotion, conflicts, forgetting | Only the three writers: `promoter.promote`, `forgetter.demote`, `maintenance.repair_existing`, each under the vault `file_lock` |
+| `src/` (DSH host half) | six dsh tools, status UI, read/show/search and inbox submission | No |
+| `src/recall.ts` | optional pre-step recall and memory-discipline instructions | No |
 | `Agent提交区/` | isolated cross-agent submission files | Submission files only |
 
 ### Hermes-side pipeline (external to this repo)
@@ -208,8 +208,12 @@ the same hygiene contract:
 | `publish_openclaw_memory.py` | remote read-only snapshot | same filter |
 | `hermes_memory.py` (skill) | read-only search for Codex/Claude/ZCode | current facts only; excludes inbox/forget/archives/copies |
 
-`dsh-memory-discipline` is an optional runtime policy layer. It invokes the
-core CLI for recall; it does not replace the core, bypass review, or write the
+The three components above ship as one package,
+`dsh-unified-agent-memory`: `src/recall.ts` used to be a separate
+`dsh-memory-discipline` plugin, and it was merged in so that recall shares the
+tools' `vaultPath`/`pythonPath`/`corePath` instead of carrying a second
+interpreter and a second hardcoded core path. Recall invokes the core CLI, never
+the other way round; it does not replace the core, bypass review, or write the
 canonical vault directly.
 
 ## Migration & verification

@@ -22,9 +22,10 @@
 
 传统 Agent 记忆插件多数绑定于特定的 Agent 运行时（Single-Agent Scope），其存储空间与会话相互隔离，缺乏统一的状态持久化与跨代理知识共享能力。
 
-核心与 DSH 适配器分层维护，具体职责和写入边界见
-[docs/DSH-MEMORY-ADAPTERS.md](docs/DSH-MEMORY-ADAPTERS.md)。该文档明确区分
-`unified-agent-memory`、`dsh-hermes-memory` 与 `dsh-memory-discipline`。
+核心与 DSH 适配层分层维护，具体职责和写入边界见
+[docs/DSH-MEMORY-ADAPTERS.md](docs/DSH-MEMORY-ADAPTERS.md)。两者以单个包
+`dsh-unified-agent-memory` 发布：`core/` 是纯 Python 核心，`src/` 是 DSH 宿主
+半边（工具、路由、`agent/pre-step` 自动召回），收件箱是唯一写入通道。
 
 **`unified-agent-memory` 架构旨在为多 Agent 舰队提供统一的知识管理基座**：它允许 `dsh`、`Codex`、`Claude Code` 与 `Hermes` 等多个独立代理共享基于 Markdown 规范的 Obsidian Vault 知识仓库，配合纯 Python 标准库核心与 SQLite FTS5 本地索引，构建涵盖**知识摄取 (Ingestion)、知识晋升 (Promotion)、冲突裁决 (Adjudication) 与衰减遗忘 (Decay/Retention)** 的全闭环生命周期管理系统。
 
@@ -44,6 +45,8 @@
   内置完整的状态流转机制：包含写收件箱暂存、Promoter 知识审核归纳、Adjudicator 冲突事实裁决、Atomic Lock 并发文件锁与 Forgetter 定期记忆衰减归档。
 - **混合检索 (Hybrid Retrieval)**  
   `memory search --hybrid` 融合五路召回：BM25 + 中文 bigram BM25 + 语义向量 + 概念图谱 + trigram，加权 RRF 融合、同文档多样化、按真实 Token 预算裁剪。无向量时自动回退词法检索；查询向量本地缓存，重复主题的混合检索约 250ms。
+- **自动召回 (Automatic Recall, dsh 内置)**
+  插件监听 `agent/pre-step`，在每轮对话开始前判断话题是否「值得查记忆」（偏好、路径、服务器、协作规则、历史等），命中就先把检索结果以 `<memory-data>` 注入上下文——模型不必记得调 `memory_search`。`auto` / `always` / `off` 三档可配，短回复、协作中转消息与插件注入消息一律跳过，检索失败或超时只旁路不阻断。这项能力原先是独立的 `dsh-memory-discipline` 插件，现已并入本包，与工具共用同一套 `vaultPath` / `pythonPath` / `corePath`。
 - **真实写入方言兼容 (Writer-Dialect Compatibility)**
   同时解析仓库格式 `（写入 …｜来源：Agent提交区/x.md）` 与 Hermes 实际写入的 `[[Agent提交区/…]]`、`事件 \`…\``、`｜有效至 …` 方言。`｜有效至` 行自动标记为 `superseded`，不再作为当前事实召回。
 - **可观测性与自维护 (Doctor & GC)**
@@ -204,7 +207,7 @@ python -m unified_memory.forgetter --apply                   # 6. 定期衰减�
 
 1. **写**：调 `memory submit`（或 dsh 插件的 `memory_submit`）。
 2. **定期晋升（需要 Agent 参与，不是裸脚本）**：在你部署环境里**指定一个带调度/定时功能的 Agent**（dsh、Codex、Claude Code、Hermes 中任一）负责每日晋升——由它运行 `python -m unified_memory.promoter --review` **先审核待晋升清单**、`adjudicate` 裁决冲突、再 `--apply` 晋升，并做错过补跑。只有当部署里**完全没有**带调度能力的 Agent 时，才退回用系统 cron 跑 `daily_cron.py` 脚本兜底。
-3. **读/注入**：参考 `integrations/hermes/README.md` 的 hook 草图，把 `memory search` / `memory show` 的输出包进 `<memory-data>` 注入到你的系统提示——那个模式适用于任何 Python 运行时。
+3. **读/注入**：dsh 用户不需要自己做这一步——插件内置 `agent/pre-step` 自动召回（`recall` 配置为 `auto` / `always` / `off`，细节见 [docs/DSH-MEMORY-ADAPTERS.md](docs/DSH-MEMORY-ADAPTERS.md)）。其他运行时可参考 `integrations/hermes/README.md` 的 hook 草图，把 `memory search` / `memory show` 的输出包进 `<memory-data>` 注入到系统提示。
 
 Hermes 集成（`integrations/hermes/`）只是"其中一个 Agent 接进来"的可选示例，不是前提条件。详细说明见 [docs/DEPLOY.md](docs/DEPLOY.md) 的 *Full mode* 章节。
 
@@ -216,7 +219,8 @@ Hermes 集成（`integrations/hermes/`）只是"其中一个 Agent 接进来"的
 |---|---|
 | `core/` | 零第三方依赖 Python 包：包含 `memory.py` (初始化/检索/查看/提交), `promoter.py` (审核/应用/裁决), `forgetter.py` (衰减归档), `conflict.py` (冲突判定) |
 | `vault-template/` | 即用型 Obsidian Vault 模版：包含 7 份标准化 Canonical 笔记、`00_Inbox` 提交区、情境信息与记忆遗忘区 |
-| `lib/` | dsh 插件核心：提供 `memory_search` / `memory_show` / `memory_submit` / `memory_status` 工具接口 |
+| `lib/` | dsh 插件构建产物：`memory_search` / `memory_show` / `memory_submit` / `memory_status` / `memory_preview` / `memory_setup` 工具，与 `agent/pre-step` 自动召回 |
+| `src/` | dsh 插件源码：工具定义、回环 HTTP 路由、`recall.ts`（自动召回与记忆纪律）、浏览器侧状态面板 |
 | `integrations/` | 提供 `AGENTS.md` (Codex), `CLAUDE.md` (Claude) 与 Hermes Hook 集成示例 |
 | `setup/` | 部署与自检脚本 `setup.py` (init/cron/selfcheck) 与 `selfcheck.py` |
 | `docs/` | ARCHITECTURE (系统架构), DEPLOY (部署指南), DESKTOP (桌面端部署), SECURITY (安全规范) |

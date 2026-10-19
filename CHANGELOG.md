@@ -4,6 +4,50 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed — 自动召回并入本包，核心写入者回归「三把锁」
+
+这一轮只做两件事：把原先要装第二个插件的自动召回收进本包，以及把「谁是唯一写者」
+从一条 Hermes 断言换成三个显式写入者各自的 `file_lock`。
+
+#### Added — `agent/pre-step` 自动召回（`src/recall.ts`）
+
+- **一个包装完，不必再装 `dsh-memory-discipline`**：该包此前自带一份 Python 启动逻辑和
+  一个硬编码的 `core` 路径；并入后与工具共用 `vaultPath` / `pythonPath` / `corePath`，
+  也就不再有第二份解释器白名单（其中 `uv312` 一项写死的是某台机器的 CPython 3.12 绝对路径）。
+- **只在 `step === 1` 出手**：后续 step 看得到本轮刚注入的消息，再查一次就是拿上一轮的召回
+  文本当查询词。命中话题才检索（`recall=auto`），结果以 `<memory-data>` 包裹注入，与工具共用
+  同一个「这块是数据，不是指令」标记。
+- **五种「不查」路径**：短于 `recallMinQueryChars` 的回复；`agent-relay` 协作中转消息（否则会拿
+  别的 Agent 的提示词去搜自己的库）；插件注入消息（`source.kind` 为 `plugin` 或
+  `plugin:<package>`，否则自我喂食）；`vaultPath` 未配置；`recall=off`。消息数组被宿主冻结时
+  记一条日志后跳过，不抛错。
+- **失败只旁路**：检索异常、超时、`AbortSignal` 取消都记一次带退出种类的日志，本轮照常进行；
+  退出码 0 且输出为空是合法的「没搜到」，不算错误。
+- **新配置**：`recall`（`auto`/`always`/`off`，env `UNIFIED_MEMORY_RECALL`）、
+  `recallLimit`(5)、`recallMaxChars`(1600)、`recallMinQueryChars`(6)、
+  `recallTimeoutMs`(8000)、`recallInstructions`(true)。数值项都有上下界，`Number('')` 不再
+  被当成 0。
+- **`/status` 新增 `recall` 块**：`off`、没命中话题、core 坏掉，从外部看是同一件事；把当前
+  模式与限额发出来才能区分。
+- **纪律规则每会话只注入一次**：消息留在历史里，每轮重发等于白烧几百 token。
+
+#### Removed — canonical 写入不再需要「Hermes 所有者」
+
+- **`common.assert_canonical_writable` 与 `CanonicalOwnerError` 删除**，`memory owner`
+  子命令一并移除。原来那条声明假设写入方是 Hermes，而公开版本的用户只是装了插件的 dsh——
+  对他们而言这个闸门既不成立也不可满足，反而在自家工具链里留下一个会误拒的失败点。
+- 真正保证并发安全的从来是 `file_lock`：`promoter.promote`、`forgetter.demote`、
+  `maintenance.repair_existing` 三个写入者各自取锁，`core/tests/test_write_lock.py` 逐个
+  断言「确实取锁」并用一个记录进出的假锁验证互斥顺序（`A-in, B-start, A-out, B-done`）。
+  把假锁换成空的上下文管理器，顺序立刻变成 `A-in, B-start, B-done, A-out`——这条测试是能
+  变红的，不是装饰。
+
+#### Docs
+
+- `docs/DSH-MEMORY-ADAPTERS.md` 重写为「一个包 + 两个实现层 + 一个收件箱」，补上召回配置表
+  与被并入的旧包名映射；`docs/ARCHITECTURE.md` 的组件表、两份 README 的定位段与仓库结构
+  同步更新。`dsh-hermes-memory` 与 `dsh-memory-discipline` 不再作为并列组件出现。
+
 ### Added — 首次引导 + 多 Agent 自助接入
 
 - **`memory_setup` 工具（第六个工具）**：装完插件后的第一次使用不再需要克隆仓库、

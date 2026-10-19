@@ -304,7 +304,11 @@ Windows runner 同时验证中文路径/文件锁（`common.py` 的 `file_lock` 
 
 - **不破坏**：core 零依赖（F-4/F-8 的依赖全部是可选探测）；canonical 只读；凭据不入库；`<memory-data>` 包裹。
 - **不加**：集中式向量数据库托管（保持 local-first 定位，remote index server 保留为可选）。
-- **不合并**：不把 `dsh-memory-discipline` 能力并入本包核心（保持 DSH-MEMORY-ADAPTERS.md 定义的层边界）。
+- ~~**不合并**：不把 `dsh-memory-discipline` 能力并入本包核心（保持 DSH-MEMORY-ADAPTERS.md 定义的层边界）。~~
+  **已被 2026-10 的合并推翻**：召回层现在就是 `src/recall.ts`，理由与新的层边界见
+  `docs/DSH-MEMORY-ADAPTERS.md`。当时的顾虑是「两层各有写入边界，合并会糊掉边界」，实际
+  合并后写入边界没有变化（召回仍然只注入消息、不写 vault），而两个包各带一份解释器与核心
+  路径的代价明显更高——公开用户装一个插件就该够用。此条保留原文仅为记录当时的判断。
 - **不改**：Obsidian 存储规范（7 份 canonical 笔记结构保持不变——改动会破坏既有用户 Vault 与 drift 契约）。
 
 ---
