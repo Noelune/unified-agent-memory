@@ -69,6 +69,7 @@ import { SEARCH_PATH, clampSearchLimit, handleSearch } from './route-search.ts'
 import {
   NOTE_PATH, PREVIEW_PATH, PREVIEW_VIEWS, clampPreviewLimit, handleNote, handlePreview,
 } from './route-preview.ts'
+import { DOC_PATH, handleDoc } from './route-doc.ts'
 import { DISMISS_PATH, handleDismiss, parseDismissBody } from './route-dismiss.ts'
 import { STATS_PATH, buildStatsArgs, shapeStatsResult } from './route-stats.ts'
 import type { PluginConfig } from './types.ts'
@@ -297,6 +298,30 @@ export function apply(ctx: Context, config: Record<string, unknown> = {}): void 
           return
         }
         sendJson(res, 200, await handleNote(cfg, name))
+      })()
+    },
+  })
+
+  // ---- HTTP doc route: one canonical note's body, by name ----
+  // `/note` above reads the submission INBOX; a search hit names a canonical
+  // note under 50-Agent-Context, so it needs the core's `show` command. Kept as
+  // its own route rather than a flag on /note: the two reads have different
+  // name spaces, and a shared endpoint would have to guess which one a caller
+  // meant. Read-only like /search and /preview — `guard`, never `guardWrite`.
+  ws.webServer.register({
+    kind: 'exact',
+    path: DOC_PATH,
+    handler(req, res) {
+      if (!guard(req, res, ['GET', 'HEAD'])) return
+      return (async () => {
+        const name = queryParam(req.url, 'name')
+        // An absent name is a malformed request, not a missing note — the core
+        // would answer `invalid-name` for "", which reads like a vault fact.
+        if (!name) {
+          sendJson(res, 400, { ok: false, error: 'missing name' })
+          return
+        }
+        sendJson(res, 200, await handleDoc(cfg, name))
       })()
     },
   })

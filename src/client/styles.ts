@@ -285,6 +285,134 @@ export const PANEL_CSS = `
   border-color: var(--dsw-alias-border-l1);
 }
 .dsh-memory-pane-scroll { overflow-y: auto; }
+
+/* ── Summary grids (stats KPIs, health metrics) ─────────────────────
+   Both panes used to render their numbers as ordinary label→value rows, which
+   gives a count the same visual weight as a version string. A 2×2 grid of large
+   figures answers "how much" at a glance; the label underneath says of what.
+   Every token below is one the host declares — see the token block in
+   test/client-console. */
+.dsh-memory-kpis,
+.dsh-memory-metrics {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+}
+.dsh-memory-kpi,
+.dsh-memory-metric {
+  display: flex; flex-direction: column; gap: 2px; min-width: 0;
+  padding: 9px 11px 10px;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 10px;
+  transition: border-color .15s, background-color .15s;
+}
+.dsh-memory-kpi-value,
+.dsh-memory-metric-value {
+  font-size: 19px; font-weight: 600; line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-label-primary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dsh-memory-kpi-label,
+.dsh-memory-metric-label {
+  font-size: 10.5px; letter-spacing: .04em;
+  color: var(--dsw-alias-label-secondary);
+}
+/* A metric the reader may need to act on: the tile itself gains the error
+   stroke, so the grid shows WHERE the problem is without reading the rows.
+   The figure stays label-primary — error-coloured text on a light card is the
+   contrast trap the failure banner already documents. */
+.dsh-memory-metric[data-tone='warn'] {
+  background: var(--dsw-alias-bg-layer-3);
+  border-color: var(--dsw-alias-state-error-primary);
+}
+.dsh-memory-metric[data-tone='muted'] .dsh-memory-metric-value {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* ── Health verdict ─────────────────────────────────────────────────
+   The pane opens on a sentence, not on eight equal rows: the reader wants to
+   know whether anything is wrong before learning what the numbers are. Tone is
+   carried by the dot and the border, never by the body text. */
+.dsh-memory-health {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 12px 13px;
+  background: var(--dsw-alias-bg-layer-3);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 11px;
+  box-shadow: var(--dsw-shadow-lv3);
+}
+.dsh-memory-health[data-tone='warn'] {
+  border-color: var(--dsw-alias-state-error-primary);
+}
+.dsh-memory-health-dot {
+  flex: none; width: 8px; height: 8px; border-radius: 50%;
+  margin-top: 5px;
+  background: var(--dsw-alias-brand-primary);
+  box-shadow: 0 0 0 4px var(--dsw-alias-interactive-bg-active);
+}
+.dsh-memory-health[data-tone='warn'] .dsh-memory-health-dot {
+  background: var(--dsw-alias-state-error-primary);
+}
+.dsh-memory-health[data-tone='muted'] .dsh-memory-health-dot {
+  background: var(--dsw-alias-label-tertiary);
+}
+.dsh-memory-health-copy {
+  display: flex; flex-direction: column; gap: 3px; min-width: 0;
+}
+.dsh-memory-health-copy b {
+  font-size: 13.5px; font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+.dsh-memory-health-copy span {
+  font-size: 11.5px; line-height: 1.45;
+  color: var(--dsw-alias-label-secondary);
+  word-break: break-word;
+}
+
+/* ── Stats disclosure ───────────────────────────────────────────────
+   Composition and the access calendar are real information and the least
+   actionable part of the pane, so they cost one click instead of a scroll.
+   A native <details>, because a disclosure needs no client state and the
+   collapsed pane must not run a mount effect to learn it is hidden. */
+.dsh-memory-more {
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 10px;
+  padding: 0 12px;
+}
+.dsh-memory-more-summary {
+  display: flex; align-items: center; gap: 7px;
+  padding: 10px 0; cursor: pointer;
+  list-style: none; font-size: 11.5px;
+  color: var(--dsw-alias-label-secondary);
+}
+.dsh-memory-more-summary::-webkit-details-marker { display: none; }
+.dsh-memory-more-summary::before {
+  content: '▸'; font-size: 9px; opacity: .6;
+  color: var(--dsw-alias-label-tertiary);
+}
+.dsh-memory-more[open] .dsh-memory-more-summary::before { content: '▾'; }
+.dsh-memory-more-body {
+  display: flex; flex-direction: column; gap: 12px;
+  padding: 2px 0 12px;
+}
+
+/* ── An opened search hit ───────────────────────────────────────────
+   The whole note, not the digest: opening a document is a request to read it.
+   Taller than an inbox preview because it is the actual document, and the path
+   is printed above it so the note can be taken to an editor — the panel cannot
+   hand a file to the host. */
+.dsh-memory-doc {
+  max-height: 260px;
+  margin: 0 8px 9px 17px;
+}
+.dsh-memory-docpath {
+  display: block; margin-bottom: 6px;
+  font-size: 10px; letter-spacing: .01em;
+  color: var(--dsw-alias-label-tertiary);
+  word-break: break-all;
+}
+
 .dsh-memory-empty {
   display: flex; flex-direction: column; align-items: center; gap: 6px;
   padding: 22px 14px; color: var(--dsw-alias-label-tertiary);

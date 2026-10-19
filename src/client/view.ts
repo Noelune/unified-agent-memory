@@ -13,7 +13,7 @@
  * @module src/client/view
  */
 
-import type { PreviewData } from './types.ts'
+import type { PreviewData, StatsData } from './types.ts'
 
 /** Tab ids, in display order. The console renders these left to right. */
 export const CONSOLE_TABS = ['inbox', 'search', 'health', 'stats'] as const
@@ -100,6 +100,23 @@ export function dismissReasonText(reason: string | null | undefined): string {
  */
 export function searchFailureText(): string {
   return '搜索暂不可用，请稍后重试'
+}
+
+/**
+ * Turn a `loadDoc` refusal into a sentence, the same way `dismissReasonText`
+ * does for the inbox.
+ *
+ * The three reasons are not interchangeable: a refused name means the request
+ * was wrong, a missing note means the index and the vault disagree, and an
+ * unavailable core means trying again later could work. Telling the user the
+ * wrong one sends them to fix something that is not broken.
+ */
+export function openFailureText(reason: string | null | undefined): string {
+  const r = String(reason ?? '')
+  if (r === 'invalid-name') return '文件名不合法，无法打开'
+  if (r === 'not-found') return '这条记忆的文件已不在库里，索引可能过期了'
+  if (r === 'unavailable') return '记忆核心暂不可用，请稍后再试'
+  return '打开失败，未能读取该文档'
 }
 
 /** What the sheet's header and note should say about a newer release. */
@@ -381,3 +398,121 @@ export function healthRows(input: HealthInput): HealthRow[] {
   ]
   return rows
 }
+
+/**
+ * The four reading that get a large number in the health pane.
+ *
+ * Split by MEANING, not by position: these are the counts that answer "how big
+ * is the library and is anything jammed". The rest are configuration facts, and
+ * a config fact set at 13px beside a count set at 13px makes the pane a wall of
+ * equal-weight text — which is what the previous layout was.
+ */
+export const HEALTH_METRIC_KEYS = ['memories', 'vectors', 'pending', 'conflicts'] as const
+
+/** The configuration rows: they describe the install, they do not measure it. */
+export const HEALTH_SETTING_KEYS = ['index', 'recall', 'prefix', 'version'] as const
+
+/** Split the health rows into the two groups the pane renders differently. */
+export function splitHealth(rows: readonly HealthRow[]): {
+  metrics: HealthRow[]
+  settings: HealthRow[]
+} {
+  const metricSet: readonly string[] = HEALTH_METRIC_KEYS
+  const settingSet: readonly string[] = HEALTH_SETTING_KEYS
+  return {
+    // Order follows the constant, not the input, so the grid is stable even if
+    // `healthRows` is reordered — a card that jumps between reads is worse than
+    // one in a fixed spot.
+    metrics: metricSet
+      .map(function (k) { return rows.find(function (r) { return r.key === k }) })
+      .filter(function (r): r is HealthRow { return r !== undefined }),
+    settings: settingSet
+      .map(function (k) { return rows.find(function (r) { return r.key === k }) })
+      .filter(function (r): r is HealthRow { return r !== undefined }),
+  }
+}
+
+/** The one-line verdict above the health grid. */
+export interface HealthSummary {
+  tone: 'ok' | 'warn' | 'muted'
+  /** The verdict itself — "运行正常" / "2 项需要处理". */
+  title: string
+  /** What the verdict is based on, so the headline is auditable. */
+  detail: string
+}
+
+/**
+ * Decide the headline for the health pane.
+ *
+ * The previous pane opened on eight equal-weight rows and left the reader to
+ * work out whether any of them mattered. A verdict first, the evidence under
+ * it.
+ *
+ * Three states, and the muted one is not a footnote: if EVERY row is muted the
+ * core answered nothing, and "运行正常" would be a lie told by an absence. A
+ * PARTIALLY muted pane (say the conflict count failed) still gets a verdict,
+ * because the rows that did answer are real.
+ */
+export function healthSummary(rows: readonly HealthRow[]): HealthSummary {
+  const known = rows.filter(function (r) { return r.tone !== 'muted' })
+  if (known.length === 0) {
+    return { tone: 'muted', title: '体检数据未读取到', detail: '记忆核心暂不可用，稍后再看' }
+  }
+  const warn = rows.filter(function (r) { return r.tone === 'warn' })
+  if (warn.length > 0) {
+    return {
+      tone: 'warn',
+      title: warn.length + ' 项需要处理',
+      detail: warn.map(function (r) { return r.label }).join('、'),
+    }
+  }
+  return { tone: 'ok', title: '运行正常', detail: '记忆、索引、召回都在正常工作' }
+}
+
+/**
+ * A count as a short string.
+ *
+ * Four-digit numbers get a separator and five-digit ones switch to 万, because
+ * "12480" and "1.2 万" read at the same speed while the first one costs a
+ * digit-by-digit parse. No decimals below 万: the value is a scale hint, not an
+ * accounting figure.
+ */
+export function compactCount(n: number): string {
+  if (!Number.isFinite(n)) return '—'
+  const v = Math.max(0, Math.floor(n))
+  if (v < 10000) return v.toLocaleString('en-US')
+  const wan = v / 10000
+  return (wan >= 100 ? String(Math.round(wan)) : wan.toFixed(1).replace(/\.0$/, '')) + ' 万'
+}
+
+/** One cell of the stats summary strip. */
+export interface StatKpi {
+  key: string
+  label: string
+  value: string
+}
+
+/**
+ * The four numbers a reader wants BEFORE any chart.
+ *
+ * The stats pane used to open on a heatmap: four figures, no summary, so the
+ * answer to "how big is this library" was a visual estimate of an area. These
+ * cells give the numbers first and leave the figures to explain the shape.
+ *
+ * Values come from `data` and are never defaulted: a null payload yields an
+ * empty list, and the pane renders its failure notice instead of four zeroes —
+ * "0 条记忆" is a claim about the vault that a failed read did not make.
+ */
+export function statKpis(data: StatsData | null): StatKpi[] {
+  if (!data) return []
+  return [
+    { key: 'memories', label: '记忆', value: compactCount(data.totals.memories) },
+    { key: 'accesses', label: '被取用', value: compactCount(data.totals.accesses) },
+    { key: 'types', label: '类型', value: compactCount(data.types.length) },
+    { key: 'inbox', label: '待确认', value: compactCount(data.totals.inbox) },
+  ]
+}
+
+/** How many bars the ranking figure shows. */
+export const TOP_VISIBLE = 6
+

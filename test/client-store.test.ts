@@ -32,6 +32,7 @@ import {
   canApplyPreview,
   dismissItem,
   isCurrentSearch,
+  loadDoc,
   loadNote,
   loadPreview,
   loadStats,
@@ -227,6 +228,51 @@ describe('loadNote', () => {
   it('reports an unreadable route as unavailable', async () => {
     stubFetch({ throws: true })
     await expect(loadNote('x.md')).resolves.toEqual({ ok: false, body: null, reason: 'unavailable' })
+  })
+})
+
+describe('loadDoc', () => {
+  it('returns body AND path, and encodes the name into the query', async () => {
+    stubFetch({ body: {
+      ok: true, name: 'a b.md', path: '/vault/50-Agent-Context/a b.md',
+      body: '# 标题\n正文', reason: null, untrusted: true,
+    } })
+    await expect(loadDoc('a b.md')).resolves.toEqual({
+      ok: true, body: '# 标题\n正文', path: '/vault/50-Agent-Context/a b.md', reason: null,
+    })
+    expect(calls[0].url).toBe('/api/dsh-unified-agent-memory/doc?name=a%20b.md')
+  })
+
+  it('reads /doc, never /note', async () => {
+    // `/note` reads the submission inbox and refuses a canonical note. Pointing
+    // this at it would make every opened search hit fail with `outside-inbox`.
+    stubFetch({ body: { ok: true, name: 'a.md', path: '/p', body: 'x' } })
+    await loadDoc('a.md')
+    expect(calls[0].url.startsWith('/api/dsh-unified-agent-memory/doc?')).toBe(true)
+  })
+
+  it('treats ok:true with a null body as a refusal, keeping the reason', async () => {
+    // The core answers `ok:true, body:null, reason:'not-found'` so a miss exits
+    // 0 and the reason survives. A client that gated on `ok` alone would show an
+    // empty document for a note that does not exist.
+    stubFetch({ body: { ok: true, name: null, path: null, body: null, reason: 'not-found' } })
+    await expect(loadDoc('gone.md')).resolves.toEqual({
+      ok: false, body: null, path: null, reason: 'not-found',
+    })
+  })
+
+  it('keeps a transport failure distinct from a missing note', async () => {
+    stubFetch({ throws: true })
+    await expect(loadDoc('a.md')).resolves.toEqual({
+      ok: false, body: null, path: null, reason: 'unavailable',
+    })
+  })
+
+  it('reports a missing path as null rather than inventing one', async () => {
+    stubFetch({ body: { ok: true, name: 'a.md', body: 'x' } })
+    const got = await loadDoc('a.md')
+    expect(got.ok).toBe(true)
+    expect(got.path).toBeNull()
   })
 })
 

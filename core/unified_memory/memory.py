@@ -39,10 +39,12 @@ from .common import (
     canonical_dir,
     canonical_path,
     ensure_vault,
+    is_bare_note_name,
     looks_like_credential,
     parse_config,
     read_maybe,
     redact,
+    resolve_canonical_note,
     resolve_vault,
 )
 
@@ -383,18 +385,40 @@ def cmd_show(args: argparse.Namespace) -> None:
     vault = resolve_vault()
     ensure_vault(vault)
     doc = args.doc
+    as_json = bool(getattr(args, "json", False))
     if doc in CANONICAL_DOCS:
         path = canonical_path(vault, doc)
+        reason = None
     else:
-        # Arbitrary canonical note directly under 50-Agent-Context (e.g. a
-        # structured-facts note the user added). No path traversal allowed.
-        if Path(doc).name != doc or ".." in doc:
+        # Any canonical note directly under 50-Agent-Context (a structured-facts
+        # note the user added), plus the one nested note the index also covers.
+        # No path traversal: the name must be a single segment.
+        path = resolve_canonical_note(vault, doc)
+        reason = None if path is not None else (
+            "invalid-name" if not is_bare_note_name(doc) else "not-found"
+        )
+    if path is None:
+        # `--json` keeps ok:true and carries the miss in `data.reason`, exactly
+        # like `note --json`: the panel needs to tell a refused name from a
+        # missing file, and runCore discards stdout from a failed subprocess.
+        if as_json:
+            emit_json("show", {
+                "doc": doc, "name": None, "path": None, "body": None,
+                "reason": reason, "untrusted": True,
+            })
+            return
+        if reason == "invalid-name":
             raise SystemExit(f"invalid document name {doc!r}")
-        path = canonical_dir(vault) / doc
-        if not (path.is_file() and path.suffix.lower() == ".md"):
-            raise SystemExit(f"no such canonical note: {doc}")
+        raise SystemExit(f"no such canonical note: {doc}")
+    body = redact(read_maybe(path))
+    if as_json:
+        emit_json("show", {
+            "doc": doc, "name": path.name, "path": str(path), "body": body,
+            "reason": None, "untrusted": True,
+        })
+        return
     print(f"# {path.name} ({path})")
-    print(redact(read_maybe(path)))
+    print(body)
 
 
 def cmd_submit(args: argparse.Namespace) -> None:
@@ -851,6 +875,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_show = sub.add_parser("show", help="print a canonical document")
     p_show.add_argument("doc", help="canonical id (index/prefs/env/rules/tools/ui/coord) or a *.md note under 50-Agent-Context")
+    p_show.add_argument("--json", action="store_true", help="emit a machine-readable JSON envelope")
     p_show.set_defaults(fn=cmd_show)
 
     p_submit = sub.add_parser("submit", help="write a fact into the inbox")

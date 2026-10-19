@@ -186,6 +186,45 @@ def canonical_path(vault: Path, doc_id: str) -> Path:
     return canonical_dir(vault) / CANONICAL_DOCS[doc_id]
 
 
+def is_bare_note_name(name: str) -> bool:
+    """Return whether ``name`` is one *.md file name, with no path in it.
+
+    This is the traversal gate: a name that carries a directory, a drive letter
+    or a parent reference is refused outright rather than resolved and checked
+    afterwards, because every caller of this predicate turns the name into a
+    path under the canonical directory.
+    """
+    if not name:
+        return False
+    if Path(name).name != name or ".." in name:
+        return False
+    return name.lower().endswith(".md")
+
+
+def resolve_canonical_note(vault: Path, name: str) -> Path | None:
+    """Resolve a bare *.md file name to a real note under 50-Agent-Context.
+
+    Top-level notes are the normal case. ``情境信息/未归类事实.md`` is also
+    indexed (see ``index.indexed_files``), so the exact file name a search hit
+    reports has to be readable by name — otherwise that one hit is the single
+    row the console can show but cannot open.
+
+    Returns None for a refused or missing name. The input is a single segment
+    (``is_bare_note_name``), so nothing outside the canonical directory can be
+    reached.
+    """
+    if not is_bare_note_name(name):
+        return None
+    ctx = canonical_dir(vault)
+    direct = ctx / name
+    if direct.is_file():
+        return direct
+    nested = ctx / UNCLASSIFIED_FACT_REL
+    if nested.name == name and nested.is_file():
+        return nested
+    return None
+
+
 def submission_dir(vault: Path) -> Path:
     return canonical_dir(vault) / SUBMISSION_DIR
 

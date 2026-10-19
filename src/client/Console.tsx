@@ -26,14 +26,15 @@
 
 import { h, useState } from '../deps.ts'
 import type { SearchHit, StatsPayload } from './types.ts'
-import { dismissItem, loadNote, usePreview, useSearch, useStats } from './store.ts'
+import { dismissItem, loadDoc, loadNote, usePreview, useSearch, useStats } from './store.ts'
 import {
   BreakdownDonut, CalendarHeatmap, GrowthChart, TopBars,
 } from './Figures.tsx'
 import {
   CONSOLE_TABS, PENDING_BADGE_TAB, TAB_LABEL, dismissReasonText, healthRows,
-  highlightParts, inboxSummary, noteDigest, oldestFirst, previewEmptyText,
-  relativeAge, searchFailureText,
+  healthSummary, highlightParts, inboxSummary, noteDigest, oldestFirst,
+  openFailureText, previewEmptyText, relativeAge, searchFailureText, splitHealth,
+  statKpis,
 } from './view.ts'
 import type { TabId } from './view.ts'
 
@@ -48,7 +49,16 @@ export type { TabId }
  * `CONSOLE_TABS` without giving it a pane is a type error, and the render path
  * holds no tab-id literal of its own that could drift from the constant.
  */
-type PaneOf = (props: { status: ConsoleStatus | null; stats: StatsPayload }) => Child
+/**
+ * The shape `useStats()` returns, reused so a pane can offer `reload`.
+ *
+ * Declaring the pane's feed as a bare `StatsPayload` would type-check while the
+ * object handed in also carries `reload` — and then the 统计 pane could not
+ * offer a retry button, because the only type it knows about does not have one.
+ */
+type StatsFeed = ReturnType<typeof useStats>
+
+type PaneOf = (props: { status: ConsoleStatus | null; stats: StatsFeed }) => Child
 
 /**
  * Tab id → pane renderer, and the shared feed every figure pane reads.
@@ -158,18 +168,59 @@ function Failure(props: { text: string; onRetry?: () => void }): Child {
   )
 }
 
-/** One search hit: type bar, highlighted doc name, trailing title. */
-function Hit(props: { hit: SearchHit; query: string }): Child {
+/**
+ * One search hit: type bar, highlighted doc name, trailing title, open toggle.
+ *
+ * The toggle is the difference between a search result and a search RESULT you
+ * can use. `doc` is a file name; without a reader, every hit ends at "this note
+ * matched", which is the one thing the user already knew.
+ *
+ * The opened body shows the whole note, not a digest: `noteDigest` exists to
+ * keep a queue scannable, while opening a document is a request to read it.
+ * The path is printed above the text so the note can be taken to an editor —
+ * the panel cannot hand a file to the host, so naming it is the handoff.
+ */
+function Hit(props: {
+  hit: SearchHit
+  query: string
+  open: boolean
+  loading: boolean
+  body: string | null
+  path: string | null
+  error: string | null
+  onToggle: () => void
+}): Child {
   const parts = highlightParts(props.hit.doc, props.query)
-  return h('div', { className: 'dsh-memory-row' },
-    h('i', { className: 'dsh-memory-bar dsh-memory-bar-doc' }),
-    h('span', { className: 'dsh-memory-rowname' },
-      ...parts.map(function (p, i) {
-        return p.hit
-          ? h('mark', { key: i }, p.text)
-          : h('span', { key: i }, p.text)
-      })),
-    h('span', { className: 'dsh-memory-rowmeta' }, props.hit.title),
+  return h('div', { className: 'dsh-memory-item' },
+    h('div', { className: 'dsh-memory-row' },
+      h('i', { className: 'dsh-memory-bar dsh-memory-bar-doc' }),
+      h('span', { className: 'dsh-memory-rowname' },
+        ...parts.map(function (p, i) {
+          return p.hit
+            ? h('mark', { key: i }, p.text)
+            : h('span', { key: i }, p.text)
+        })),
+      h('span', { className: 'dsh-memory-rowmeta' }, props.hit.title),
+      h('button', {
+        type: 'button',
+        className: 'dsh-memory-action',
+        'aria-expanded': props.open ? 'true' : 'false',
+        onClick: props.onToggle,
+      }, props.open ? '收起' : '打开'),
+    ),
+    props.open
+      ? h('div', { className: 'dsh-memory-body dsh-memory-doc' },
+          props.error
+            ? props.error
+            : props.loading
+              ? '读取中…'
+              : h('span', null,
+                  props.path
+                    ? h('span', { className: 'dsh-memory-docpath' }, props.path)
+                    : null,
+                  props.body || '（空文档）',
+                ))
+      : null,
   )
 }
 
@@ -280,14 +331,49 @@ function InboxTab(): Child {
 
 // ── Search ──────────────────────────────────────────────────────────
 
+/**
+ * Look something up, then READ it.
+ *
+ * The pane used to stop at the hit list. Search returns a note's file NAME and
+ * title, which is enough to recognise a note and not enough to use one, so
+ * every hit now carries an 打开 toggle that fetches the note through `/doc` and
+ * renders it inline.
+ *
+ * Per-hit state is kept in two maps keyed by file name: `openName` is the single
+ * expanded row (one at a time — two open documents in a 380px panel is a scroll
+ * fight), and `docs` caches what was read so re-opening costs nothing and does
+ * not re-hit the core.
+ */
 function SearchTab(): Child {
   const [query, setQuery] = useState('')
   const [hybrid, setHybrid] = useState(false)
+  const [openName, setOpenName] = useState<string | null>(null)
+  const [docs, setDocs] = useState<Record<string, { body: string | null; path: string | null }>>({})
+  const [docError, setDocError] = useState<string | null>(null)
+  const [docBusy, setDocBusy] = useState(false)
   const search = useSearch()
 
   function submit(): void {
     const q = query.trim()
     if (q) search.run(q, hybrid)
+  }
+
+  function toggle(name: string): void {
+    if (openName === name) { setOpenName(null); return }
+    setOpenName(name)
+    setDocError(null)
+    if (docs[name] !== undefined) return
+    setDocBusy(true)
+    loadDoc(name).then(function (r) {
+      setDocBusy(false)
+      if (!r.ok) { setDocError(openFailureText(r.reason)); return }
+      setDocs(function (prev) {
+        const next: Record<string, { body: string | null; path: string | null }> = {}
+        for (const k of Object.keys(prev)) next[k] = prev[k]
+        next[name] = { body: r.body, path: r.path }
+        return next
+      })
+    })
   }
 
   return h('div', { className: 'dsh-memory-pane' },
@@ -328,7 +414,19 @@ function SearchTab(): Child {
             ? h(Empty, { title: '没有匹配的记忆', hint: '换个关键词，或打开 hybrid 试试' })
             : h('div', { className: 'dsh-memory-rows' },
                 ...search.results.map(function (r: SearchHit) {
-                  return h(Hit, { key: r.doc, hit: r, query: query.trim() })
+                  const open = openName === r.doc
+                  const doc = docs[r.doc]
+                  return h(Hit, {
+                    key: r.doc,
+                    hit: r,
+                    query: query.trim(),
+                    open,
+                    loading: open && docBusy && doc === undefined,
+                    body: doc?.body ?? null,
+                    path: doc?.path ?? null,
+                    error: open ? docError : null,
+                    onToggle: function () { toggle(r.doc) },
+                  })
                 })),
     ))
 }
@@ -336,7 +434,18 @@ function SearchTab(): Child {
 // ── Health ──────────────────────────────────────────────────────────
 
 /**
- * The library's own vitals, in the order a broken install would show them.
+ * The library's own vitals: a verdict, four counts, then the configuration.
+ *
+ * Three visual groups, because the previous version was eight identical rows
+ * and left the reader to decide which of them mattered:
+ *
+ *   - a headline (`healthSummary`) that states the conclusion — "运行正常" or
+ *     "2 项需要处理" with the offending labels named, so the verdict is
+ *     auditable instead of decorative;
+ *   - the four counts as large figures, since a count is read at a glance and a
+ *     count in 13px grey beside a config string reads as the same kind of fact;
+ *   - the config rows (index / recall / prefix / version) as label→value pairs,
+ *     which is what they are.
  *
  * The conflict count is a second read (`conflicts` view) fired when this pane
  * mounts — not on every panel open, since it costs a core call and the answer
@@ -354,12 +463,35 @@ function HealthTab(props: { status: ConsoleStatus | null; stats: StatsPayload })
     agentSource: props.status?.agentSource ?? null,
     version: props.status?.version ?? null,
   })
+  const summary = healthSummary(rows)
+  const groups = splitHealth(rows)
 
   return h('div', { className: 'dsh-memory-pane' },
-    h('div', { className: 'dsh-memory-card dsh-memory-card-lead' },
-      h('div', { className: 'dsh-memory-cardhead' }, '运行状态'),
+    h('div', { className: 'dsh-memory-health', 'data-tone': summary.tone },
+      h('i', { className: 'dsh-memory-health-dot', 'aria-hidden': 'true' }),
+      h('div', { className: 'dsh-memory-health-copy' },
+        h('b', null, summary.title),
+        h('span', null, summary.detail),
+      ),
+    ),
+    h('div', { className: 'dsh-memory-metrics' },
+      ...groups.metrics.map(function (r) {
+        return h('div', {
+          key: r.key,
+          className: 'dsh-memory-metric',
+          'data-tone': r.tone,
+        },
+          h('b', { className: 'dsh-memory-metric-value' }, r.value),
+          h('span', { className: 'dsh-memory-metric-label' }, r.label),
+        )
+      })),
+    h('div', { className: 'dsh-memory-card' },
+      h('div', { className: 'dsh-memory-cardhead' },
+        '运行与配置',
+        conflicts.busy ? h('span', { className: 'dsh-memory-cardcount' }, '读取中…') : null,
+      ),
       h('div', { className: 'dsh-memory-rows' },
-        ...rows.map(function (r) {
+        ...groups.settings.map(function (r) {
           return h('div', {
             key: r.key,
             className: 'dsh-memory-row',
@@ -375,13 +507,50 @@ function HealthTab(props: { status: ConsoleStatus | null; stats: StatsPayload })
 
 // ── Figures ─────────────────────────────────────────────────────────
 
-/** The four figures, stacked in one scrollable pane — the old tab-per-chart. */
-function StatsTab(props: { stats: StatsPayload }): Child {
+/**
+ * The aggregate feed: four numbers first, then two figures, then the rest.
+ *
+ * The pane used to be four figures stacked in a scroll area — 500-odd pixels of
+ * chart with no answer at the top. What a reader wants first is the scale, so a
+ * summary strip leads; the two figures that carry the most signal (growth over
+ * time, what gets re-read) follow; the composition donut and the access calendar
+ * — both useful, both the least actionable — sit behind one disclosure.
+ *
+ * Nothing is removed: every figure is still rendered and still degrades on its
+ * own. The disclosure only decides what costs a scroll.
+ */
+function StatsTab(props: { stats: StatsFeed }): Child {
+  const data = props.stats.data
+  const kpis = statKpis(data)
+
+  if (!data) {
+    return h('div', { className: 'dsh-memory-pane' },
+      h(Failure, {
+        text: props.stats.status === 'loading'
+          ? '正在读取统计数据…'
+          : '统计数据读取失败，记忆核心暂不可用',
+        onRetry: props.stats.status === 'error' ? props.stats.reload : undefined,
+      }),
+    )
+  }
+
   return h('div', { className: 'dsh-memory-pane dsh-memory-pane-scroll' },
-    h(CalendarHeatmap, { status: props.stats.status, data: props.stats.data }),
-    h(GrowthChart, { status: props.stats.status, data: props.stats.data }),
-    h(BreakdownDonut, { status: props.stats.status, data: props.stats.data }),
-    h(TopBars, { status: props.stats.status, data: props.stats.data }),
+    h('div', { className: 'dsh-memory-kpis' },
+      ...kpis.map(function (k) {
+        return h('div', { key: k.key, className: 'dsh-memory-kpi' },
+          h('b', { className: 'dsh-memory-kpi-value' }, k.value),
+          h('span', { className: 'dsh-memory-kpi-label' }, k.label),
+        )
+      })),
+    h(GrowthChart, { status: props.stats.status, data: data }),
+    h(TopBars, { status: props.stats.status, data: data }),
+    h('details', { className: 'dsh-memory-more' },
+      h('summary', { className: 'dsh-memory-more-summary' }, '更多：构成与访问热力图'),
+      h('div', { className: 'dsh-memory-more-body' },
+        h(BreakdownDonut, { status: props.stats.status, data: data }),
+        h(CalendarHeatmap, { status: props.stats.status, data: data }),
+      ),
+    ),
   )
 }
 

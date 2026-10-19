@@ -24,6 +24,8 @@ export const BASE_URL = '/api/dsh-unified-agent-memory'
 export const SEARCH_URL = `${BASE_URL}/search`
 export const PREVIEW_URL = `${BASE_URL}/preview`
 export const NOTE_URL = `${BASE_URL}/note`
+/** One canonical note's body, by file name — the search pane's open action. */
+export const DOC_URL = `${BASE_URL}/doc`
 export const DISMISS_URL = `${BASE_URL}/dismiss`
 export const STATS_URL = `${BASE_URL}/stats`
 
@@ -400,6 +402,50 @@ export async function loadNote(
     }
   } catch {
     return { ok: false, body: null, reason: 'unavailable' }
+  }
+}
+
+// ── Doc (one canonical note, opened from search) ────────────────────
+
+/**
+ * Read one canonical note, by the file name a search hit reported.
+ *
+ * This is NOT `loadNote`: `/note` reads the submission inbox and refuses a
+ * canonical note, which is right for the queue and useless for a search result.
+ * `/doc` wraps the core's `show`, which is the reader for `50-Agent-Context`.
+ *
+ * `path` is returned as well as the body: the panel can display text but cannot
+ * hand a file to the user's editor, so the location is the part that lets them
+ * finish the job themselves.
+ *
+ * The route carries the core's `reason` through, so a refused name
+ * (`invalid-name`), a note that is gone (`not-found`) and a dead core
+ * (`unavailable`) stay three different sentences.
+ */
+export async function loadDoc(
+  name: string,
+): Promise<{ ok: boolean; body: string | null; path: string | null; reason: string | null }> {
+  try {
+    const url = `${DOC_URL}?name=${encodeURIComponent(name)}`
+    const r = await fetch(url, { cache: 'no-store' })
+    const body = (await r.json().catch(function () { return null })) as
+      { ok?: boolean; body?: unknown; path?: unknown; reason?: unknown } | null
+    if (!body || body.ok !== true || typeof body.body !== 'string') {
+      return {
+        ok: false,
+        body: null,
+        path: null,
+        reason: typeof body?.reason === 'string' ? body.reason : 'unavailable',
+      }
+    }
+    return {
+      ok: true,
+      body: body.body,
+      path: typeof body.path === 'string' ? body.path : null,
+      reason: null,
+    }
+  } catch {
+    return { ok: false, body: null, path: null, reason: 'unavailable' }
   }
 }
 

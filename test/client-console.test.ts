@@ -34,15 +34,20 @@ import {
   CONSOLE_TABS,
   PENDING_BADGE_TAB,
   TAB_LABEL,
+  compactCount,
   dismissReasonText,
   healthRows,
+  healthSummary,
   highlightParts,
   inboxSummary,
   noteDigest,
   oldestFirst,
+  openFailureText,
   previewEmptyText,
   relativeAge,
   searchFailureText,
+  splitHealth,
+  statKpis,
   updateNotice,
 } from '../src/client/view.ts'
 import type { PreviewData } from '../src/client/types.ts'
@@ -272,6 +277,94 @@ describe('wiring: the four figures share one stats read inside one pane', () => 
   })
 })
 
+describe('wiring: the search pane opens what it found', () => {
+  /** One function's source, from its declaration to the next section banner. */
+  function bodyFrom(start: string, until: string): string {
+    const at = CONSOLE_CODE.indexOf(start)
+    if (at < 0) return ''
+    const end = CONSOLE_CODE.indexOf(until, at)
+    return CONSOLE_CODE.slice(at, end < 0 ? CONSOLE_CODE.length : end)
+  }
+
+  it('reads the opened hit through /doc, not through the inbox reader', () => {
+    // `/note` reads 提交区 and refuses a canonical note, so a search hit opened
+    // through it fails with `outside-inbox` — which reads like a vault problem
+    // rather than a wrong endpoint. Both names appear in this file, so the
+    // assertion is scoped to the search pane's own body.
+    const searchBody = bodyFrom('function SearchTab(', '// ── Health')
+    expect(searchBody, 'SearchTab was not found').not.toBe('')
+    expect(searchBody).toMatch(/\bloadDoc\(/)
+    expect(searchBody).not.toMatch(/\bloadNote\(/)
+  })
+
+  it('gives every hit a toggle, so a result is openable', () => {
+    // A hit with no handler is a row you can only look at — exactly the state
+    // this change exists to end.
+    const hitBody = bodyFrom('function Hit(', '// ── Inbox')
+    expect(hitBody).toMatch(/onToggle/)
+    expect(hitBody).toMatch(/dsh-memory-action/)
+    expect(CONSOLE_CODE).toMatch(/h\(Hit,\s*\{[\s\S]{0,400}?onToggle:/)
+  })
+
+  it('renders the opened body as text with its path', () => {
+    // The path is the handoff: the panel cannot put a file into the user's
+    // editor, so naming it is what lets them finish the job.
+    const hitBody = bodyFrom('function Hit(', '// ── Inbox')
+    expect(hitBody).toMatch(/dsh-memory-docpath/)
+    // Corpus text as a child, never as markup.
+    expect(hitBody).not.toMatch(/dangerouslySetInnerHTML/)
+  })
+})
+
+describe('wiring: the stats pane answers before it draws', () => {
+  function statsBody(): string {
+    const at = CONSOLE_CODE.indexOf('function StatsTab(')
+    return at < 0 ? '' : CONSOLE_CODE.slice(at)
+  }
+
+  it('leads with the summary strip instead of a chart', () => {
+    const body = statsBody()
+    expect(body).toMatch(/statKpis\(/)
+    expect(body).toMatch(/dsh-memory-kpis/)
+  })
+
+  it('keeps composition and the calendar behind ONE disclosure', () => {
+    // Both are real information and the least actionable part of the pane; a
+    // native <details> means the collapsed pane runs no effect to stay hidden.
+    const body = statsBody()
+    expect(body).toMatch(/'details'/)
+    expect(body).toMatch(/'summary'/)
+    expect(body).toMatch(/dsh-memory-more-body/)
+  })
+
+  it('offers a retry when the feed failed, and says so while loading', () => {
+    const body = statsBody()
+    expect(body).toMatch(/props\.stats\.reload/)
+    expect(body).toMatch(/正在读取统计数据/)
+  })
+})
+
+describe('wiring: the health pane states a verdict', () => {
+  function healthBody(): string {
+    const at = CONSOLE_CODE.indexOf('function HealthTab(')
+    const end = CONSOLE_CODE.indexOf('// ── Figures', at)
+    return at < 0 ? '' : CONSOLE_CODE.slice(at, end < 0 ? CONSOLE_CODE.length : end)
+  }
+
+  it('derives the headline from the rows, not from a hardcoded string', () => {
+    const body = healthBody()
+    expect(body).toMatch(/healthSummary\(rows\)/)
+    expect(body).toMatch(/data-tone/)
+  })
+
+  it('splits counts from configuration instead of listing eight equal rows', () => {
+    const body = healthBody()
+    expect(body).toMatch(/splitHealth\(rows\)/)
+    expect(body).toMatch(/dsh-memory-metrics/)
+    expect(body).toMatch(/groups\.settings/)
+  })
+})
+
 describe('wiring: the pending count rides the queue it counts', () => {
   it('badges a tab the console still renders', () => {
     // The count must be rendered by SOME tab, or `stats.pending` is computed and
@@ -497,6 +590,179 @@ describe('healthRows', () => {
     // is exactly what this row exists to remove.
     const rows = healthRows({ ...healthy, recallMode: 'off' })
     expect(value(rows, 'recall')).toBe('已关闭')
+  })
+})
+
+// ── healthSummary: the verdict above the grid ───────────────────────
+
+describe('healthSummary', () => {
+  const healthy = {
+    stats: { memories: 460, vectors: 455, pending: 2 },
+    indexOk: true,
+    conflicts: 0,
+    recallMode: 'auto',
+    agentName: 'dsh-desktop',
+    agentSource: 'profile',
+    version: '0.8.0',
+  }
+
+  it('opens on "运行正常" when nothing is wrong', () => {
+    const got = healthSummary(healthRows(healthy))
+    expect(got.tone).toBe('ok')
+    expect(got.title).toBe('运行正常')
+  })
+
+  it('names the rows it wants acted on, so the verdict is auditable', () => {
+    // "2 项需要处理" without the labels sends the reader hunting through eight
+    // rows to find out WHICH two.
+    const got = healthSummary(healthRows({
+      ...healthy, indexOk: false, conflicts: 4,
+    }))
+    expect(got.tone).toBe('warn')
+    expect(got.title).toContain('2')
+    expect(got.detail).toContain('索引')
+    expect(got.detail).toContain('冲突')
+  })
+
+  it('does not report a healthy library when the core answered nothing', () => {
+    // Every row muted means the core said nothing. "运行正常" there would be a
+    // guarantee issued by an absence — the single most misleading thing this
+    // pane could print.
+    const got = healthSummary(healthRows({
+      stats: null, indexOk: null, conflicts: null, recallMode: null,
+      agentName: null, agentSource: null, version: null,
+    }))
+    expect(got.tone).toBe('muted')
+    expect(got.title).not.toContain('正常')
+  })
+
+  it('still gives a verdict when only SOME readings are missing', () => {
+    // A failed conflict read must not silence a pane whose other seven rows are
+    // fine — that would trade one blind spot for a blank panel.
+    const rows = healthRows({
+      ...healthy, conflicts: null,
+    })
+    const got = healthSummary(rows)
+    expect(got.tone).toBe('ok')
+  })
+})
+
+describe('splitHealth', () => {
+  const rows = healthRows({
+    stats: { memories: 1, vectors: 1, pending: 0 },
+    indexOk: true,
+    conflicts: 0,
+    recallMode: 'auto',
+    agentName: 'dsh',
+    agentSource: 'profile',
+    version: '0.8.0',
+  })
+
+  it('puts the four counts in the metric grid', () => {
+    const got = splitHealth(rows)
+    expect(got.metrics.map(function (r) { return r.key }))
+      .toEqual(['memories', 'vectors', 'pending', 'conflicts'])
+  })
+
+  it('puts the configuration facts in the row list', () => {
+    const got = splitHealth(rows)
+    expect(got.settings.map(function (r) { return r.key }))
+      .toEqual(['index', 'recall', 'prefix', 'version'])
+  })
+
+  it('keeps every row exactly once', () => {
+    const got = splitHealth(rows)
+    expect(got.metrics.length + got.settings.length).toBe(rows.length)
+  })
+
+  it('follows the group constants, not the input order', () => {
+    // A card that moves between reads is worse than one in a fixed spot.
+    const reversed = rows.slice().reverse()
+    const got = splitHealth(reversed)
+    expect(got.metrics.map(function (r) { return r.key })).toEqual(
+      splitHealth(rows).metrics.map(function (r) { return r.key }),
+    )
+  })
+})
+
+// ── compactCount / statKpis: the stats summary strip ────────────────
+
+describe('compactCount', () => {
+  it('keeps small counts exact', () => {
+    expect(compactCount(0)).toBe('0')
+    expect(compactCount(42)).toBe('42')
+  })
+
+  it('groups thousands for a readable four-digit number', () => {
+    expect(compactCount(9999)).toBe('9,999')
+  })
+
+  it('switches to 万 at five digits, which is where digits stop being read', () => {
+    expect(compactCount(10000)).toBe('1 万')
+    expect(compactCount(12480)).toBe('1.2 万')
+  })
+
+  it('drops the decimal once the number is large enough not to need it', () => {
+    expect(compactCount(1234000)).toBe('123 万')
+  })
+
+  it('reports a non-number as unknown rather than as 0', () => {
+    // Same rule as healthRows: a count that was not computed is not a zero.
+    expect(compactCount(Number.NaN)).toBe('—')
+    expect(compactCount(Infinity)).toBe('—')
+  })
+
+  it('clamps a negative reading instead of printing a negative count', () => {
+    expect(compactCount(-5)).toBe('0')
+  })
+})
+
+describe('statKpis', () => {
+  const data = {
+    daily: [], access: [], importance: [],
+    types: [{ type: 'fact', count: 3 }, { type: 'pref', count: 1 }],
+    top: [],
+    span: { start: '2026-01-01', end: '2026-10-01' },
+    totals: { memories: 460, vectors: 455, accesses: 1280, inbox: 2 },
+  }
+
+  it('answers "how big" before any chart is drawn', () => {
+    const got = statKpis(data)
+    expect(got.map(function (k) { return k.key })).toEqual(
+      ['memories', 'accesses', 'types', 'inbox'],
+    )
+    expect(got.find(function (k) { return k.key === 'memories' })!.value).toBe('460')
+    expect(got.find(function (k) { return k.key === 'types' })!.value).toBe('2')
+  })
+
+  it('returns nothing at all for a payload that could not be read', () => {
+    // Four zeroes would be a claim about the vault; an empty strip lets the
+    // pane show its failure notice instead.
+    expect(statKpis(null)).toEqual([])
+  })
+})
+
+// ── openFailureText: why a search hit would not open ────────────────
+
+describe('openFailureText', () => {
+  it('says a refused name was refused', () => {
+    expect(openFailureText('invalid-name')).toContain('文件名')
+  })
+
+  it('points at a stale index for a note the vault no longer has', () => {
+    // Distinct from a dead core: retrying will not help, the index is behind.
+    const text = openFailureText('not-found')
+    expect(text).toContain('不在库里')
+    expect(text).toContain('索引')
+  })
+
+  it('tells the user to retry when the core is down', () => {
+    expect(openFailureText('unavailable')).toContain('稍后再试')
+  })
+
+  it('does not let an unknown reason render as an empty string', () => {
+    expect(openFailureText(null)).toBeTruthy()
+    expect(openFailureText('weird')).toBeTruthy()
   })
 })
 
@@ -1368,6 +1634,83 @@ describe('mutation: highlightParts', () => {
       expect(f('x', '   ').some(function (p) { return p.hit })).toBe(false)
     }
     assert(highlightParts)
+    expect(function () { assert(mutant) }).toThrow()
+  })
+})
+
+describe('mutation: healthSummary', () => {
+  it('goes red when an unanswered core is reported as healthy', () => {
+    // The plausible "simplification": always return a green headline, since
+    // warn rows already draw their own emphasis. It turns a dead core into the
+    // most reassuring thing the pane can say.
+    const allMuted = healthRows({
+      stats: null, indexOk: null, conflicts: null, recallMode: null,
+      agentName: null, agentSource: null, version: null,
+    })
+    const mutant = function () {
+      return { tone: 'ok' as const, title: '运行正常', detail: '' }
+    }
+    const assert = function (f: typeof healthSummary) {
+      expect(f(allMuted).tone).not.toBe('ok')
+    }
+    assert(healthSummary)
+    expect(function () { assert(mutant) }).toThrow()
+  })
+
+  it('goes red when the warning labels are dropped from the detail', () => {
+    // A count without the labels ("2 项需要处理") makes the reader hunt through
+    // the grid to find which two.
+    const rows = healthRows({
+      stats: { memories: 1, vectors: 1, pending: 0 },
+      indexOk: false, conflicts: 2, recallMode: 'auto',
+      agentName: 'dsh', agentSource: 'profile', version: '0.8.0',
+    })
+    const mutant = function () {
+      return { tone: 'warn' as const, title: '2 项需要处理', detail: '' }
+    }
+    const assert = function (f: typeof healthSummary) {
+      expect(f(rows).detail).toContain('索引')
+    }
+    assert(healthSummary)
+    expect(function () { assert(mutant) }).toThrow()
+  })
+})
+
+describe('mutation: compactCount', () => {
+  it('goes red when the 万 threshold is off by a factor of ten', () => {
+    // Reading "12480" as 12.5 万 is the kind of unit slip that makes a dashboard
+    // wrong by an order of magnitude while looking fine.
+    const mutant = function (n: number) {
+      if (!Number.isFinite(n)) return '—'
+      const v = Math.max(0, Math.floor(n))
+      if (v < 1000) return String(v)
+      return (v / 1000).toFixed(1).replace(/\.0$/, '') + ' 万'
+    }
+    const assert = function (f: typeof compactCount) {
+      expect(f(999)).toBe('999')
+      expect(f(12480)).toBe('1.2 万')
+    }
+    assert(compactCount)
+    expect(function () { assert(mutant) }).toThrow()
+  })
+})
+
+describe('mutation: statKpis', () => {
+  it('goes red when an unread payload becomes four zeroes', () => {
+    // "0 条记忆" is a claim about the vault; a failed read made no claim. The
+    // mutant is the natural refactor: default the totals and always render.
+    const mutant = function () {
+      return [
+        { key: 'memories', label: '记忆', value: '0' },
+        { key: 'accesses', label: '被取用', value: '0' },
+        { key: 'types', label: '类型', value: '0' },
+        { key: 'inbox', label: '待确认', value: '0' },
+      ]
+    }
+    const assert = function (f: typeof statKpis) {
+      expect(f(null)).toEqual([])
+    }
+    assert(statKpis)
     expect(function () { assert(mutant) }).toThrow()
   })
 })

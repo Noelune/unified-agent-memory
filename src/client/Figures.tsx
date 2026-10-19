@@ -37,6 +37,7 @@
 
 import { h } from '../deps.ts'
 import { barRows, calendarGrid, donutSegments, linePath } from './charts.ts'
+import { TOP_VISIBLE } from './view.ts'
 import type { StatsData, StatsPayload } from './types.ts'
 
 /** Anything `h()` accepts as a child. `deps.ts` exports no ReactNode type. */
@@ -329,11 +330,17 @@ const BAR_W = 96
  */
 export function TopBars(props: FigureProps): Child {
   const top = props.data?.top ?? []
-  const rows = barRows(top.map(function (t) { return { label: t.label, value: t.count } }), BAR_W)
+  const all = barRows(top.map(function (t) { return { label: t.label, value: t.count } }), BAR_W)
+  // A side panel is 380px wide; a 15-row ranking becomes a scroll area inside a
+  // scroll area. The tail of this list is also the part nobody acts on, so the
+  // cut is stated in the caption rather than hidden.
+  const rows = all.slice(0, TOP_VISIBLE)
 
   return h(Frame, {
     title: '活跃排行',
-    caption: String(rows.length) + ' 条',
+    caption: all.length > rows.length
+      ? '前 ' + String(rows.length) + ' / 共 ' + String(all.length) + ' 条'
+      : String(rows.length) + ' 条',
     status: props.status,
     populated: rows.length > 0,
     body: function () {
