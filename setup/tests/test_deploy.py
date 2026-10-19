@@ -339,7 +339,13 @@ class DeployTests(unittest.TestCase):
             (home / ".codex" / "AGENTS.md").write_text("", encoding="utf-8")
             targets = detect_targets(home)
             self.assertEqual([item["agent"] for item in targets], ["codex"])
-            self.assertEqual(targets[0]["path"], home / ".codex" / "AGENTS.md")
+            # detect_targets canonicalises home (deploy writes to the resolved
+            # path, and an unresolved one is ambiguous on case-insensitive or
+            # symlinked filesystems), so the expectation has to resolve too:
+            # macOS temp dirs live under /var → /private/var, and a Windows
+            # runner's temp dir is an 8.3 short name (RUNNER~1). Comparing the
+            # raw temp path passed locally and failed on both those runners.
+            self.assertEqual(Path(targets[0]["path"]).resolve(), (home / ".codex" / "AGENTS.md").resolve())
 
     def test_resolved_prefix_uses_runtime_declaration_for_dsh(self):
         with patch.dict(os.environ, {"UNIFIED_MEMORY_AGENT": "dsh-desktop"}):

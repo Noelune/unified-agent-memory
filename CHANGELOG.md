@@ -24,6 +24,11 @@ All notable changes to this project are documented in this file.
   `Path(...).resolve()`，而 macOS 的 `/var` 是指向 `/private/var` 的符号链接、
   Windows runner 的临时目录是 8.3 短名，两边的字符串必然不同。改成双方都 `resolve()`
   之后比较；配置值的读取拆成 `_written_vault()`，顺便让断言失败时能打印整份配置。
+- **`setup/tests` 的 `test_detect_targets_only_returns_existing_known_files` 同一类**：
+  `detect_targets()` 会把 home 规范化（`deploy.py` 三个入口都 resolve），测试却拿未
+  resolve 的临时路径去比。第二次 CI 就是靠这一条红的。改法相同，并顺手用
+  `Temp/'x'/'..'` 这种「字面形式与 resolve 结果不同」的路径验证过：旧的断言形式必然失败，
+  新的必然通过——不是猜的。
 
 ### Changed — 自动召回并入本包，核心写入者回归「三把锁」
 
