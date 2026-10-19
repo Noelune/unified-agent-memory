@@ -21,6 +21,7 @@ import { join } from 'node:path'
 
 vi.mock('../src/updater.ts', () => ({
   checkForUpdate: vi.fn(),
+  startUpdateWatch: vi.fn(),
   getUpdateInfo: vi.fn(() => ({
     currentVersion: '0.0.0-test',
     latestVersion: '0.0.0-test',

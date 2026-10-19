@@ -19,7 +19,8 @@ const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)
 
 // Now import the module under test (after mocks are set up)
-const { checkForUpdate, getUpdateInfo, compareVersions, _resetForTesting } = await import('../src/updater.ts')
+const { checkForUpdate, getUpdateInfo, compareVersions, startUpdateWatch, _resetForTesting } =
+  await import('../src/updater.ts')
 
 describe('updater', () => {
   beforeEach(() => {
@@ -201,5 +202,65 @@ describe('compareVersions', () => {
   it('detects a real upgrade from a pre-release to the release', () => {
     // The exact regression: this used to be 0, so no badge appeared.
     expect(compareVersions('0.6.0', '0.6.0-rc.1')).toBe(1)
+  })
+})
+
+// ── startUpdateWatch ────────────────────────────────────────────────
+//
+// The check used to run exactly once, inside apply(). The cache advertised a
+// one-hour TTL that nothing ever consumed, so in a desktop app left open for
+// days the update badge described the day the app was launched and never
+// changed. These pin the re-check and its teardown.
+
+describe('startUpdateWatch', () => {
+  beforeEach(() => {
+    mockFetch.mockReset()
+    _resetForTesting()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('checks immediately, then again on each tick', async () => {
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ version: '2.0.0' }) })
+    vi.useFakeTimers()
+    const disposers: Array<() => void> = []
+    const ctx = { on: (event: string, fn: () => void) => { if (event === 'dispose') disposers.push(fn) } }
+
+    startUpdateWatch(ctx)
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+
+    // The TTL guard would swallow a second checkForUpdate() this soon; the
+    // tick must bypass it, or the badge never refreshes.
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
+    expect(mockFetch).toHaveBeenCalledTimes(2)
+
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
+    expect(mockFetch).toHaveBeenCalledTimes(3)
+
+    expect(disposers).toHaveLength(1)
+  })
+
+  it('stops asking the registry once the plugin is disposed', async () => {
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ version: '2.0.0' }) })
+    vi.useFakeTimers()
+    const disposers: Array<() => void> = []
+    const ctx = { on: (event: string, fn: () => void) => { if (event === 'dispose') disposers.push(fn) } }
+
+    startUpdateWatch(ctx)
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+
+    disposers[0]()
+    await vi.advanceTimersByTimeAsync(3 * 60 * 60 * 1000)
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('works on a host that has no dispose event', () => {
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ version: '2.0.0' }) })
+    // A test double without `ctx.on` must not stop the first check; the watch
+    // simply becomes un-cancellable, which is the pre-existing behaviour.
+    expect(() => startUpdateWatch({})).not.toThrow()
+    expect(mockFetch).toHaveBeenCalledTimes(1)
   })
 })

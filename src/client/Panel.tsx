@@ -12,6 +12,7 @@ import { h, useEffect, useRef } from '../deps.ts'
 import { Console } from './Console.tsx'
 import { adoptStyles } from './styles.ts'
 import { setOpen, toggleOpen, useMemoryOpen, useMemoryState } from './store.ts'
+import { updateNotice } from './view.ts'
 
 // ── Icon glyph with optional update dot ─────────────────────────────
 
@@ -67,11 +68,22 @@ function show(v: unknown, fallback = '—'): string {
  */
 export function MemorySheet() {
   const { data, fetchError } = useMemoryState()
+  // The npm check reports what the registry has; the sheet used to render only
+  // the installed version, so "an update exists" was a 6px dot on the sidebar
+  // glyph and a tooltip. Someone who never hovered it had no way to learn the
+  // number, let alone what to do about it.
+  const notice = updateNotice(data?.latestVersion, data?.updateAvailable)
 
   return h('div', { className: 'dsh-memory-sheet' },
     h('div', { className: 'dsh-memory-head' },
       h('h3', { className: 'dsh-memory-title' }, 'Unified Memory'),
-      h('span', { className: 'dsh-memory-ver' }, 'v' + show(data?.version)),
+      h('span', {
+        className: 'dsh-memory-ver',
+        'data-update': notice.next ? 'true' : 'false',
+      },
+        'v' + show(data?.version),
+        notice.next ? h('span', { className: 'dsh-memory-ver-next' }, ' → v' + notice.next) : null,
+      ),
     ),
 
     h(Console, {
@@ -81,6 +93,10 @@ export function MemorySheet() {
         version: data?.version ?? null,
       },
     }),
+
+    notice.text
+      ? h('div', { className: 'dsh-memory-note' }, notice.text)
+      : null,
 
     fetchError
       ? h('div', { className: 'dsh-memory-note' }, '轮询已暂停 — 请检查宿主连接。')

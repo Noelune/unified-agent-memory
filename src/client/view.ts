@@ -122,6 +122,42 @@ export function searchFailureText(): string {
   return '搜索暂不可用，请稍后重试'
 }
 
+/** What the sheet's header and note should say about a newer release. */
+export interface UpdateNotice {
+  /** Latest version on npm, or null when there is nothing newer to show. */
+  next: string | null
+  /** One sentence under the console, or null when there is nothing to say. */
+  text: string | null
+}
+
+/**
+ * Decide what the update surface says.
+ *
+ * Three states have to stay distinct, because only one of them is actionable:
+ *   - unknown (`updateAvailable: null`) — the registry was unreachable or the
+ *     check has not finished. Say nothing; a spinner would imply progress the
+ *     user did not ask for.
+ *   - known-equal (`false`) — say nothing. "You are up to date" on every open
+ *     would be noise in a panel that opens on demand.
+ *   - newer (`true`, with a version) — show the pair and what to do about it.
+ *
+ * The `latest` guard is not redundant with `updateAvailable`: the flag and the
+ * version come from the same record, but a half-rendered "v0.8.0 → vnull" is
+ * worse than silence if they ever disagree.
+ */
+export function updateNotice(
+  latest: string | null | undefined,
+  available: boolean | null | undefined,
+): UpdateNotice {
+  if (available !== true || typeof latest !== 'string' || latest === '') {
+    return { next: null, text: null }
+  }
+  return {
+    next: latest,
+    text: '有新版本 v' + latest + '，重新安装插件即可升级。',
+  }
+}
+
 /**
  * Split `text` into fragments, flagging every occurrence of `term`.
  *

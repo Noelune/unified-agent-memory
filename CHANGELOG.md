@@ -4,6 +4,26 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added — 更新提醒真的会到达用户
+
+「有新版本」这条链路原来有三处断点，前两处在本轮修掉，第三处在发布环节（见下）：
+
+- **`checkForUpdate()` 只在 `apply()` 跑一次**（`src/updater.ts`）。缓存确实有 1 小时
+  TTL，但**没有任何调用方会在一小时后再问一次**，于是桌面端连开一周也永远停在启动那
+  天读到的那次结果——徽标是对的，只是永久陈旧。新增 `startUpdateWatch(ctx)`：启动时
+  查一次 + 每小时复查；计时器 `unref()`，纯展示性轮询不再阻止宿主退出；`ctx.on('dispose')`
+  里清掉，卸载的插件不再请求 registry。TTL 守卫留在 `checkForUpdate`，`runCheck` 不带
+  守卫——每小时那一跳本身就是调度，被 TTL 吞掉就再也不会复查。
+- **面板只显示已装版本**（`src/client/Panel.tsx`）。`updateAvailable` 原来只是侧边栏
+  6px 红点 + tooltip：从没悬停过那个图标的人，既不知道新版本号，也不知道该做什么。现在
+  标题显示版本对 `v0.8.0 → v0.9.0`，下面一行可行动文案；决策抽到 `view.ts` 的
+  `updateNotice()`，三态分开：`null`（没查/查不到）静默、`false`（已是最新）静默、
+  `true` 才显式展示。`true` 但版本号缺失时也静默——「v0.8.0 → vnull」比不说话更糟。
+- **第三处断点在分发侧，不在代码里**：npm 上 `dist-tags.latest` 仍是 `0.7.1`
+  （最后发布会话 2026-10-12），`0.7.2` / `0.8.0` 只存在于本文件。只要不 `npm publish`，
+  `compareVersions(latest, CURRENT_VERSION) > 0` 恒为 false，**上面两处改动一次都不会
+  触发**。发布 0.8.0 是唯一能让已装用户被告知的动作。
+
 ### Fixed — 测试里「只在这台机器上成立」的假设
 
 推上去之后 CI 直接红了，红的位置全是本轮之前就在的测试。两类：

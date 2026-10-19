@@ -58,6 +58,15 @@ export const PANEL_CSS = `
 }
 .dsh-memory-title { margin: 0; font-size: 14px; font-weight: 600; letter-spacing: .01em; }
 .dsh-memory-ver { font-size: 11px; color: var(--dsw-alias-label-secondary); }
+/* The installed→latest pair is the one bit of the sheet a user must notice, so
+   it takes label-primary rather than the secondary grey the version alone
+   used. Tabbing the digits keeps "v0.8.0 → v0.9.0" from shifting as it
+   changes. */
+.dsh-memory-ver[data-update='true'] { color: var(--dsw-alias-label-primary); }
+.dsh-memory-ver-next {
+  color: var(--dsw-alias-label-primary);
+  font-variant-numeric: tabular-nums;
+}
 .dsh-memory-card {
   display: flex; flex-direction: column; gap: 6px;
   padding: 10px 11px;

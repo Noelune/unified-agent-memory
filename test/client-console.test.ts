@@ -38,6 +38,7 @@ import {
   highlightParts,
   previewEmptyText,
   searchFailureText,
+  updateNotice,
 } from '../src/client/view.ts'
 import type { PreviewData } from '../src/client/types.ts'
 
@@ -906,6 +907,17 @@ describe('wiring: MemorySheet renders the Console', () => {
     expect(PANEL_CODE).toMatch(/export function MemorySheet\(\)/)
     expect(PANEL_CODE).toMatch(/h\(MemorySheet,\s*null\)/)
   })
+
+  it('derives the update surface from the live payload, not a constant', () => {
+    // The header change only means something if the version pair is computed
+    // from the registry answer already in the store. A hardcoded string would
+    // render identically in a fixture and lie on every real install.
+    expect(PANEL_CODE).toMatch(
+      /updateNotice\(\s*data\?\.latestVersion\s*,\s*data\?\.updateAvailable\s*\)/,
+    )
+    const pair = PANEL_CODE.slice(PANEL_CODE.indexOf("'dsh-memory-ver-next'"))
+    expect(pair.slice(0, 80)).toContain('notice.next')
+  })
 })
 
 describe('wiring: the four tabs come from CONSOLE_TABS', () => {
@@ -973,6 +985,40 @@ describe('searchFailureText', () => {
   })
 })
 
+// ── updateNotice: "an update exists" has to reach the screen ────────
+
+describe('updateNotice', () => {
+  it('shows the newer version and what to do about it', () => {
+    // The bug this covers: the sheet rendered only the installed version, so
+    // the news lived in a 6px dot and a tooltip. Someone who never hovered the
+    // glyph could not learn the number, let alone the next step.
+    const n = updateNotice('0.8.0', true)
+    expect(n.next).toBe('0.8.0')
+    expect(n.text).toContain('0.8.0')
+    expect(n.text).toContain('重新安装')
+  })
+
+  it('stays silent while the registry answer is unknown', () => {
+    // null means "not checked yet / unreachable". A spinner or a "checking…"
+    // line would promise progress the user did not ask for.
+    expect(updateNotice('0.8.0', null)).toEqual({ next: null, text: null })
+    expect(updateNotice('0.8.0', undefined)).toEqual({ next: null, text: null })
+  })
+
+  it('stays silent when this install is already the latest', () => {
+    // "You are up to date" on every open is noise in an on-demand panel.
+    expect(updateNotice('0.8.0', false)).toEqual({ next: null, text: null })
+  })
+
+  it('refuses to render a half-answer', () => {
+    // `available: true` with no version would draw "v0.8.0 → vnull" — a
+    // version pair the user cannot trust. Silence is better than that.
+    expect(updateNotice(null, true)).toEqual({ next: null, text: null })
+    expect(updateNotice('', true)).toEqual({ next: null, text: null })
+    expect(updateNotice(undefined, true)).toEqual({ next: null, text: null })
+  })
+})
+
 // ── Mutation checks ────────────────────────────────────────────────
 //
 // Each block substitutes a known-wrong implementation for the real one and
@@ -1023,6 +1069,38 @@ describe('mutation: dismissReasonText', () => {
       expect(f('outside-inbox')).not.toBe('outside-inbox')
     }
     assert(dismissReasonText)
+    expect(function () { assert(mutant) }).toThrow()
+  })
+})
+
+describe('mutation: updateNotice', () => {
+  it('goes red when the notice ignores the availability flag', () => {
+    // Plausible simplification: "there is a version string, so print it".
+    // Then every panel open claims an update exists — worse than silence,
+    // because it sends people to reinstall nothing.
+    const mutant = function (latest: string | null | undefined, _a: boolean | null | undefined) {
+      return typeof latest === 'string' && latest !== ''
+        ? { next: latest, text: '有新版本 v' + latest + '，重新安装插件即可升级。' }
+        : { next: null, text: null }
+    }
+    const assert = function (f: typeof updateNotice) {
+      expect(f('0.8.0', false)).toEqual({ next: null, text: null })
+      expect(f('0.8.0', null)).toEqual({ next: null, text: null })
+    }
+    assert(updateNotice)
+    expect(function () { assert(mutant) }).toThrow()
+  })
+
+  it('goes red when the version is shown but the next step is not', () => {
+    // A bare "→ v0.8.0" says something changed but not what to do about it;
+    // the reinstall hint is the actionable half of the notice.
+    const mutant = function (latest: string | null | undefined, a: boolean | null | undefined) {
+      return { next: updateNotice(latest, a).next, text: null }
+    }
+    const assert = function (f: typeof updateNotice) {
+      expect(f('0.8.0', true).text).toContain('重新安装')
+    }
+    assert(updateNotice)
     expect(function () { assert(mutant) }).toThrow()
   })
 })

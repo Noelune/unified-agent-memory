@@ -60,7 +60,7 @@ import { resolveConfig, runCore } from './utils.ts'
 import { registerAll } from './tools.ts'
 import type { ApprovalLike } from './tools.ts'
 import { installRecall } from './recall.ts'
-import { checkForUpdate, getUpdateInfo } from './updater.ts'
+import { startUpdateWatch, getUpdateInfo } from './updater.ts'
 import { buildStatusPayload } from './status-payload.ts'
 import { ONBOARDING_SCOPE, consentSatisfied, readOnboardingState } from './onboarding.ts'
 import { guard, guardWrite, queryParam, readBody, sendJson } from './routes.ts'
@@ -192,8 +192,11 @@ export function apply(ctx: Context, config: Record<string, unknown> = {}): void 
   // fails the whole turn, so this literal has to be the package name exactly.
   installRecall(ctx as never, cfg, name)
 
-  // ---- Fire-and-forget update check against npm registry ----
-  checkForUpdate()
+  // ---- Fire-and-forget update check against npm registry + hourly re-check ----
+  // One check at startup was not enough: this plugin lives in a desktop app
+  // that stays open for days, and the state was cached but never refreshed, so
+  // the update badge could only ever describe the day the app was launched.
+  startUpdateWatch(ctx as never)
 
   // ---- HTTP status route consumed by the browser client half ----
   // client-ui.js polls it for configuration and health data. register() returns

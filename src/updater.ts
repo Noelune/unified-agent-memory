@@ -184,15 +184,26 @@ export function compareVersions(a: string, b: string): number {
 /**
  * Fire the update check (fire-and-forget — never rejects).
  *
- * Intended to be called once at plugin startup. Subsequent calls within
- * CACHE_TTL_MS are no-ops.
+ * Intended to be called once at plugin startup, and again on every re-check
+ * tick by `startUpdateWatch`. The TTL guard below makes a duplicate call
+ * cheap instead of a second request.
  */
 export function checkForUpdate(): void {
   if (cached.checkedAt) {
     const age = Date.now() - new Date(cached.checkedAt).getTime()
     if (age < CACHE_TTL_MS) return // recently checked
   }
+  runCheck()
+}
 
+/**
+ * One registry check, with no TTL guard.
+ *
+ * Split out because the two callers have different notions of "already
+ * checked": a startup call wants the guard, the hourly tick *is* the schedule
+ * and must not be swallowed by it.
+ */
+function runCheck(): void {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
 
@@ -215,6 +226,33 @@ export function checkForUpdate(): void {
     .finally(() => {
       clearTimeout(timer)
     })
+}
+
+/** The slice of a Cordis context this watch needs. */
+export interface WatchContext {
+  on?: (event: string, handler: () => void) => unknown
+}
+
+/**
+ * Keep the update state fresh for the life of the plugin.
+ *
+ * `checkForUpdate()` used to be called exactly once, during `apply()`. The
+ * cache had a one-hour TTL, but nothing ever asked again — so a desktop app
+ * left open for a week (which is what this plugin lives in) never learned
+ * that a release had shipped. The badge was correct and permanently stale.
+ *
+ * The interval is the schedule; `unref()` keeps a cosmetic poll from being
+ * the reason the host process cannot exit. On dispose the timer is cleared,
+ * so an unloaded plugin stops asking the registry.
+ */
+export function startUpdateWatch(ctx?: WatchContext): void {
+  checkForUpdate()
+  const timer = setInterval(runCheck, CACHE_TTL_MS)
+  const handle = timer as unknown as { unref?: () => void }
+  if (typeof handle.unref === 'function') handle.unref()
+  if (typeof ctx?.on === 'function') {
+    ctx.on('dispose', () => clearInterval(timer))
+  }
 }
 
 /**
