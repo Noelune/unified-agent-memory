@@ -137,9 +137,9 @@ export async function handleDismiss(cfg: PluginConfig, name: string): Promise<Di
   try {
     const r = await runCore(cfg, buildDismissArgs(name))
     if (!r.ok) {
-      // `missing`/`timeout` are process-level faults; a bare crash with no
-      // stdout is argparse refusing the argv (see the doc comment above).
-      const infra = r.kind === 'missing' || r.kind === 'timeout'
+      // `missing`/`timeout`/`aborted` are process-level faults; a bare crash
+      // with no stdout is argparse refusing the argv (see the doc comment above).
+      const infra = r.kind === 'missing' || r.kind === 'timeout' || r.kind === 'aborted'
       const reason = !infra && r.output.trim() === '' ? 'invalid-name' : 'unavailable'
       return { ok: false, name, reason }
     }

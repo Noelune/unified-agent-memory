@@ -44,6 +44,8 @@ function makeCtx() {
   const declared = host.inject as readonly string[]
   const tools: string[] = []
   const routes: FakeRoute[] = []
+  const events: Array<{ event: string; handler: unknown }> = []
+  const warnings: string[] = []
 
   const services: Record<string, unknown> = {
     tools: {
@@ -63,6 +65,20 @@ function makeCtx() {
   const ctx = new Proxy({} as Record<string, unknown>, {
     get(_target, prop: string) {
       if (prop === 'then') return undefined // not a thenable
+      // `on` and `logger` are Context members, not injected services: Cordis
+      // provides them on every context, so they are exempt from the guard this
+      // fake enforces. Without them here the recall hook could not be observed
+      // at all — which is exactly why the standalone discipline package had no
+      // test of its registration path.
+      if (prop === 'on') {
+        return (event: string, handler: unknown) => {
+          events.push({ event, handler })
+          return () => {}
+        }
+      }
+      if (prop === 'logger') {
+        return { warn: (message: string) => { warnings.push(message) } }
+      }
       if (!(prop in services)) return undefined
       if (!declared.includes(prop)) {
         throw new Error(`cannot get property "${prop}" without inject`)
@@ -71,7 +87,7 @@ function makeCtx() {
     },
   })
 
-  return { ctx, tools, routes }
+  return { ctx, tools, routes, events, warnings }
 }
 
 function capture() {
@@ -183,6 +199,32 @@ describe('host plugin contract', () => {
   it('exposes a cordis plugin shape', () => {
     expect(typeof host.apply).toBe('function')
     expect(host.name).toBe('dsh-unified-agent-memory')
+  })
+
+  it('registers the automatic recall hook under the real package name', () => {
+    // The merged discipline layer. What matters here is not that a listener
+    // exists but which EVENT it is on and that it is registered at all: the
+    // standalone package had no test of this, so a rename of the host event
+    // would have silently disabled recall without failing anything.
+    const { ctx, events } = makeCtx()
+    host.apply(ctx as never, { vaultPath: 'C:/tmp/vault' })
+
+    expect(events.map((e) => e.event)).toEqual(['agent/pre-step'])
+    expect(typeof events[0]?.handler).toBe('function')
+  })
+
+  it('publishes the live recall settings in the status payload', async () => {
+    // "Nothing was injected" is ambiguous from outside: off, no match, and a
+    // broken core all look the same. The payload is how a user tells them apart.
+    const { ctx, routes } = makeCtx()
+    host.apply(ctx as never, { vaultPath: 'C:/tmp/vault', recall: 'always', recallTimeoutMs: 3000 })
+
+    const { res, out } = capture()
+    await routes[0].handler({ socket: { remoteAddress: '127.0.0.1' }, method: 'GET' }, res)
+    const body = JSON.parse(out.body)
+    expect(body.recall.mode).toBe('always')
+    expect(body.recall.timeoutMs).toBe(3000)
+    expect(body.recall.instructions).toBe(true)
   })
 
   it('registers the six tools and every route without tripping the guard', () => {

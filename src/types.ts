@@ -6,6 +6,9 @@
 
 // ── Plugin configuration ─────────────────────────────────────────────
 
+/** When automatic recall runs before a turn. */
+export type RecallMode = 'auto' | 'always' | 'off'
+
 export interface PluginConfig {
   /** Path to the Obsidian vault (required for tools to operate). */
   vaultPath: string
@@ -31,11 +34,35 @@ export interface PluginConfig {
    * instead of guessing why two machines write under one prefix.
    */
   agentNameSource: 'config' | 'env' | 'profile' | 'fallback'
+  /**
+   * Automatic pre-turn recall.
+   *
+   * `auto` searches only when the user's message looks memory-sensitive,
+   * `always` searches every turn, `off` disables the hook entirely (the five
+   * tools keep working).
+   */
+  recall: RecallMode
+  /** Maximum recall entries per turn. */
+  recallLimit: number
+  /** Character cap on the injected recall block. */
+  recallMaxChars: number
+  /** Messages shorter than this are never searched. */
+  recallMinQueryChars: number
+  /** Wall-clock cap for the recall search, in milliseconds. */
+  recallTimeoutMs: number
+  /** Inject the discipline rules once per session. */
+  recallInstructions: boolean
 }
 
 // ── Core execution results ───────────────────────────────────────────
 
-export type CoreExitKind = 'ok' | 'timeout' | 'crash' | 'missing'
+/**
+ * How one core invocation ended.
+ *
+ * `aborted` is separate from `timeout` on purpose: a cancelled turn says nothing
+ * about the vault, so callers must not render it as "the core is broken".
+ */
+export type CoreExitKind = 'ok' | 'timeout' | 'aborted' | 'crash' | 'missing'
 
 /**
  * Result of one Python-core invocation.

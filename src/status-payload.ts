@@ -56,6 +56,18 @@ export function buildStatusPayload(
     // must be visibly different, and a `fallback` source is a warning sign.
     agentName: cfg.agentName,
     agentSource: cfg.agentNameSource,
+    // Automatic recall is the one setting whose failure mode is "nothing
+    // happens": with no injected block and no warning, "off" and "nothing
+    // matched" look identical from the outside. Publishing the mode and the
+    // timeout is what lets a user tell those two apart without reading logs.
+    recall: {
+      mode: cfg.recall,
+      limit: cfg.recallLimit,
+      maxChars: cfg.recallMaxChars,
+      minQueryChars: cfg.recallMinQueryChars,
+      timeoutMs: cfg.recallTimeoutMs,
+      instructions: cfg.recallInstructions,
+    },
     onboarding,
     version: ui.currentVersion,
     latestVersion: ui.latestVersion,

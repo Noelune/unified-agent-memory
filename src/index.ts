@@ -6,7 +6,9 @@
  *   src/index.ts   — thin entry: resolve config, register tools, wire routes
  *   src/status-payload.ts — pure builder for the /status response body
  *   src/tools.ts   — 5 tool definitions (memory_search / show / submit / status
- *                    / preview)
+ *                    / preview) plus memory_setup
+ *   src/recall.ts  — automatic pre-turn recall + discipline rules (the merged
+ *                    dsh-memory-discipline layer)
  *   src/utils.ts   — config resolution, Python core runner, output rendering
  *   src/client/    — browser half (TypeScript + React for DSH client runtime)
  *
@@ -20,6 +22,13 @@
  *                    conflicts view reports itself unsupported until the
  *                    conflict detector writes type='conflict')
  *
+ * Beyond the tools, the plugin listens to `agent/pre-step` and injects recall
+ * for memory-sensitive turns (src/recall.ts). That used to be a second package
+ * (`dsh-memory-discipline`) which spawned its own Python with its own hardcoded
+ * core path; merged here it shares `pythonPath`/`corePath` with the tools, so
+ * one install covers both the "ask the agent to look it up" and the "the agent
+ * already knows" halves. It is registered best-effort and never gates loading.
+ *
  * An optional HTTP status endpoint is registered for the browser client half
  * via the webServer service (injected dynamically — the route only exists
  * when webServer is available).
@@ -29,13 +38,19 @@
  *   pythonPath    (UNIFIED_MEMORY_PYTHON)  default "python"
  *   corePath      (UNIFIED_MEMORY_COREPATH) optional — core/ dir for PYTHONPATH
  *   remoteEnabled                         default false (local index only)
+ *   recall        (UNIFIED_MEMORY_RECALL)  auto | always | off, default "auto"
+ *   recallLimit / recallMaxChars / recallMinQueryChars / recallTimeoutMs
+ *   recallInstructions                    default true (once per session)
  *
  * Security: canonical notes are READ-ONLY; the only write path is the inbox
  * via memory_submit. Core output is redacted before printing. Credentials
  * must never be stored in vault notes (only label/location references).
+ * Recall output is wrapped in <memory-data> and marked as data, never
+ * instructions.
  *
  * Without vaultPath the tools load with a clear "not configured" message
- * (graceful degradation), guiding the user through first-time setup.
+ * (graceful degradation), guiding the user through first-time setup, and the
+ * recall hook stays dormant instead of spawning a doomed search every turn.
  *
  * @module src/index
  */
@@ -44,6 +59,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { resolveConfig, runCore } from './utils.ts'
 import { registerAll } from './tools.ts'
 import type { ApprovalLike } from './tools.ts'
+import { installRecall } from './recall.ts'
 import { checkForUpdate, getUpdateInfo } from './updater.ts'
 import { buildStatusPayload } from './status-payload.ts'
 import { ONBOARDING_SCOPE, consentSatisfied, readOnboardingState } from './onboarding.ts'
@@ -168,6 +184,13 @@ export function apply(ctx: Context, config: Record<string, unknown> = {}): void 
     // "not configured" without requiring a restart.
     reload: () => Object.assign(cfg, resolveConfig(config)),
   })
+
+  // ---- Automatic pre-turn recall (the merged discipline layer) ----
+  // Registered after the tools so a failure here cannot cost the user the
+  // tools. `name` is the producer id that goes into the injected message's
+  // source.kind — session format v4 rejects the retired bare 'plugin' kind and
+  // fails the whole turn, so this literal has to be the package name exactly.
+  installRecall(ctx as never, cfg, name)
 
   // ---- Fire-and-forget update check against npm registry ----
   checkForUpdate()

@@ -12,7 +12,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { PluginConfig, CoreResult } from './types.ts'
+import type { PluginConfig, CoreResult, RecallMode } from './types.ts'
 
 // ── Paths and constants ──────────────────────────────────────────────
 
@@ -51,6 +51,27 @@ function toBool(value: unknown, fallback: boolean): boolean {
     return fallback
   }
   return fallback
+}
+
+/**
+ * Coerce a config/env value to an integer within bounds.
+ *
+ * `Number('')` is `0` and `Number(null)` is `0`, so an absent or blank value is
+ * rejected before coercion — otherwise "not set" would silently become the
+ * minimum instead of the documented default.
+ */
+function toInt(value: unknown, fallback: number, min: number, max: number): number {
+  if (value === undefined || value === null || value === '') return fallback
+  const n = Number(value)
+  if (!Number.isFinite(n)) return fallback
+  return Math.min(Math.max(min, Math.trunc(n)), max)
+}
+
+/** One of the three recall modes, or the fallback for anything unrecognised. */
+function toRecallMode(value: unknown, fallback: RecallMode): RecallMode {
+  if (typeof value !== 'string') return fallback
+  const v = value.trim().toLowerCase()
+  return v === 'auto' || v === 'always' || v === 'off' ? v : fallback
 }
 
 // ── Configuration ───────────────────────────────────────────────────
@@ -140,6 +161,16 @@ export function resolveConfig(config: Record<string, unknown> = {}): PluginConfi
         join(HERE, '..', 'core'),
     ),
     remoteEnabled: toBool(config.remoteEnabled ?? env.UNIFIED_MEMORY_REMOTE, false),
+    // Automatic recall (the merged discipline layer). Defaults mirror the
+    // standalone plugin so an existing user's behaviour does not change when
+    // they drop the second package: sensitive-topic gate, 5 entries, 1600
+    // chars, 6-character floor, 8s cap, instructions once per session.
+    recall: toRecallMode(config.recall ?? env.UNIFIED_MEMORY_RECALL, 'auto'),
+    recallLimit: toInt(config.recallLimit, 5, 1, 20),
+    recallMaxChars: toInt(config.recallMaxChars, 1600, 200, 20_000),
+    recallMinQueryChars: toInt(config.recallMinQueryChars, 6, 0, 200),
+    recallTimeoutMs: toInt(config.recallTimeoutMs, 8000, 1000, 60_000),
+    recallInstructions: toBool(config.recallInstructions, true),
   }
 }
 
@@ -263,14 +294,35 @@ export function buildPreviewArgv(view: string, opts: { limit?: number; json?: bo
  */
 export const DEPLOY_TASKBOOK = join(HERE, '..', 'docs', 'AGENT-DEPLOY.md')
 
+/** Per-invocation overrides for `runCore`. */
+export interface RunCoreOptions {
+  /** Wall-clock cap. Defaults to `TIMEOUT_MS`. */
+  timeoutMs?: number
+  /**
+   * Abort signal from the turn. Without it a cancelled turn leaves the core
+   * running until its own timeout expires.
+   */
+  signal?: AbortSignal
+}
+
 /**
  * Run one core CLI invocation via subprocess.
  *
  * Never uses a shell — argv is passed directly to the Python executable.
  * PYTHONPATH is augmented with corePath so the unified_memory package is
  * importable even when not pip-installed.
+ *
+ * `opts.timeoutMs` exists because the two callers have incompatible budgets: a
+ * tool call may reasonably take 25s (it is the user's explicit request), while
+ * automatic recall runs before every turn and must not. A single module constant
+ * forced the recall path to inherit the tool path's ceiling.
  */
-export function runCore(cfg: PluginConfig, args: string[]): Promise<CoreResult> {
+export function runCore(
+  cfg: PluginConfig,
+  args: string[],
+  opts: RunCoreOptions = {},
+): Promise<CoreResult> {
+  const timeoutMs = opts.timeoutMs ?? TIMEOUT_MS
   return new Promise((resolvePromise) => {
     const env: Record<string, string> = { ...process.env } as Record<string, string>
     if (cfg.vaultPath) env.UNIFIED_MEMORY_VAULT = cfg.vaultPath
@@ -282,7 +334,7 @@ export function runCore(cfg: PluginConfig, args: string[]): Promise<CoreResult> 
     const child = execFile(
       cfg.pythonPath,
       ['-m', 'unified_memory.memory', ...args],
-      { env, timeout: TIMEOUT_MS, maxBuffer: MAX_OUTPUT, windowsHide: true },
+      { env, timeout: timeoutMs, maxBuffer: MAX_OUTPUT, windowsHide: true, signal: opts.signal },
       (err, stdout, stderr) => {
         if (err) {
           const stderrTail = String(stderr ?? '')
@@ -302,10 +354,15 @@ export function runCore(cfg: PluginConfig, args: string[]): Promise<CoreResult> 
             hint =
               `Python interpreter not found: "${cfg.pythonPath}". ` +
               'Set pythonPath (or UNIFIED_MEMORY_PYTHON env) to your Python 3 executable.'
-          } else if (err.killed && err.signal === 'SIGTERM') {
+          } else if (opts.signal?.aborted) {
+            // The turn was cancelled before the core answered. Distinct from a
+            // timeout: nothing is wrong with the vault or the query.
+            kind = 'aborted'
+            hint = 'The turn was cancelled while the core was still running; nothing to fix.'
+          } else if (err.killed && (err.signal === 'SIGTERM' || err.code === 'ABORT_ERR')) {
             kind = 'timeout'
             hint =
-              `Core subprocess timed out after ${TIMEOUT_MS}ms. ` +
+              `Core subprocess timed out after ${timeoutMs}ms. ` +
               'Try a more specific query, or check whether the vault index needs rebuilding.'
           }
 
