@@ -22,6 +22,7 @@ import sys
 import time
 from pathlib import Path
 
+from . import config as config_mod
 from . import digest as digest_mod
 from . import embed as embed_mod
 from . import graph as graph_mod
@@ -218,13 +219,13 @@ def _persist_vault(vault: Path) -> str:
     """Write the `vault:` key without touching any other line; returns the old value.
 
     Line-preserving on purpose: the config is hand-editable and may carry
-    comments and unrelated keys.
+    comments and unrelated keys. The write itself goes through ``config``, the
+    single writer, so it cannot race the digest toggle or a concurrent `use`.
     """
-    cfg = read_maybe(CONFIG_PATH)
     previous = parse_config(CONFIG_PATH).get("vault", "")
-    lines = [ln for ln in cfg.splitlines() if not ln.strip().startswith("vault:")]
-    lines.append(f"vault: {vault}")
-    atomic_write(CONFIG_PATH, "\n".join(lines) + "\n")
+    # Pass the path explicitly: this module's CONFIG_PATH is the one the caller
+    # sees (and may rebind), while config.default_path() resolves common's copy.
+    config_mod.set_key("vault", str(vault), CONFIG_PATH)
     return previous
 
 

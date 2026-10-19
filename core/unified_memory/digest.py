@@ -71,13 +71,14 @@ def digest_enabled(config_path: Path) -> bool:
 
 
 def _set_enabled(config_path: Path, enabled: bool) -> None:
-    from .common import atomic_write
+    """Flip ``digest.enabled`` through the single config writer.
 
-    lines = []
-    if config_path.exists():
-        lines = [ln for ln in config_path.read_text(encoding="utf-8").splitlines() if not ln.strip().startswith(CONFIG_ENABLED_KEY)]
-    lines.append(f"{CONFIG_ENABLED_KEY}: {'true' if enabled else 'false'}")
-    atomic_write(config_path, "\n".join(lines) + "\n")
+    This used to be a second read-modify-write of ~/.unified-memory.yaml that
+    took no lock, so racing `memory use` could silently drop ``vault:``.
+    """
+    from . import config as config_mod
+
+    config_mod.set_key(CONFIG_ENABLED_KEY, "true" if enabled else "false", config_path)
 
 
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}")
