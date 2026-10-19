@@ -35,13 +35,49 @@ EMBED_URL = "https://api.siliconflow.cn/v1/embeddings"
 EMBED_MODEL = "Qwen/Qwen3-Embedding-4B"
 EMBED_DIMS = 1024
 BATCH_SIZE = 32  # SiliconFlow accepts up to 32 inputs per call
-TIMEOUT_S = 15
+TIMEOUT_S = 15  # batch embedding (memory embed / memory sync)
+# The recall hot path must not inherit the batch timeout: one query vector that
+# takes 15 s turns every turn into a 15 s stall. Retrieval uses a short budget
+# and simply runs without the vector stream when the provider is slow.
+QUERY_TIMEOUT_S = 0.8
+# Circuit breaker: after this many consecutive failures the provider is treated
+# as down for a cooldown window, so a broken network costs one timeout per
+# window instead of one per query.
+CIRCUIT_FAILURES = 2
+CIRCUIT_COOLDOWN_S = 300.0
 SECRETS_PATH = Path.home() / ".unified-memory" / "secrets.yaml"
 API_KEY_ENV = "SILICONFLOW_API_KEY"
 
 # Minimal token budget below which we do not even try (no point sending a
 # 1-token query to a 4B embedding model).
 MIN_TEXT_LEN = 2
+
+_failures = 0
+_circuit_open_until = 0.0
+
+
+def circuit_open() -> bool:
+    """True while the provider is considered down (see CIRCUIT_COOLDOWN_S)."""
+    return time.monotonic() < _circuit_open_until
+
+
+def reset_circuit() -> None:
+    """Forget the failure history (tests, and `memory sync` after a fix)."""
+    global _failures, _circuit_open_until
+    _failures = 0
+    _circuit_open_until = 0.0
+
+
+def _record_failure() -> None:
+    global _failures, _circuit_open_until
+    _failures += 1
+    if _failures >= CIRCUIT_FAILURES:
+        _circuit_open_until = time.monotonic() + CIRCUIT_COOLDOWN_S
+
+
+def _record_success() -> None:
+    global _failures
+    _failures = 0
 
 
 def get_api_key() -> str:
@@ -70,11 +106,19 @@ def _request_body(texts: list[str]) -> bytes:
     return json.dumps(payload).encode("utf-8")
 
 
-def embed_texts(texts: list[str]) -> list[list[float]] | None:
+def embed_texts(texts: list[str], timeout_s: float = TIMEOUT_S) -> list[list[float]] | None:
     """Embed ``texts`` (≤32) in one call. Returns a list of float vectors, or
-    None on any failure (missing key, network error, HTTP error, bad JSON)."""
+    None on any failure (missing key, open circuit, network error, HTTP error,
+    bad JSON).
+
+    ``timeout_s`` defaults to the batch budget; the recall hot path passes the
+    much shorter ``QUERY_TIMEOUT_S`` so a slow provider degrades the result set
+    instead of stalling the turn.
+    """
     texts = [t for t in texts if t and len(t.strip()) >= MIN_TEXT_LEN]
     if not texts:
+        return None
+    if circuit_open():
         return None
     key = get_api_key()
     if not key:
@@ -90,26 +134,31 @@ def embed_texts(texts: list[str]) -> list[list[float]] | None:
         },
     )
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT_S) as resp:
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError, json.JSONDecodeError):
+        _record_failure()
         return None
     items = data.get("data") if isinstance(data, dict) else None
     if not isinstance(items, list):
+        _record_failure()
         return None
     vectors: list[list[float]] = []
     for item in sorted(items, key=lambda it: it.get("index", 0)):
         vec = item.get("embedding")
         if not isinstance(vec, list) or len(vec) != EMBED_DIMS:
+            _record_failure()
             return None
         vectors.append([float(x) for x in vec])
     if len(vectors) != len(texts):
+        _record_failure()
         return None
+    _record_success()
     return vectors
 
 
-def embed_one(text: str) -> list[float] | None:
-    result = embed_texts([text])
+def embed_one(text: str, timeout_s: float = TIMEOUT_S) -> list[float] | None:
+    result = embed_texts([text], timeout_s=timeout_s)
     return result[0] if result else None
 
 
@@ -223,7 +272,7 @@ def embed_query_cached(vault: Path, text: str) -> list[float] | None:
     except Exception:  # noqa: BLE001 — cache is optional
         pass
 
-    vector = embed_one(text)
+    vector = embed_one(text, timeout_s=QUERY_TIMEOUT_S)
     if vector is None:
         return None
     try:

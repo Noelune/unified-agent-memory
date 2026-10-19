@@ -81,16 +81,21 @@ def hybrid_search(
     Returns {"ok", "query", "count", "results", "streams"} where each result
     carries doc/line/type/importance/score and is already redacted.
 
-    Newly promoted facts are automatically embedded before searching (only the
-    missing vectors; a few lines is a handful of cheap calls), so semantic
-    recall is always up to date without a manual ``memory embed``.
+    Retrieval never calls the embedding provider. It refreshes the keyword index
+    (a local, incremental scan) and ranks with whatever vectors already exist;
+    ``memory sync`` is what fills the gaps. The trade-off is deliberate: a
+    search issued right after a write ranks the new line lexically until the
+    next sync, in exchange for recall latency that does not depend on a remote
+    API. See the comment below for the measurements behind that choice.
     """
-    index_info = index.update_index(vault)  # self-healing derived db
-    # Top up vectors only when the vault actually changed. This used to run on
-    # every search, adding a provider round-trip to the hot path even when no
-    # fact was new.
-    if index_info["changed_docs"] and embed.configured():
-        embed.embed_missing(vault, limit=64, update=False)
+    index.update_index(vault)  # incremental, self-healing derived db
+    # Vector top-up used to live here. That is maintenance, not retrieval: on a
+    # changed vault it fired up to 64 provider calls inside a single search, so
+    # recall latency was whatever SiliconFlow felt like that second (measured
+    # 117 / 256 / 526 ms across three runs). `memory sync` owns that work now,
+    # and the promoter triggers it after a write. A search that finds stale
+    # vectors still returns results — it just ranks without the newest lines
+    # until the next sync, instead of blocking the turn on a network round trip.
     query = query.strip()
     pool = max(limit * 3, 20)
 

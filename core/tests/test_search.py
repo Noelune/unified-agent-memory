@@ -64,7 +64,14 @@ class HybridSearchTest(unittest.TestCase):
         self.assertGreater(result["streams"]["bigram"], 0)
         self.assertTrue(any("记忆索引" in r["line"] for r in result["results"]))
 
-    def test_embedding_topup_only_runs_when_the_vault_changed(self):
+    def test_search_never_calls_the_embedding_provider_for_maintenance(self):
+        """Retrieval must not top up vectors.
+
+        Vector maintenance used to run inside every hybrid search (up to 64
+        provider calls per query on a changed vault), which made recall latency
+        whatever the provider felt like. `memory sync` owns that work now; a
+        search may still *read* vectors, but it must never write new ones.
+        """
         from unittest.mock import patch
 
         with patch.object(search.embed, "configured", return_value=True), patch.object(
@@ -73,11 +80,8 @@ class HybridSearchTest(unittest.TestCase):
             return_value={"ok": True, "embedded": 0, "total": 0, "reason": ""},
         ) as topup:
             search.hybrid_search(self.vault, "indigo", limit=3)
-            first = topup.call_count
             search.hybrid_search(self.vault, "indigo", limit=3)
-            second = topup.call_count
-        self.assertGreaterEqual(first, 1)
-        self.assertEqual(second, first, "no vault change means no provider call")
+        self.assertEqual(topup.call_count, 0, "recall must stay local; sync owns the top-up")
 
     def test_hybrid_diversifies_per_doc(self):
         # Many facts in one note; hybrid must not flood a single doc.
@@ -127,7 +131,7 @@ class QueryCacheTest(unittest.TestCase):
         calls = []
         vector = [0.1] * emb.EMBED_DIMS
 
-        def fake_embed(texts):
+        def fake_embed(texts, timeout_s=None):
             calls.append(list(texts))
             return [vector for _ in texts]
 

@@ -431,6 +431,44 @@ def cmd_submit(args: argparse.Namespace) -> None:
     raise SystemExit("could not allocate a submission file name")
 
 
+def cmd_sync(args: argparse.Namespace) -> None:
+    """Bring the derived index — and optionally the vectors — up to date.
+
+    This is the maintenance half that used to run inside every hybrid search.
+    Making it explicit keeps recall local and fast, while a write path (the
+    promoter) or a schedule pays the network cost exactly once.
+    """
+    vault = resolve_vault()
+    ensure_vault(vault)
+    result = index_mod.update_index(vault, verbose=False)
+    changed = int(result.get("changed_docs", 0) or 0)
+    limit = getattr(args, "limit", 400)
+    if getattr(args, "no_embed", False):
+        vectors = {"ok": True, "embedded": 0, "total": 0, "reason": "skipped (--no-embed)"}
+    elif not embed_mod.configured():
+        vectors = {"ok": False, "embedded": 0, "total": 0, "reason": "no SiliconFlow API key"}
+    elif embed_mod.circuit_open():
+        vectors = {"ok": False, "embedded": 0, "total": 0, "reason": "provider circuit is open — retry after the cooldown"}
+    else:
+        vectors = embed_mod.embed_missing(vault, limit=limit, update=False)
+    if getattr(args, "json", False):
+        emit_json(
+            "sync",
+            {
+                "changed_docs": changed,
+                "fts5": bool(result.get("fts")),
+                "index": str(index_db_for(vault)),
+                "vectors": vectors,
+            },
+        )
+        return
+    print(f"index: {changed} document(s) changed, fts5={'yes' if result.get('fts') else 'no'}")
+    if vectors["ok"]:
+        print(f"vectors: {vectors['embedded']} line(s) embedded ({vectors['reason'] or 'up to date'})")
+    else:
+        print(f"vectors: skipped — {vectors['reason']}")
+
+
 def cmd_embed(args: argparse.Namespace) -> None:
     vault = resolve_vault()
     ensure_vault(vault)
@@ -805,6 +843,12 @@ def main(argv: list[str] | None = None) -> None:
     p_status = sub.add_parser("status", help="show configuration and index health")
     p_status.add_argument("--json", action="store_true", help="emit a machine-readable JSON envelope")
     p_status.set_defaults(fn=cmd_status)
+
+    p_sync = sub.add_parser("sync", help="update the derived index and top up vectors (maintenance, not retrieval)")
+    p_sync.add_argument("--limit", type=int, default=400, help="max memory lines to embed per run")
+    p_sync.add_argument("--no-embed", action="store_true", help="skip the vector top-up (index only)")
+    p_sync.add_argument("--json", action="store_true", help="emit a machine-readable JSON envelope")
+    p_sync.set_defaults(fn=cmd_sync)
 
     p_embed = sub.add_parser("embed", help="enrich the index with semantic vectors (SiliconFlow)")
     p_embed.add_argument("--limit", type=int, default=400, help="max memory lines to embed per run")

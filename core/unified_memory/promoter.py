@@ -361,6 +361,22 @@ def promote(vault: Path, entries: list[dict], *, locked: bool = False) -> list[s
     return promoted
 
 
+def _refresh_index(vault: Path) -> None:
+    """Re-index after a canonical write so recall sees the new facts at once.
+
+    Retrieval used to do this itself, bundled with a vector top-up, which put up
+    to 64 provider calls inside a single search. Moving it here keeps the cost
+    on the write path (11–26 ms measured) instead of on every turn's recall.
+    A failure here must never undo a write that already succeeded.
+    """
+    try:
+        from . import index as index_mod
+
+        index_mod.update_index(vault)
+    except Exception:  # noqa: BLE001 — the canonical write is already durable
+        pass
+
+
 def archive_sources(vault: Path, sources: set[str], *, locked: bool = False) -> None:
     if not locked:
         with file_lock(vault):
@@ -394,6 +410,7 @@ def apply_pending(vault: Path, verbose: bool = True) -> int:
         sources = pending_sources(vault, entries)
         promoted = promote(vault, entries, locked=True)
         archive_sources(vault, sources, locked=True)
+    _refresh_index(vault)
     if not entries:
         if verbose:
             print("pending list is empty — reviewed inbox files archived")
@@ -413,6 +430,7 @@ def auto_promote(vault: Path, verbose: bool = True) -> int:
     with file_lock(vault):
         promoted = promote(vault, result["pending"], locked=True)
         archive_sources(vault, {name for name in result["source_files"] if name}, locked=True)
+    _refresh_index(vault)
     if verbose:
         print(f"auto-promoted {len(promoted)} fact(s) ({result['duplicates']} duplicate(s) skipped)")
         for line in promoted:
