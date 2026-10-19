@@ -33,6 +33,24 @@ export interface UpdateInfo {
 }
 
 /**
+ * The reconcile pass's view of the install, as the client needs it.
+ *
+ * Only what the panel can draw: whether anything needs attention, the version
+ * transition, and the broken artifacts by label. The full plan (with details
+ * for every artifact, including the healthy ones) stays on the host half —
+ * shipping it would triple the payload for text the pane truncates anyway.
+ */
+export interface UpgradeInfo {
+  fromVersion: string | null
+  toVersion: string
+  needsAttention: boolean
+  /** Artifacts that are not `ok`, already turned into sentences. */
+  problems: string[]
+  /** Null while the pass is still running, or when it never ran. */
+  done: boolean
+}
+
+/**
  * Build the `/status` response body.
  *
  * Always `ok: true` — this describes the host's own state, not the core's.
@@ -44,6 +62,7 @@ export function buildStatusPayload(
   ui: UpdateInfo,
   stats: StatusStats | null,
   onboarding: { granted: boolean } = { granted: false },
+  upgrade: UpgradeInfo | null = null,
 ) {
   return {
     ok: true,
@@ -72,6 +91,10 @@ export function buildStatusPayload(
     version: ui.currentVersion,
     latestVersion: ui.latestVersion,
     updateAvailable: ui.updateAvailable,
+    // What the last reconcile pass found. Null before the first pass has
+    // planned anything, which is the normal state for a few hundred ms after
+    // boot — the client must render "checking", not "failed".
+    upgrade: upgrade,
     index: stats ? { ok: Boolean(stats.indexOk) } : null,
     stats: stats
       ? { memories: stats.memories, vectors: stats.vectors, pending: stats.pending }

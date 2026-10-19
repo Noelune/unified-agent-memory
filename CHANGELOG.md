@@ -4,6 +4,45 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.8.1] — 2026-10-20
+
+### Added — 升级会自动把「其余三件」做完
+
+一次插件升级不是一件事，是四件：npm 只替换 `lib/` 和 `core/`，而 shim、托管段、
+vault 模版文件这三样留在磁盘上一动不动。老用户升完级，代码是新的，另外三样全是
+旧的，且没有任何东西会告诉他。
+
+现在启动时调度一次 reconcile（`setImmediate`，不 `await`、不询问、不抛给宿主），
+按 `shim → vault → instructions → registry → state` 的顺序核对并修补：
+
+- shim 读回 `PYTHONPATH=` 那一行检查目标目录；指向已删的核心、或指向上一版安装
+  位置，都会就地改指当前核心。
+- vault 只**补**缺失的模版文件（`COPYFILE_EXCL`），已存在的绝不覆盖。
+- 托管段委托 `deploy.py apply`，不自建第二份判定 —— marker 语义、备份、写后校验
+  都归它。
+- 版本**最后**写。任何一步失败就不记版本，下次启动整个重跑；反过来会一次半途而废
+  的升级盖章成「已完成」。
+- 一台从没配过的机器上什么都不做，交给 `memory_setup`（否则会生成一个指向不存在
+  vault 的 shim，还替用户把同意流程跳过去）。
+
+`/status` 多了 `upgrade` 字段（`fromVersion`/`toVersion`/`needsAttention`/
+`problems`/`done`），首次规划前为 `null`，面板渲染成「检查中」而非「失败」。
+状态记在 `~/.unified-memory/upgrade.json`。设计见
+`docs/superpowers/specs/2026-10-20-plugin-upgrade-design.md`。
+
+### Fixed — 修掉 `shimTarget` 读不出 Windows shim 的 bug
+
+上一版没发出去，但值得一提：第一版正则 `PYTHONPATH=(?:"([^"]*)"|'([^']*)')` 只
+认得 sh 方言。cmd 那一行长这样：
+
+```bat
+set "PYTHONPATH=C:\path with spaces\core"
+```
+
+引号在赋值两边，`=` 后面直接是 `C:`，于是**每个 Windows 用户的 shim 每次启动
+都会被判成「内容无法识别」并重写一遍**。三个方言的正确顺序是 cmd 那条吃掉闭合
+引号、排在最先。这个 bug 是单元测试抓到的，不是读代码看出来的。
+
 ### Fixed — 提交前缀永远是「dsh（未识别 profile）」
 
 插件的写前缀本该跟着 DSH profile 走（desktop → `dsh-desktop`），好让同一个

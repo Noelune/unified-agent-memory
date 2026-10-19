@@ -73,6 +73,7 @@ import { DOC_PATH, handleDoc } from './route-doc.ts'
 import { DOCTOR_PATH, handleDoctor } from './route-doctor.ts'
 import { DISMISS_PATH, handleDismiss, parseDismissBody } from './route-dismiss.ts'
 import { STATS_PATH, buildStatsArgs, shapeStatsResult } from './route-stats.ts'
+import { startUpgradeReconcile, upgradeInfo } from './upgrade-boot.ts'
 import type { PluginConfig } from './types.ts'
 import type { StatusStats } from './status-payload.ts'
 export const name = 'dsh-unified-agent-memory'
@@ -204,6 +205,13 @@ export function apply(ctx: Context, config: Record<string, unknown> = {}): void 
   // the update badge could only ever describe the day the app was launched.
   startUpdateWatch(ctx as never)
 
+  // ---- Reconcile the install with this build ----
+  // Scheduled, never awaited: an upgrade touches four artifacts (shim, managed
+  // instruction sections, vault template files, registry) and only the first is
+  // replaced by npm. Doing this on a timer keeps the boot path as fast as it
+  // was, and a failure here cannot cost the user their tools.
+  startUpgradeReconcile(cfg)
+
   // ---- HTTP status route consumed by the browser client half ----
   // client-ui.js polls it for configuration and health data. register() returns
   // a disposer; cordis drops it when this plugin's fiber is disposed.
@@ -228,7 +236,10 @@ export function apply(ctx: Context, config: Record<string, unknown> = {}): void 
             vaultPath: cfg.vaultPath,
             scope: ONBOARDING_SCOPE,
           })
-          sendJson(res, 200, buildStatusPayload(cfg, ui, stats, { granted }))
+          // What the last reconcile pass found. Null until it has planned —
+          // the normal state for the first few hundred ms after boot, which
+          // the panel renders as "checking" rather than as "failed".
+          sendJson(res, 200, buildStatusPayload(cfg, ui, stats, { granted }, upgradeInfo()))
         } catch {
           // Serialization failure — respond with 500 so the client
           // doesn't hang. This guard exists because JSON.stringify

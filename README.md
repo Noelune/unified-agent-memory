@@ -29,6 +29,11 @@
 `dsh-unified-agent-memory` 发布：`core/` 是纯 Python 核心，`src/` 是 DSH 宿主
 半边（工具、路由、`agent/pre-step` 自动召回），收件箱是唯一写入通道。
 
+装好之后它不只是后台跑：桌面端侧边栏有四个页签（概览 / 搜索 / 健康 / 统计），
+健康页把每个体检问题讲成「问题 → 后果 → 下一步 → 命令」，并且可以直接把问题
+交给一个新会话里的 Agent 去修。升级也不再需要手工补步骤——插件自己核对 shim、
+托管段与 vault 模版是否还跟得上当前版本。
+
 ---
 
 ## 🚀 核心技术优势
@@ -51,6 +56,13 @@
   同时解析仓库格式 `（写入 …｜来源：Agent提交区/x.md）` 与 Hermes 实际写入的 `[[Agent提交区/…]]`、`事件 \`…\``、`｜有效至 …` 方言。`｜有效至` 行自动标记为 `superseded`，不再作为当前事实召回。
 - **可观测性与自维护 (Doctor & GC)**
   `memory doctor` 一次输出索引规模、收件箱积压、冲突、向量覆盖率、图谱膨胀、OneDrive 冲突副本等问题清单；`memory gc` 只清理派生数据（孤儿索引库、过期访问日志、膨胀图谱、VACUUM），默认 dry-run，`--apply` 才执行。
+- **桌面端侧边栏面板 (DSH Sidebar Panel)**
+  侧边栏提供四个页签——概览、搜索、健康、统计——不必切终端。**搜索**结果能直接就地展开全文（走 `/doc`，不是把文件名丢给你）；**健康**页把 `doctor` 的每条问题渲染成「问题 → 后果 → 下一步 → 可粘贴的命令」四段，命令单独一行且可一次选中（`user-select: all`），不会让人重打一遍；**统计**页先给四个数字的结论再给图，构成环图与访问热力图收进 `<details>` 折叠。核心新增的未知 `code` 不隐藏，退回核心自己的英文 `message` / `hint` —— 少一句好文案，总好过把问题藏起来。
+- **问题可以一键交给 Agent 修 (Repair Hand-off)**
+  健康页每张问题卡带「让 Agent 处理」/「让 Agent 分析」。分流按 `code` 走：`unclassified-facts` 这类可以交给它改；`conflicts-pending`、`vault-missing` 只能让它先给建议 —— 让 Agent「修」一个谁赢的判断题，等于让它替你删东西。任务包是自足的（核心原文、面板译好的后果与修法、计数、vault 绝对路径、改完必须重跑 `doctor` 并回帖），且**每次都送进一个新建的会话**，不污染你正在聊的那个。送不出去也不白写：失败卡片带「复制任务包」，剪贴板不可用时退成可框选的文本。
+- **升级自愈 (Self-healing Upgrade)**
+  一次升级是四件事，npm 只做第一件。插件的 shim、各 Agent 指令文件的托管段、vault 模版文件都不会被 `dsh plugin update` 替换，于是老用户升完级会出现「Agent 照旧规则做事、工具按新行为执行」这种双方都正常却对不上的状态。本版起插件在启动时调度一次核对（不阻塞、不弹窗），按 `shim → vault → instructions → registry → 版本记录` 修补，只补不覆盖、改前备份，版本**最后**写——任何一步失败就下次重试，绝不把半途而废的升级盖章成完成。
+
 - **异步同步副本隔离 (Sync-Conflict Isolation)**
   OneDrive/Dropbox 生成的 `note 2.md`、`note-副本.md` 等冲突副本不会进入索引，避免同一事实以两个“真相”参与检索；`doctor` 会明确报错提示人工合并。
 - **语义向量层 (Semantic Embeddings, 可选)**  
@@ -72,6 +84,8 @@
 | **核心组件依赖** | 纯 Python 标准库，无第三方依赖 | 依赖 Host 宿主插件环境 | 需要部署额外的数据库中间件 |
 | **生命周期控制能力** | 包含 摄取/晋升/裁决/遗忘 全链路 | 通常仅具备 存储+召回 基础功能 | 仅实现向量空间映射 |
 | **知识可视化与可介入性** | Obsidian 原生 Markdown，人类直接可读 | 数据库黑盒 / 私有 JSON 格式 | 向量数据结构不可直观校验 |
+| **问题诊断与修复闭环** | 侧边栏体检页给出后果+命令，可一键交给 Agent 修 | 无诊断，或只有一行 `error` | 无 |
+| **升级后的一致性** | 启动时自动核对 shim / 托管段 / vault 模版并修补 | 依赖用户重装或照文档手工补步骤 | 需重新索引 |
 | **安全审计与防护机制** | 标签隔离包装 + 凭据正则自动脱敏 | 依赖上层应用手工干预 | 易在向量库中泄露明文凭据 |
 
 ---
@@ -180,6 +194,26 @@ flowchart LR
 
 贡献与归属按前缀区分：本端前缀默认跟着 profile 走（desktop → `dsh-desktop-`），`memory_status` 里会显示前缀及其来源（`config` / `env` / `profile` / `fallback`）；出现 `fallback` 说明宿主没给出 profile、两端会写成同一个前缀，值得先修配置。
 
+### 3. 升级插件之后会发生什么 (Upgrading)
+
+`dsh plugin update` 只替换了 `lib/` 与 `core/`。**其余三样留在磁盘上一动不动**，而它们恰恰决定了 Agent 怎么做事：
+
+| 升级后可能过期的 | 症状 | 现在的处理 |
+|---|---|---|
+| `~/.unified-memory/bin/memory`（CLI shim） | 非 DSH 的 Agent 调用时报 `No module named unified_memory` —— 像装坏了，其实只是 shim 里的绝对路径指向了已删目录 | 读回 `PYTHONPATH=` 检查目标，改指当前核心 |
+| 各 Agent 指令文件的托管段 | Agent 按上一版规则做事，工具按这一版执行；两边都「正常」，日志里看不出矛盾 | 委托 `deploy.py apply` 重写（带时间戳备份，段外内容不动） |
+| vault 里的模版文件 | 新版本发布说明里提到的文档搜不到，回 `unknown document` | 只补缺失的（`COPYFILE_EXCL`），已存在的绝不覆盖 |
+| 派生索引 | 无（核心在打开时按 `SCHEMA_VERSION` 自动清空重建） | 只报出来，不让版本切换静默发生 |
+
+这套核对在插件加载后自己跑，**不阻塞启动、不弹确认、失败不抛给宿主**。顺序是 `shim → vault → instructions → registry → 版本记录`，其中版本写最后：任何一步失败就不记新版本，下次启动整个重试。反过来先写版本，等于把一次半途而废的升级盖章成「已完成」，从此不再重试。
+
+状态记在 `~/.unified-memory/upgrade.json`（版本、`corePath`、时间、上次实际改了哪些工件）；`/status` 的 `upgrade` 字段把 `fromVersion` / `toVersion` / `needsAttention` / 问题摘要交给面板。
+
+**从没配过的机器上什么都不做**——没有版本记录、没有 vault、没有 `~/.unified-memory` 三者同时成立时，交给 `memory_setup`，否则会生成一个指向不存在 vault 的 shim，还替你把同意流程跳过去了。
+
+对维护者的意义：以后**只要改 `package.json` 的 version**，上述四类漂移全部自动跟随——往 `vault-template/` 加文件、改托管段规则、改 `SCHEMA_VERSION`、包目录变化，都不需要再动升级代码。设计说明见 [docs/superpowers/specs/2026-10-20-plugin-upgrade-design.md](docs/superpowers/specs/2026-10-20-plugin-upgrade-design.md)。
+
+
 ---
 
 ## 💻 命令行快速体验 (Manual Quick Start)
@@ -235,10 +269,15 @@ Hermes 集成（`integrations/hermes/`）只是"其中一个 Agent 接进来"的
 |---|---|
 | `core/` | 零第三方依赖 Python 包：包含 `memory.py` (初始化/检索/查看/提交), `promoter.py` (审核/应用/裁决), `forgetter.py` (衰减归档), `conflict.py` (冲突判定) |
 | `vault-template/` | 即用型 Obsidian Vault 模版：包含 7 份标准化 Canonical 笔记、`00_Inbox` 提交区、情境信息与记忆遗忘区 |
-| `lib/` | dsh 插件核心：提供 `memory_search` / `memory_show` / `memory_submit` / `memory_status` 工具接口 |
+| `src/` | DSH 宿主半边：工具注册（`tools.ts`）、`agent/pre-step` 自动召回（`recall.ts`）、路由（`route-*.ts`）、配置解析（`utils.ts`） |
+| `src/client/` | 浏览器半边：侧边栏四个页签（概览/搜索/健康/统计）、体检问题卡、Agent 交接与任务包（`agent-bridge.ts`）、图表 |
+| `src/upgrade.ts` | 升级**规划器**：纯读盘，只产出计划，一个字节都不写 |
+| `src/upgrade-run.ts` | 升级**唯一写入点**：shim / vault / 托管段 / 登记表，版本最后写 |
+| `src/upgrade-boot.ts` | 启动接线：`setImmediate` 调度，不阻塞、不弹窗、不抛给宿主 |
+| `lib/` | 构建产物：`dsh` 插件入口与 `client-ui.js`（由 `build.mjs` 从 `src/` 生成，不手改） |
 | `integrations/` | 提供 `AGENTS.md` (Codex), `CLAUDE.md` (Claude) 与 Hermes Hook 集成示例 |
-| `setup/` | 部署与自检脚本 `setup.py` (init/cron/selfcheck) 与 `selfcheck.py` |
-| `docs/` | ARCHITECTURE (系统架构), DEPLOY (部署指南), SECURITY (安全规范) |
+| `setup/` | 部署与自检脚本 `setup.py` (init/cron/selfcheck)、`deploy.py` (托管段注入) 与 `selfcheck.py` |
+| `docs/` | ARCHITECTURE / DEPLOY / SECURITY / DESKTOP / JSON-CONTRACT，以及 `superpowers/specs/` 下的设计文档 |
 
 ---
 

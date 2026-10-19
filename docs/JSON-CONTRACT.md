@@ -436,9 +436,9 @@ else:
 **访问约束**：仅回环（`127.0.0.1` / `::1` / `::ffff:127.0.0.1`）可访问，其他来源 `403`；
 非 `GET`/`HEAD` 返回 `405`。成功响应 `200`，`cache-control: no-store`。
 
-入参：`(cfg: PluginConfig, ui: UpdateInfo, stats: StatusStats | null, onboarding = { granted: false })`。
+入参：`(cfg: PluginConfig, ui: UpdateInfo, stats: StatusStats | null, onboarding = { granted: false }, upgrade: UpgradeInfo | null = null)`。
 
-九个原有字段 + `index`、`stats`、`agentName`、`agentSource`、`recall`、`onboarding`：
+九个原有字段 + `index`、`stats`、`agentName`、`agentSource`、`recall`、`onboarding`、`upgrade`：
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
@@ -452,6 +452,7 @@ else:
 | `agentSource` | `"config"\|"env"\|"profile"\|"fallback"` | 前缀来源。`profile` 来自宿主的 `profileContext`（手工启动时也可由 `DSH_PROFILE` 环境变量提供）；`fallback` 表示宿主没有发布 profile、也没配 `agentName`，两端会写成同一个前缀——属可见的告警状态 |
 | `recall` | `{"mode":"auto"\|"always"\|"off","limit":number,"maxChars":number,"minQueryChars":number,"timeoutMs":number,"instructions":boolean}` | `agent/pre-step` 自动召回的**生效值**（不是默认值）。发布它的理由：`off`、没命中话题、core 坏掉，从外部看都是「这一轮没有召回」，只有把模式发出来才能区分 |
 | `onboarding` | `{"granted": boolean}` | 当前 vault 是否已完成首次引导（逐个 vault 判定，换 vault 需重新授权） |
+| `upgrade` | `{"fromVersion":string\|null,"toVersion":string,"needsAttention":boolean,"problems":string[],"done":boolean}` \| null | 上次 reconcile 的结论。**`null` 是正常状态**（启动后几百毫秒内尚未规划），客户端必须渲染「检查中」而非「失败」。`problems` 最多 3 条（面板 380px 宽），每条已是「工件名：说明」形式的句子；`fromVersion` 为 `null` 表示首次运行，不得伪造成 `"0.0.0"`。`needsAttention` 在版本变化或任一工件非 `ok` 时为 `true` |
 | `version` | string | `ui.currentVersion` |
 | `latestVersion` | string \| null | 注册表检查未返回前为 `null` |
 | `updateAvailable` | boolean \| null | 同上，未知为 `null` |
@@ -568,6 +569,35 @@ else:
   - 拒绝与失败以一行 `deployment error: <文件>: <原因>` 输出，退出码 2，不带 traceback。
 - `selfcheck` 不信退出码：`memory status` 发现结构缺失时照样退出 0，所以还要匹配 stdout 里的
   `vault structure: MISSING`。
+
+### 6.3 `~/.unified-memory/upgrade.json`（升级状态记录）
+
+不在 API 契约里，但它的读取语义决定了 `/status.upgrade` 的取值，所以一并写死：
+
+```json
+{
+  "version": "0.8.1",
+  "corePath": "C:\\...\\dsh-unified-agent-memory\\core",
+  "installPath": "C:\\...\\dsh-unified-agent-memory",
+  "appliedAt": "2026-10-20T02:30:00.000Z",
+  "changed": ["shim", "vault", "instructions", "registry"]
+}
+```
+
+| 字段 | 约束 |
+|---|---|
+| `version` | 必需。缺失 / 空串 → 整个记录视为不存在 |
+| `corePath` | 必需。缺失 / 空串 → 整个记录视为不存在（它是下一轮 `installMoved` 的唯一依据） |
+| `installPath` | 缺失时退化为 `""`，不导致记录失效 |
+| `appliedAt` | 缺失时退化为 `""`，不导致记录失效 |
+| `changed` | 非数组时退化为 `[]`，非字符串元素被过滤 |
+
+**读取失败一律等价于「首次运行」。** 文件被截断、JSON 非法、字段类型错，都返回 `null`，
+下一轮跑一次完整的 reconcile——那和全新安装跑的是同一趟，幂等。因为一个 JSON 解析失败
+就拒绝启动，比多做一次无害的核对严重得多。
+
+**这个文件只在所有步骤都成功后才写。** 任何一步失败则不写，`version` 停留在上一个成功
+版本（或不存在），于是下次启动重新核对——这是「不把半途而废的升级盖章成已完成」的实现方式。
 
 ---
 
