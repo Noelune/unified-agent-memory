@@ -4,6 +4,36 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added — 体检页可以把问题直接交给 Agent
+
+上一版给了修法，但修法还是要人复制、切终端、看输出、再回来点重新体检。
+`unclassified-facts` 这类根本没有单条命令的（`command: null`），面板只能说
+「让 agent 读一遍」，页面上却没有能叫它的按钮。现在有了：
+
+- 每张问题卡多一行动作：**让 Agent 处理 / 让 Agent 分析**，旁边标这次会不
+  会写库。分流按 code 走（`AGENT_PLAN`）：`unclassified-facts`、`duplicate-facts`
+  这些可以交给它改；`conflicts-pending`、`sync-conflict-copies`、`vault-missing`
+  只能让它先给建议 —— 让 agent「修」一个谁赢的判断题，就是让它替你删东西。
+  本版不认识的 code 不给按钮，只保留复制。
+- 点击不弹窗，卡片内换成确认行：发送到哪个会话、会不会改库，一句话说清。目
+  标默认是**最近在用的会话**（`updatedAt` 最新、排除 subagent 行），没有就新建。
+- 任务包是自足的：核心原文的 `message`/`hint`、面板译好的后果与修法、计数、
+  **vault 绝对路径**、核心调用形式、以及「改完必须重跑 doctor 并回帖」的要求。
+  vault 路径写进包里是因为面板和 agent 读两个库时双方都正常 —— 这种情况要
+  当场停，不是事后查。
+- 数据段用 `<memory-data>` 包裹，且 **JSON 里的 `<` 转义成 `\u003c`**：`hint`
+  来自扫描目录，一条笔记正文里的 `</memory-data>` 足以提前闭合信封，让后面的
+  内容变成指令。
+- 进度不轮询 `/doctor`。面板订阅会话的 `running` 快照（内存读，免费），
+  `running → false` 才触发**一次**重新体检；修好了卡片消失，没修好标「Agent
+  说处理完了，但体检仍然报这个」—— 两个观察者看到不同的世界，通常就是真 bug，
+  比判定谁在说谎有用。
+- 面板是 frame 级插槽（`shell.overlay`，scope 为 root），`conversation.send()`
+  在那儿会抛 `requires a session scope`。所以走 `sessions.create/retain` →
+  `binding.session.prompt(text, 'queue')`，`retain` 失败再退到
+  `scope(id).conversation.send`。`sessions` 不进 `inject`（那是硬依赖，缺服务
+  会让整个客户端模块加载失败），改用 `ctx.get` 惰性取，取不到就报「没送出去」。
+
 ### Added — 体检页的每个问题都带修法
 
 健康页原来只给一句「2 项需要处理（索引、冲突）」，说出了问题、没说怎么修。

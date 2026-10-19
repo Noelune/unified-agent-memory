@@ -13,6 +13,11 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from '../deps.ts'
+import { buildRepairPrompt } from '../repair-prompt.ts'
+import type { RepairEnv } from '../repair-prompt.ts'
+import { pickTarget, runningOf, sendBrief, sessionsOf } from './agent-bridge.ts'
+import type { BridgeTarget } from './agent-bridge.ts'
+import type { HealthFinding } from './view.ts'
 import type {
   DoctorCounts, DoctorIssue, DoctorPayload,
   PreviewData, PreviewView, SearchHit, StatsData, StatsPayload, StatusPayload,
@@ -755,4 +760,302 @@ export function useDoctor(): {
     counts: state.counts,
     reload: function () { setNonce(function (n) { return n + 1 }) },
   }
+}
+
+// ── Repair hand-off: from a finding to a running agent ──────────────
+
+/**
+ * Where one hand-off is in its life.
+ *
+ * `sent → running → verifying → (gone)` is the happy path. The other three are
+ * not failures of the agent; they are the ways this ends without an answer:
+ * `failed` (it never got there) and `mismatch` (it says it is done and the
+ * doctor disagrees).
+ *
+ * There is deliberately no `stalled` state. A slow agent is not a broken one,
+ * and a phase that means "we stopped caring" would also stop the watcher — so
+ * the long-running case is expressed in the card as an elapsed time instead of
+ * as a state transition.
+ */
+export type RepairPhase =
+  | 'sending'
+  | 'sent'
+  | 'running'
+  | 'verifying'
+  | 'failed'
+  | 'mismatch'
+
+export interface RepairEntry {
+  phase: RepairPhase
+  /** When the brief was sent; drives the elapsed clock the card prints. */
+  startedAt: number
+  sessionId: string | null
+  /** Why it failed, or what the doctor still sees. Shown verbatim. */
+  note?: string
+}
+
+/** What a card needs from the hook; one entry per finding, keyed by code. */
+export interface RepairApi {
+  entries: Record<string, RepairEntry>
+  /**
+   * Send one finding. Returns nothing — the card reads `entries`.
+   *
+   * `target` is the one the confirmation row showed. Passing it back (instead
+   * of re-resolving here) keeps the promise the row made: the brief lands in
+   * the conversation the user agreed to, even if another session became the
+   * most recent in between.
+   */
+  send: (finding: HealthFinding, target?: BridgeTarget) => void
+  /** Forget one finding's state (the retry / dismiss buttons use it). */
+  clear: (code: string) => void
+  /** Where a hand-off would go right now; `id: null` means "new session". */
+  resolveTarget: () => BridgeTarget
+  /**
+   * Codes the doctor reports NOW that it did not report when the brief was
+   * sent. A repair that fixes one thing and breaks another is still a repair
+   * that broke something, and only the subtraction is checked by default.
+   */
+  added: string[]
+  /** Hide the "new problem" line (it is not a modal; it does not block). */
+  dismissAdded: () => void
+}
+
+/** How long a `sent` brief may sit with no visible turn before we ask the doctor. */
+const START_GRACE_MS = 4000
+/** How often the session snapshot is re-read while a hand-off is in flight. */
+const WATCH_MS = 1000
+
+function newSessionTarget(): BridgeTarget {
+  return { id: null, label: '新会话' }
+}
+
+/**
+ * One watcher tick, as a pure function.
+ *
+ * Extracted because React hooks cannot be mounted in this repo's test
+ * environment, and this is the only part of the hand-off with real decisions in
+ * it: when does "sent" become "running", and when is it time to ask the doctor.
+ *
+ * `running` is injected so a test can answer without a host. `verify` is
+ * reported once per entry, on the tick that retires it — the caller fires the
+ * doctor read, not the state machine.
+ */
+export function advanceRepairs(
+  entries: Record<string, RepairEntry>,
+  running: (sessionId: string | null) => boolean | null,
+  now: number,
+): { entries: Record<string, RepairEntry>; changed: boolean; verify: boolean } {
+  const next = { ...entries }
+  let changed = false
+  let verify = false
+
+  Object.keys(entries).forEach(function (code) {
+    const entry = entries[code]
+    if (entry.phase !== 'sent' && entry.phase !== 'running') return
+    if (running(entry.sessionId) === true) {
+      if (entry.phase !== 'running') {
+        next[code] = { ...entry, phase: 'running' }
+        changed = true
+      }
+      return
+    }
+    // The turn ended, or the session row is gone. Only the doctor can say
+    // whether that helped, so ask it once — never in a loop.
+    if (entry.phase === 'running' || now - entry.startedAt > START_GRACE_MS) {
+      next[code] = { ...entry, phase: 'verifying' }
+      changed = true
+      verify = true
+    }
+  })
+
+  return { entries: next, changed, verify }
+}
+
+/**
+ * Reconcile in-flight hand-offs against a fresh doctor read.
+ *
+ * The doctor is the only referee: an agent saying "已修复" is a sentence, the
+ * issue disappearing is a measurement. `mismatch` keeps the disagreement
+ * visible — two observers seeing different worlds is itself the diagnosis.
+ */
+export function reconcileRepairs(
+  entries: Record<string, RepairEntry>,
+  present: readonly string[],
+): { entries: Record<string, RepairEntry>; changed: boolean } {
+  const still: Record<string, true> = {}
+  present.forEach(function (code) { still[code] = true })
+
+  const next = { ...entries }
+  let changed = false
+  Object.keys(entries).forEach(function (code) {
+    const entry = entries[code]
+    if (entry.phase !== 'verifying' && entry.phase !== 'mismatch') return
+    if (!still[code]) {
+      delete next[code]
+      changed = true
+      return
+    }
+    // Already recorded as a disagreement: the next doctor read says the same
+    // thing, so there is nothing to write and nothing to re-render.
+    if (entry.phase === 'mismatch') return
+    next[code] = {
+      ...entry,
+      phase: 'mismatch',
+      note: 'Agent 说处理完了，但体检仍然报这个。可能它读的是另一个 vault，或另一份核心。',
+    }
+    changed = true
+  })
+  return { entries: next, changed }
+}
+
+/**
+ * Drive hand-offs and reconcile them against the doctor.
+ *
+ * Two deliberate omissions:
+ *
+ *  - Nothing is persisted. A reload forgets a repair was started, so a problem
+ *    still in the doctor list simply reads as "待处理" again. Remembering "I
+ *    thought I fixed that" is worse than forgetting.
+ *  - No polling of `/doctor`. That read is the most expensive thing the core
+ *    does; it runs once per hand-off, triggered by the session's `running` flag
+ *    going false. The panel learns "the agent stopped" from a memory snapshot,
+ *    which costs nothing.
+ */
+export function useRepair(opts: {
+  doctorStatus: DoctorPayload['status']
+  issues: readonly DoctorIssue[]
+  onVerify: () => void
+  env: RepairEnv
+}): RepairApi {
+  const [entries, setEntries] = useState<Record<string, RepairEntry>>({})
+  const [added, setAdded] = useState<string[]>([])
+  const entriesRef = useRef<Record<string, RepairEntry>>({})
+  const envRef = useRef(opts.env)
+  const verifyRef = useRef(opts.onVerify)
+  const issuesRef = useRef<readonly DoctorIssue[]>(opts.issues)
+  const sawLoading = useRef(false)
+  /**
+   * The codes the doctor reported when the brief was written. Null until the
+   * first send: without a baseline there is no such thing as "new".
+   */
+  const baseline = useRef<Record<string, true> | null>(null)
+
+  entriesRef.current = entries
+  envRef.current = opts.env
+  verifyRef.current = opts.onVerify
+  issuesRef.current = opts.issues
+
+  const active = Object.keys(entries).filter(function (code) {
+    const phase = entries[code].phase
+    return phase === 'sent' || phase === 'running'
+  }).length > 0
+
+  useEffect(function () {
+    if (!active) return
+    const timer = window.setInterval(function () {
+      const sessions = sessionsOf()
+      const tick = advanceRepairs(
+        entriesRef.current,
+        function (id) { return runningOf(sessions, id) },
+        Date.now(),
+      )
+      if (tick.changed) {
+        entriesRef.current = tick.entries
+        setEntries(tick.entries)
+      } else if (Object.keys(tick.entries).some(function (code) { return tick.entries[code].phase === 'running' })) {
+        // Nothing transitioned, but the card prints elapsed seconds — a new
+        // object identity is the cheapest way to re-render it once a second.
+        setEntries({ ...tick.entries })
+      }
+      if (tick.verify) verifyRef.current()
+    }, WATCH_MS)
+    return function () { window.clearInterval(timer) }
+  }, [active])
+
+  // Reconcile only against a doctor read that STARTED after the verify was
+  // requested. Without the `sawLoading` gate the first render after a hand-off
+  // would compare against the stale payload the brief was built from and call
+  // every repair a mismatch.
+  useEffect(function () {
+    if (opts.doctorStatus === 'loading') { sawLoading.current = true; return }
+    if (opts.doctorStatus !== 'ok' || !sawLoading.current) return
+    sawLoading.current = false
+
+    const codes = opts.issues.map(function (issue) { return issue.code })
+    const result = reconcileRepairs(entriesRef.current, codes)
+    if (result.changed) {
+      entriesRef.current = result.entries
+      setEntries(result.entries)
+    }
+    const base = baseline.current
+    if (base === null) return
+    const fresh = codes.filter(function (code) { return base[code] !== true })
+    setAdded(function (previous) {
+      return sameCodes(previous, fresh) ? previous : fresh
+    })
+  }, [opts.doctorStatus, opts.issues])
+
+  return {
+    entries,
+    send: function (finding: HealthFinding, chosen?: BridgeTarget) {
+      const code = finding.key
+      const sessions = sessionsOf()
+      const target = chosen ?? pickTarget(sessions) ?? newSessionTarget()
+      sawLoading.current = false
+      // Baseline for the "did this repair introduce something" check: the list
+      // this brief was written from.
+      const base: Record<string, true> = {}
+      issuesRef.current.forEach(function (issue) { base[issue.code] = true })
+      baseline.current = base
+      setAdded([])
+      entriesRef.current = {
+        ...entriesRef.current,
+        [code]: { phase: 'sending', startedAt: Date.now(), sessionId: target.id },
+      }
+      setEntries(entriesRef.current)
+
+      sendBrief(sessions, buildRepairPrompt(finding, envRef.current, new Date().toISOString()), target)
+        .then(function (result) {
+          const current = entriesRef.current[code]
+          if (!current) return
+          entriesRef.current = {
+            ...entriesRef.current,
+            [code]: result.ok
+              ? { phase: 'sent', startedAt: Date.now(), sessionId: result.sessionId }
+              : { phase: 'failed', startedAt: current.startedAt, sessionId: result.sessionId, note: result.reason },
+          }
+          setEntries(entriesRef.current)
+        })
+        .catch(function (error: Error) {
+          const current = entriesRef.current[code]
+          if (!current) return
+          entriesRef.current = {
+            ...entriesRef.current,
+            [code]: { phase: 'failed', startedAt: current.startedAt, sessionId: current.sessionId, note: error.message },
+          }
+          setEntries(entriesRef.current)
+        })
+    },
+    clear: function (code: string) {
+      const next = { ...entriesRef.current }
+      delete next[code]
+      entriesRef.current = next
+      setEntries(next)
+    },
+    resolveTarget: function () {
+      return pickTarget(sessionsOf()) ?? newSessionTarget()
+    },
+    added,
+    dismissAdded: function () {
+      baseline.current = null
+      setAdded([])
+    },
+  }
+}
+
+/** Cheap equality for the code lists the reconcile effect recomputes each read. */
+function sameCodes(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) return false
+  return true
 }

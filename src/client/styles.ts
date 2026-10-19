@@ -459,6 +459,93 @@ export const PANEL_CSS = `
   word-break: break-word;
 }
 
+/* ── Hand-off to an agent ───────────────────────────────────────────
+   The card's second verb. A rule above it separates "what is wrong" from
+   "who does something about it", and the confirmation lives INSIDE the card:
+   it has one fact to convey and one risk, which is not worth a dialog that
+   hides the problem it is about. */
+.dsh-memory-finding-actions {
+  margin-top: 9px; padding-top: 8px;
+  border-top: 1px dashed var(--dsw-alias-border-l1);
+}
+.dsh-memory-confirm { display: flex; flex-direction: column; gap: 5px; }
+.dsh-memory-confirm-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.dsh-memory-confirm-target {
+  margin: 0; font-size: 11.5px; line-height: 1.5;
+  color: var(--dsw-alias-label-primary);
+  word-break: break-word;
+}
+.dsh-memory-confirm-note {
+  margin: 0; font-size: 10.5px; line-height: 1.5;
+  color: var(--dsw-alias-label-tertiary);
+  word-break: break-word;
+}
+.dsh-memory-act {
+  padding: 3px 10px; border-radius: 7px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font-family: inherit; font-size: 11px; line-height: 1.6;
+  cursor: pointer; white-space: nowrap;
+  transition: color .12s, background .12s, border-color .12s;
+}
+.dsh-memory-act:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  border-color: var(--dsw-alias-border-l3);
+}
+/* The accent, not a filled button: the sheet sits on the host's own surface
+   and a solid brand block would be the loudest thing in the panel — louder
+   than the error it belongs to. */
+.dsh-memory-act-primary {
+  color: var(--dsw-alias-brand-primary);
+  border-color: var(--dsw-alias-brand-primary);
+}
+.dsh-memory-act-primary:hover { background: var(--dsw-alias-interactive-bg-active); }
+.dsh-memory-risk {
+  font-size: 10px; line-height: 1.5;
+  color: var(--dsw-alias-label-tertiary);
+}
+.dsh-memory-repair {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 11px; line-height: 1.5;
+  color: var(--dsw-alias-label-secondary);
+}
+.dsh-memory-repair-text { flex: 1 1 auto; word-break: break-word; }
+.dsh-memory-repair-dot {
+  flex: none; width: 5px; height: 5px; border-radius: 50%;
+  background: var(--dsw-alias-brand-primary);
+  animation: dsh-memory-pulse 1.4s ease-in-out infinite;
+}
+/* Waiting on a measurement is not work in progress: a still dot says
+   "nothing is running here" without claiming the wait is over. */
+.dsh-memory-repair[data-phase='verifying'] .dsh-memory-repair-dot {
+  background: var(--dsw-alias-label-tertiary);
+  animation: none;
+}
+.dsh-memory-repair[data-phase='failed'],
+.dsh-memory-repair[data-phase='mismatch'] {
+  color: var(--dsw-alias-label-primary);
+}
+/* A warning that the last repair ADDED problems. Neutral surface, warn-coloured
+   left rule — the same rule the cards use, so it reads as a finding rather than
+   as an error banner about the panel itself. */
+.dsh-memory-added {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-left: 3px solid var(--dsw-alias-state-warn-secondary);
+  border-radius: 8px;
+}
+.dsh-memory-added-text {
+  flex: 1 1 auto;
+  font-size: 11px; line-height: 1.5;
+  color: var(--dsw-alias-label-primary);
+  word-break: break-word;
+}
+
 /* ── Stats disclosure ───────────────────────────────────────────────
    Composition and the access calendar are real information and the least
    actionable part of the pane, so they cost one click instead of a scroll.

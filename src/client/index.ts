@@ -18,6 +18,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import { clearBridgeContext, setBridgeContext } from './agent-bridge.ts'
 import { MemoryOverlay, MemoryTrigger } from './Panel.tsx'
 
 export const name = 'dsh-unified-agent-memory'
@@ -69,6 +70,18 @@ export function apply(ctx: Context): void {
   // No slot registry in this host (e.g. a headless or non-sidebar shell):
   // the plugin still loads, it just contributes no client UI.
   if (!slots) return
+
+  // Kept for the health pane's hand-off: `sessions` is read lazily off this
+  // context at click time (see agent-bridge), because declaring it in `inject`
+  // would make a host without it fail the whole module.
+  setBridgeContext(ctx)
+  // Release it on unload so a reload cannot post into a dead context. Guarded
+  // rather than assumed: `effect` belongs to the full Cordis context, and the
+  // minimal harness this module is contract-tested against passes `{ slots }`.
+  const effect = (ctx as unknown as { effect?: (fn: () => () => void, label: string) => unknown }).effect
+  if (typeof effect === 'function') {
+    effect.call(ctx, function () { return clearBridgeContext }, 'memory: agent bridge')
+  }
 
   slots.inject(TRIGGER_SLOT, () => slots.register(
     { name: TRIGGER_SLOT, id: SEAT_ID },

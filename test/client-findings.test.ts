@@ -18,8 +18,11 @@ import { readFileSync } from 'node:fs'
 
 import {
   COMMAND_NOTE,
+  NO_AGENT,
   SEVERITY_LABEL,
+  agentAction,
   healthFindings,
+  issueTitle,
   healthRows,
   rowFindings,
 } from '../src/client/view.ts'
@@ -264,5 +267,96 @@ describe('wiring: the health pane says how to fix what it found', () => {
     // spot, and the pane says so instead of borrowing the green verdict.
     const body = healthBody()
     expect(body).toMatch(/详细体检没跑起来/)
+  })
+})
+
+describe('agentAction — who does the work, and on what terms', () => {
+  /** The health pane and its card, comments stripped. */
+  function healthBody(): string {
+    const at = CONSOLE_CODE.indexOf('function HealthTab(')
+    const end = CONSOLE_CODE.indexOf('// ── Figures', at)
+    return at < 0 ? '' : CONSOLE_CODE.slice(at, end < 0 ? CONSOLE_CODE.length : end)
+  }
+
+  it('routes the codes an agent can settle into "fix"', () => {
+    const fixable = [
+      'unclassified-facts', 'inbox-stale', 'duplicate-facts', 'graph-bloat',
+      'index-bloat', 'doctor-failed', 'orphan-indexes', 'embedding-coverage',
+    ]
+    for (const code of fixable) {
+      expect(agentAction(code).mode, code).toBe('fix')
+      expect(agentAction(code).label.length, code).toBeGreaterThan(0)
+    }
+  })
+
+  it('routes the codes that are the user’s decision into "analyze"', () => {
+    // Two conflicting facts, two overlapping copies, a missing vault: an agent
+    // that "fixes" these deletes something the user wanted.
+    for (const code of ['conflicts-pending', 'sync-conflict-copies', 'vault-missing']) {
+      expect(agentAction(code).mode, code).toBe('analyze')
+    }
+  })
+
+  it('offers no button for a code this build does not understand', () => {
+    expect(agentAction('some-future-code')).toEqual(NO_AGENT)
+    expect(healthFindings([issue('some-future-code')])[0].agent).toEqual(NO_AGENT)
+  })
+
+  it('says what the hand-off may touch, in every case', () => {
+    // The risk label is the only thing on the card that distinguishes "rebuild
+    // a derived index" from "delete duplicate lines" before the click.
+    const codes = [
+      'sync-conflict-copies', 'conflicts-pending', 'inbox-stale', 'duplicate-facts',
+      'embedding-coverage', 'graph-bloat', 'index-bloat', 'orphan-indexes',
+      'unclassified-facts', 'vault-missing', 'doctor-failed',
+    ]
+    for (const code of codes) {
+      expect(agentAction(code).risk.length, code).toBeGreaterThan(2)
+    }
+  })
+
+  it('carries the core’s own sentence into the card model', () => {
+    // The brief is built from this; without it the agent would get only our
+    // translation of what the core said.
+    const got = healthFindings([{ severity: 'warn', code: 'index-bloat', message: '0.5 MB', hint: 'gc' }])
+    expect(got[0].core).toEqual({ message: '0.5 MB', hint: 'gc' })
+  })
+
+  it('gives the row-derived fallback no hand-off', () => {
+    // Those rows exist because the doctor never ran; asking an agent to work
+    // from them would be asking it to work from a guess.
+    const rows = healthRows({
+      stats: { memories: 1, vectors: 1, pending: 0 },
+      indexOk: false,
+      conflicts: null,
+      recallMode: 'auto',
+      agentName: 'dsh',
+      agentSource: 'config',
+      version: '0.8.0',
+    })
+    for (const f of rowFindings(rows)) expect(f.agent).toEqual(NO_AGENT)
+  })
+
+  it('names a code for the "this repair added a problem" line', () => {
+    expect(issueTitle('index-bloat')).toBe('索引库体积过大')
+    // Unknown codes keep the raw id: a blank or a guess would be worse.
+    expect(issueTitle('some-future-code')).toBe('some-future-code')
+  })
+
+  it('reports problems the repair ADDED, not only the ones it removed', () => {
+    const body = healthBody() + CONSOLE_CODE
+    expect(body).toMatch(/repair\.added/)
+    expect(body).toMatch(/dsh-memory-added/)
+    expect(STYLES).toMatch(/\.dsh-memory-added\s*\{/)
+  })
+
+  it('wires the hand-off in the card, inline and without a dialog', () => {
+    const body = healthBody()
+    expect(body).toMatch(/repair\.send/)
+    expect(body).toMatch(/dsh-memory-finding-actions/)
+    expect(body).toMatch(/f\.agent\.risk/)
+    // A native confirm() would block the renderer and cannot be styled by the
+    // host theme; the confirmation belongs in the card.
+    expect(CONSOLE_CODE).not.toMatch(/window\.confirm/)
   })
 })

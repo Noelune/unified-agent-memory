@@ -490,6 +490,77 @@ export interface HealthFinding {
   fix: string
   /** A paste-ready command, or null when there is nothing to run. */
   command: string | null
+  /**
+   * Whether this finding can be handed to an agent, and under what terms.
+   *
+   * Not every code deserves the same button. "Rebuild a derived index" and
+   * "delete twenty thousand duplicate lines" are both `warn`, both one click
+   * away, and only one of them is safe to start without a conversation.
+   */
+  agent: AgentAction
+  /**
+   * The core's own sentence and remedy, kept verbatim.
+   *
+   * The card shows the localized copy, but the task handed to an agent must
+   * carry what the core actually said: a translation is a rendering, and the
+   * brief is the only place the original survives.
+   */
+  core: { message: string; hint: string } | null
+}
+
+/** How far an agent should go without coming back for permission. */
+export type AgentMode = 'fix' | 'analyze' | 'none'
+
+/** What the card's action row offers, if anything. */
+export interface AgentAction {
+  mode: AgentMode
+  /** Button text. Empty when `mode` is `none` and no button is drawn. */
+  label: string
+  /** The small print beside the button: does this touch the vault? */
+  risk: string
+}
+
+/** No action row at all — rows, unknown codes, and anything we cannot brief. */
+export const NO_AGENT: AgentAction = { mode: 'none', label: '', risk: '' }
+
+/**
+ * Per-code terms, keyed like `ISSUE_COPY`.
+ *
+ * `fix` means "go change the vault, listing the changes first". `analyze` means
+ * "read, then come back with a recommendation" — used wherever the decision is
+ * the user's (which of two conflicting facts wins, which of two copies to
+ * keep). Anything absent gets no button: a card that says `fix: 让 agent 读一遍`
+ * without a command is better served by reading it in the conversation than by
+ * a button that starts an agent with nothing to do.
+ */
+const AGENT_PLAN: Record<string, AgentAction> = {
+  'unclassified-facts': { mode: 'fix', label: '让 Agent 归类', risk: '会写笔记' },
+  'inbox-stale': { mode: 'fix', label: '让 Agent 处理', risk: '会写库' },
+  'duplicate-facts': { mode: 'fix', label: '让 Agent 去重', risk: '会写库 · 先备份' },
+  'graph-bloat': { mode: 'fix', label: '让 Agent 处理', risk: '会重建派生数据' },
+  'index-bloat': { mode: 'fix', label: '让 Agent 处理', risk: '会重建派生数据' },
+  'doctor-failed': { mode: 'fix', label: '让 Agent 处理', risk: '会重建派生数据' },
+  'orphan-indexes': { mode: 'fix', label: '让 Agent 处理', risk: '会删旧索引 · 可重建' },
+  'embedding-coverage': { mode: 'fix', label: '让 Agent 补向量', risk: '会写向量 · 需要 key' },
+  'conflicts-pending': { mode: 'analyze', label: '让 Agent 分析', risk: '先给建议，改库前问你' },
+  'sync-conflict-copies': { mode: 'analyze', label: '让 Agent 分析', risk: '不动文件，只给合并建议' },
+  'vault-missing': { mode: 'analyze', label: '让 Agent 诊断', risk: '可能要改配置，先问你' },
+}
+
+/** The terms for one core code; unknown codes get no action row. */
+export function agentAction(code: string): AgentAction {
+  return AGENT_PLAN[code] ?? NO_AGENT
+}
+
+/**
+ * A code's display title, for places that only have the code.
+ *
+ * The "a repair introduced a new problem" line names findings without building
+ * cards for them, and a bare `index-bloat` in a Chinese sentence reads like a
+ * log line.
+ */
+export function issueTitle(code: string): string {
+  return ISSUE_COPY[code]?.title ?? code
 }
 
 /** Severity chip text. */
@@ -608,6 +679,10 @@ export function healthFindings(
         detail: issue.message || issue.code,
         fix: issue.hint || '这条本版面板还不认识，先跑一次 `memory doctor` 看原文。',
         command: null,
+        // Unknown code: the pane cannot say what it would cost, so it offers
+        // no button. Copying the core's own hint still works.
+        agent: NO_AGENT,
+        core: { message: issue.message, hint: issue.hint },
       }
     }
     return {
@@ -617,6 +692,8 @@ export function healthFindings(
       detail: countedDetail(issue.code, copy.detail, counts),
       fix: copy.fix,
       command: copy.command,
+      agent: agentAction(issue.code),
+      core: { message: issue.message, hint: issue.hint },
     }
   })
 }
@@ -665,6 +742,11 @@ export function rowFindings(rows: readonly HealthRow[]): HealthFinding[] {
       detail: '派生索引损坏或读不到，搜索会退回逐文件扫描。',
       fix: '重建一次派生索引，不会动你的笔记。',
       command: 'memory sync',
+      // Row-derived findings carry no core message, and the rows are a
+      // fallback for "the doctor never ran" — handing one to an agent would
+      // ask it to work from a guess.
+      agent: NO_AGENT,
+      core: null,
     },
     conflicts: {
       key: 'row:conflicts',
@@ -673,6 +755,8 @@ export function rowFindings(rows: readonly HealthRow[]): HealthFinding[] {
       detail: '冲突裁决前，两条都不算生效，检索会绕开这段记忆。',
       fix: '逐条选保留哪一条。',
       command: 'python -m unified_memory.promoter --adjudicate',
+      agent: NO_AGENT,
+      core: null,
     },
     prefix: {
       key: 'row:prefix',
@@ -681,6 +765,8 @@ export function rowFindings(rows: readonly HealthRow[]): HealthFinding[] {
       detail: '写进库的事实会署名为 fallback，多个 agent 共库时分不清是谁写的。',
       fix: '在插件设置里填 agentName，或设环境变量 UNIFIED_MEMORY_AGENT。',
       command: null,
+      agent: NO_AGENT,
+      core: null,
     },
   }
   return rows

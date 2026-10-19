@@ -26,14 +26,16 @@
 
 import { h, useState } from '../deps.ts'
 import type { SearchHit, StatsPayload } from './types.ts'
-import { dismissItem, loadDoc, loadNote, useDoctor, usePreview, useSearch, useStats } from './store.ts'
+import { dismissItem, loadDoc, loadNote, useDoctor, usePreview, useRepair, useSearch, useStats } from './store.ts'
+import type { RepairApi, RepairEntry } from './store.ts'
+import type { BridgeTarget } from './agent-bridge.ts'
 import {
   BreakdownDonut, CalendarHeatmap, GrowthChart, TopBars,
 } from './Figures.tsx'
 import {
   COMMAND_NOTE, CONSOLE_TABS, PENDING_BADGE_TAB, SEVERITY_LABEL, TAB_LABEL,
   dismissReasonText, healthFindings, healthRows, healthSummary, highlightParts,
-  inboxSummary, noteDigest, oldestFirst, openFailureText, previewEmptyText,
+  inboxSummary, issueTitle, noteDigest, oldestFirst, openFailureText, previewEmptyText,
   relativeAge, rowFindings, searchFailureText, splitHealth, statKpis,
 } from './view.ts'
 import type { HealthFinding, TabId } from './view.ts'
@@ -478,6 +480,25 @@ function HealthTab(props: { status: ConsoleStatus | null; stats: StatsPayload })
       : []
   const hasCommand = findings.some(function (f) { return f.command !== null })
 
+  const vault = props.status?.vaultPath
+  const repair = useRepair({
+    doctorStatus: doctor.status,
+    issues: doctor.issues,
+    onVerify: doctor.reload,
+    env: {
+      // "(not set)" is the route's placeholder for an unconfigured host, not a
+      // directory — passing it through would put a path that does not exist
+      // into the brief, which is worse than admitting we do not know it.
+      vault: !vault || vault === '(not set)' ? null : vault,
+      coreVersion: props.status?.version ?? 'unknown',
+      counts: doctor.counts,
+    },
+  })
+  const inFlight = Object.keys(repair.entries).filter(function (code) {
+    const phase = repair.entries[code].phase
+    return phase === 'sending' || phase === 'sent' || phase === 'running' || phase === 'verifying'
+  }).length
+
   return h('div', { className: 'dsh-memory-pane dsh-memory-pane-scroll' },
     h('div', { className: 'dsh-memory-health', 'data-tone': summary.tone },
       h('i', { className: 'dsh-memory-health-dot', 'aria-hidden': 'true' }),
@@ -495,10 +516,27 @@ function HealthTab(props: { status: ConsoleStatus | null; stats: StatsPayload })
         onClick: doctor.reload,
       }, doctor.status === 'loading' ? '体检中…' : '重新体检'),
     ),
+    inFlight > 0
+      ? h('p', { className: 'dsh-memory-finding-note' }, 'Agent 正在处理 ' + inFlight + ' 项；以它跑完后重新体检的结果为准。')
+      : null,
+    // A repair that removes one finding and adds another is still a repair that
+    // broke something. Checking only the subtraction is how that goes unnoticed.
+    repair.added.length > 0
+      ? h('div', { className: 'dsh-memory-added' },
+          h('span', { className: 'dsh-memory-added-text' },
+            '这次修复后多出 ' + repair.added.length + ' 个问题：' + repair.added.map(issueTitle).join('、'),
+          ),
+          h('button', {
+            type: 'button',
+            className: 'dsh-memory-act',
+            onClick: repair.dismissAdded,
+          }, '知道了'),
+        )
+      : null,
     findings.length > 0
       ? h('div', { className: 'dsh-memory-findings' },
           ...findings.map(function (f) {
-            return h(FindingCard, { key: f.key, finding: f })
+            return h(FindingCard, { key: f.key, finding: f, repair })
           }),
           hasCommand ? h('p', { className: 'dsh-memory-finding-note' }, COMMAND_NOTE) : null,
         )
@@ -546,9 +584,22 @@ function HealthTab(props: { status: ConsoleStatus | null; stats: StatsPayload })
  * The command is rendered in a `code` element on its own line so it can be
  * selected with one drag without catching the surrounding prose — a fix you
  * cannot copy is a fix you retype.
+ *
+ * The action row below it is the other half of the same argument. A command is
+ * only actionable for someone who already has a terminal open on the right
+ * machine; `让 Agent 处理` hands the same job to the agent that is already
+ * running here. Confirmation is inline rather than modal: it has one fact to
+ * convey (which conversation this lands in) and one risk (it may write), and a
+ * dialog for that would cost more attention than the decision is worth.
  */
-function FindingCard(props: { finding: HealthFinding }): Child {
+function FindingCard(props: { finding: HealthFinding; repair: RepairApi }): Child {
   const f = props.finding
+  const entry = props.repair.entries[f.key]
+  // Resolved once, when the row opens, and handed back on send: re-resolving
+  // at click time could land the brief in a conversation the user never agreed
+  // to, purely because another session became the most recent.
+  const [target, setTarget] = useState<BridgeTarget | null>(null)
+
   return h('div', { className: 'dsh-memory-finding', 'data-severity': f.severity },
     h('div', { className: 'dsh-memory-finding-head' },
       h('i', { className: 'dsh-memory-finding-mark', 'aria-hidden': 'true' }),
@@ -558,6 +609,92 @@ function FindingCard(props: { finding: HealthFinding }): Child {
     h('p', { className: 'dsh-memory-finding-detail' }, f.detail),
     h('p', { className: 'dsh-memory-finding-fix' }, f.fix),
     f.command ? h('code', { className: 'dsh-memory-finding-cmd' }, f.command) : null,
+    f.agent.mode === 'none' && !entry ? null : h('div', { className: 'dsh-memory-finding-actions' },
+      entry
+        ? h(RepairStatus, { entry, finding: f, repair: props.repair })
+        : target !== null
+          ? h('div', { className: 'dsh-memory-confirm' },
+              h('p', { className: 'dsh-memory-confirm-target' },
+                '将发送到：' + (target.id !== null ? '最近在用的会话「' + target.label + '」' : '一个新会话'),
+              ),
+              h('p', { className: 'dsh-memory-confirm-note' },
+                f.agent.mode === 'analyze'
+                  ? '它会先只读核对，然后给你建议；不会直接改库。'
+                  : '它会先只读核对，改库之前会再问你一次。',
+              ),
+              h('div', { className: 'dsh-memory-confirm-row' },
+                h('button', {
+                  type: 'button',
+                  className: 'dsh-memory-act dsh-memory-act-primary',
+                  onClick: function () { const t = target; setTarget(null); props.repair.send(f, t ?? undefined) },
+                }, '发送给 Agent'),
+                h('button', {
+                  type: 'button',
+                  className: 'dsh-memory-act',
+                  onClick: function () { setTarget(null) },
+                }, '取消'),
+              ),
+            )
+          : h('div', { className: 'dsh-memory-confirm-row' },
+              h('button', {
+                type: 'button',
+                className: 'dsh-memory-act dsh-memory-act-primary',
+                onClick: function () { setTarget(props.repair.resolveTarget()) },
+              }, f.agent.label),
+              h('span', { className: 'dsh-memory-risk' }, f.agent.risk),
+            ),
+    ),
+  )
+}
+
+/**
+ * The one-line state of a hand-off, with whatever control is still useful.
+ *
+ * Elapsed seconds are printed rather than a spinner: the panel cannot see the
+ * turn's stream (the sheet is frame-level, the turn is session-level), so the
+ * only progress it can honestly report is time. `mismatch` is the interesting
+ * one — the agent claimed success and the doctor disagreed, which usually means
+ * the two are looking at different vaults.
+ */
+function RepairStatus(props: { entry: RepairEntry; finding: HealthFinding; repair: RepairApi }): Child {
+  const e = props.entry
+  const code = props.finding.key
+  const seconds = Math.max(0, Math.round((Date.now() - e.startedAt) / 1000))
+  const elapsed = seconds < 60 ? seconds + ' 秒' : Math.round(seconds / 60) + ' 分钟'
+
+  if (e.phase === 'failed') {
+    return h('div', { className: 'dsh-memory-repair', 'data-phase': 'failed' },
+      h('span', { className: 'dsh-memory-repair-text' }, '没送出去：' + (e.note ?? '未知原因')),
+      h('button', {
+        type: 'button',
+        className: 'dsh-memory-act',
+        onClick: function () { props.repair.clear(code) },
+      }, '重试'),
+    )
+  }
+
+  if (e.phase === 'mismatch') {
+    return h('div', { className: 'dsh-memory-repair', 'data-phase': 'mismatch' },
+      h('span', { className: 'dsh-memory-repair-text' }, e.note ?? ''),
+      h('button', {
+        type: 'button',
+        className: 'dsh-memory-act',
+        onClick: function () { props.repair.clear(code) },
+      }, '知道了'),
+    )
+  }
+
+  const text = e.phase === 'sending'
+    ? '正在发送…'
+    : e.phase === 'sent'
+      ? '已交给 Agent，等它开始…'
+      : e.phase === 'running'
+        ? 'Agent 正在处理 · 已 ' + elapsed
+        : 'Agent 停了，正在重新体检…'
+
+  return h('div', { className: 'dsh-memory-repair', 'data-phase': e.phase },
+    h('i', { className: 'dsh-memory-repair-dot', 'aria-hidden': 'true' }),
+    h('span', { className: 'dsh-memory-repair-text' }, text),
   )
 }
 
