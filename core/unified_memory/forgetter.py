@@ -33,6 +33,7 @@ from pathlib import Path
 from . import index
 from .common import (
     CANONICAL_DOCS,
+    assert_canonical_writable,
     atomic_write,
     bare_fact_line,
     canonical_dir,
@@ -147,6 +148,11 @@ def _days_since(value: str, now: float) -> float | None:
 
 def demote(vault: Path, dry_run: bool = True) -> list[str]:
     ensure_vault(vault)
+    # Demotion rewrites canonical notes (it moves lines into 记忆遗忘区), so it
+    # obeys the same single-writer rule as promotion. A dry run writes nothing
+    # and therefore stays allowed.
+    if not dry_run:
+        assert_canonical_writable()
     ctx = canonical_dir(vault)
     today = time.time()
     candidates: list[tuple[Path, str]] = []

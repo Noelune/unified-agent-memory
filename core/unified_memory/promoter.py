@@ -32,6 +32,8 @@ from .common import (
     CANONICAL_DOCS,
     CONFLICT_FILE,
     PENDING_FILE,
+    CanonicalOwnerError,
+    assert_canonical_writable,
     atomic_write,
     canonical_dir,
     canonical_path,
@@ -302,7 +304,14 @@ def promote(vault: Path, entries: list[dict], *, locked: bool = False) -> list[s
     Entries are grouped per target note and written once per note. The old
     loop rewrote the whole file for every fact, which on a synced vault meant
     one cloud-sync event per fact (and O(facts × file size) writes).
+
+    This is one of the three functions in the package that rewrite canonical
+    notes (with ``forgetter.demote`` and ``maintenance.repair_existing``), so it
+    is where the single-writer rule is enforced: if another runtime has declared
+    ownership, the write is refused before any file is touched (see
+    ``common.assert_canonical_writable``).
     """
+    assert_canonical_writable()
     if not locked:
         with file_lock(vault):
             return promote(vault, entries, locked=True)
@@ -533,21 +542,27 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     vault = Path(args.vault) if args.vault else resolve_vault()
-    if args.adjudicate:
-        adjudicate(vault)
-        return
-    if args.cron:
-        register_cron(vault)
-        return
-    if args.repair_existing:
-        repair_existing(vault, dry_run=args.dry_run)
-        return
-    if args.apply:
-        apply_pending(vault)
-        return
-    if args.auto:
-        auto_promote(vault)
-        return
+    try:
+        if args.adjudicate:
+            adjudicate(vault)
+            return
+        if args.cron:
+            register_cron(vault)
+            return
+        if args.repair_existing:
+            repair_existing(vault, dry_run=args.dry_run)
+            return
+        if args.apply:
+            apply_pending(vault)
+            return
+        if args.auto:
+            auto_promote(vault)
+            return
+    except CanonicalOwnerError as exc:
+        # A declared owner is a configuration decision, not a crash: report it
+        # as one line with a non-zero exit instead of a traceback.
+        print(f"refused: {exc}", file=sys.stderr)
+        raise SystemExit(1)
     # default: --review
     result = review(vault)
     write_pending_list(vault, result)

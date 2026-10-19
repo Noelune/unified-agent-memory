@@ -36,12 +36,16 @@ from .common import (
     atomic_create,
     atomic_write,
     canonical_dir,
+    canonical_owner,
     canonical_path,
+    claim_canonical_owner,
     ensure_vault,
     looks_like_credential,
+    owner_lock_path,
     parse_config,
     read_maybe,
     redact,
+    release_canonical_owner,
     resolve_vault,
 )
 
@@ -710,6 +714,46 @@ def cmd_status(args: argparse.Namespace) -> None:
         emit_json("status", data)
 
 
+def cmd_owner(args: argparse.Namespace) -> None:
+    """Show or change who is allowed to write canonical notes.
+
+    The rule comes from Hermes记忆系统规范.md (one source of truth, one
+    writer). With no declaration this package keeps its historical write
+    access; declaring ``hermes`` makes ``promoter --apply`` and the forgetter
+    refuse instead of silently becoming a second writer.
+    """
+    if getattr(args, "claim", None):
+        path = claim_canonical_owner(args.claim)
+        print(f"canonical owner: {canonical_owner()} (declared in {path})")
+        if args.claim == "core":
+            print("note: this package may write canonical notes; other runtimes are expected to stop")
+        else:
+            print("note: this package will now refuse to write canonical notes — route facts through that writer")
+        return
+    if getattr(args, "release", False):
+        if release_canonical_owner():
+            print("owner declaration removed — this package may write canonical notes again")
+        else:
+            print("no owner declaration was present — nothing to release")
+        return
+    owner = canonical_owner()
+    path = owner_lock_path()
+    if getattr(args, "json", False):
+        emit_json(
+            "owner",
+            {"owner": owner, "declaration": str(path), "declared": owner is not None},
+        )
+        return
+    if owner is None:
+        print("canonical owner: (undeclared) — this package may write canonical notes")
+        print(f"declaration file: {path} (absent)")
+    else:
+        print(f"canonical owner: {owner}")
+        print(f"declaration file: {path}")
+        if owner != "core":
+            print("this package refuses canonical writes while that declaration stands")
+
+
 def cmd_drift(args: argparse.Namespace) -> None:
     """Detect code-memory drift."""
     from . import drift as drift_mod  # lazy import — avoids yaml dependency at module load
@@ -808,6 +852,17 @@ def main(argv: list[str] | None = None) -> None:
     p_gc.add_argument("--keep-orphans", action="store_true", help="do not delete orphan index databases")
     p_gc.add_argument("--json", action="store_true", help="emit the machine-readable report")
     p_gc.set_defaults(fn=cmd_gc)
+
+    p_owner = sub.add_parser("owner", help="show or change who may write canonical notes")
+    p_owner.add_argument(
+        "--claim",
+        choices=("hermes", "core"),
+        default=None,
+        help="declare the only writer of canonical notes (hermes = this package stops writing)",
+    )
+    p_owner.add_argument("--release", action="store_true", help="remove the declaration")
+    p_owner.add_argument("--json", action="store_true", help="emit a machine-readable JSON envelope")
+    p_owner.set_defaults(fn=cmd_owner)
 
     p_drift = sub.add_parser("drift", help="detect code-memory synchronization drift")
     p_drift.add_argument("--vault", "-v", help="path to the vault (default: UNIFIED_MEMORY_VAULT env)")
