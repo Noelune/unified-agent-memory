@@ -63,6 +63,34 @@ _GUARD_ROOT = Path(tempfile.mkdtemp(prefix="um-guard-"))
 _GUARD_INDEX_DB = _GUARD_ROOT / "index.db"
 _GUARD_CONFIG = _GUARD_ROOT / "config.yaml"
 
+# Fingerprint of the user's real config, taken before any test runs.
+#
+# This exists because the guard above is not sufficient on its own. It pins
+# ``common.CONFIG_PATH``, but a module that copies that value at *import* time
+# (``from .common import CONFIG_PATH``) keeps the real home path and writes
+# there regardless of what the guard rebinds afterwards. That is not
+# hypothetical: it happened on 2026-10-19, when ``config.py`` froze the path on
+# import and 117 successive test runs repointed the developer's real
+# ``vault:`` at deleted temp directories. The redirects were all correct; only
+# one module had cached the answer.
+#
+# So the guard now also records what the real file looked like, and every
+# check fails loudly if it changed. Cheap, read-only, and it names the exact
+# file — a regression here should be impossible to miss rather than silently
+# corrupt a working install.
+_REAL_CONFIG = Path.home() / ".unified-memory.yaml"
+
+
+def _fingerprint(path: Path) -> tuple | None:
+    try:
+        stat = path.stat()
+        return (stat.st_mtime_ns, stat.st_size, hashlib.sha256(path.read_bytes()).hexdigest())
+    except OSError:
+        return None
+
+
+_REAL_CONFIG_PRINT = _fingerprint(_REAL_CONFIG)
+
 
 def _arm_guard() -> None:
     """Pin every real-home escape hatch into the guard dir. Idempotent."""
@@ -87,9 +115,28 @@ def assert_guard_intact() -> None:
             f"test isolation guard was defeated: INDEX_DB={mem_mod.INDEX_DB} "
             f"CONFIG_PATH={common.CONFIG_PATH}"
         )
+    assert_real_config_untouched()
+
+
+def assert_real_config_untouched() -> None:
+    """Fail if a test wrote the developer's real ~/.unified-memory.yaml.
+
+    Catches the import-time-cache class of leak that the path redirects cannot:
+    a module holding its own copy of CONFIG_PATH writes the real file even while
+    every redirect looks correct.
+    """
+    now = _fingerprint(_REAL_CONFIG)
+    if now != _REAL_CONFIG_PRINT:
+        raise AssertionError(
+            f"a test wrote the real config file {_REAL_CONFIG} "
+            f"(before={_REAL_CONFIG_PRINT}, now={now}). "
+            "Some module cached CONFIG_PATH at import time instead of resolving "
+            "it per call — see config.default_path()."
+        )
 
 
 def make_scratch_vault() -> Path:
+    assert_real_config_untouched()
     root = Path(tempfile.mkdtemp(prefix="um-test-"))
     vault = root / "vault"
     # Redirect config + index away from the real home directory.
@@ -170,6 +217,31 @@ class ScratchIsolationGuardTest(unittest.TestCase):
             str(os.environ["UNIFIED_MEMORY_INDEX_DB"]).startswith(str(self.REAL_HOME)),
             "the surviving env override points into the real home",
         )
+
+    def test_a_module_that_caches_config_path_cannot_write_the_real_home(self):
+        """The regression this suite was rewritten for on 2026-10-19.
+
+        Redirecting `common.CONFIG_PATH` is not enough if a module copied the
+        value at import time: it keeps the real path and writes there while
+        every redirect looks correct. `config.default_path()` resolves per call,
+        and this pins that behaviour plus the guard that notices a relapse.
+        """
+        from unified_memory import config
+
+        # A rebind after import must be honoured by the next call.
+        redirected = _GUARD_ROOT / "rebound.yaml"
+        saved = common.CONFIG_PATH
+        common.CONFIG_PATH = redirected
+        try:
+            self.assertEqual(config.default_path(), redirected)
+            config.set_key("vault", "/tmp/redirected")
+            self.assertTrue(redirected.exists())
+            self.assertIn("vault: /tmp/redirected", redirected.read_text(encoding="utf-8"))
+        finally:
+            common.CONFIG_PATH = saved
+        # And the guard can actually see a change to the real file.
+        self.assertIsNotNone(_REAL_CONFIG_PRINT, "the developer's real config should exist here")
+        assert_real_config_untouched()
 
 
 class StampParsingTest(unittest.TestCase):
