@@ -4,6 +4,27 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed — 测试里「只在这台机器上成立」的假设
+
+推上去之后 CI 直接红了，红的位置全是本轮之前就在的测试。两类：
+
+- **`test/setup-run.test.ts` / `test/setup-tool.test.ts` 用 Windows 路径当夹具**
+  （`C:\Vault`、`C:\Users\bobby`）。`memory_setup` 会拒绝相对路径，而 `C:\Vault`
+  在 POSIX 上不是绝对路径（`path.isAbsolute` 返回 false），于是整组用例在 Linux 上报
+  「vaultPath 必须是绝对路径」，一个字都没走到被测逻辑。夹具改成
+  `join(tmpdir(), …)`，断言也用 `join()` 推出来——因为 `runSetup` 内部就是这么拼的；
+  凡是验证平台分支的（`.cmd` 还是 `memory`）改成显式传 `platform`，不再隐式读
+  `process.platform`。**本地绿是因为本地跑在 Windows 上**，这正是它没被提前发现的原因。
+- **`test_common` 的核心守卫以「开发者本机真实 config 存在」为前提**
+  （`assertIsNotNone(_REAL_CONFIG_PRINT, "the developer's real config should exist here")`），
+  干净 runner 上没有 `~/.unified-memory.yaml`，三个平台全挂。现在改成对一个合成文件
+  真跑一遍守卫：不变时安静、改一个字节时抛 `AssertionError`。这条比原来强——原来的写法
+  只是「假定有个文件」，从来没验证过守卫会不会开火（把守卫换成 no-op，新测试立刻变红）。
+- **`test_config_vault` 拿未 resolve 的临时路径去比写入值**：`cmd_use` 存的是
+  `Path(...).resolve()`，而 macOS 的 `/var` 是指向 `/private/var` 的符号链接、
+  Windows runner 的临时目录是 8.3 短名，两边的字符串必然不同。改成双方都 `resolve()`
+  之后比较；配置值的读取拆成 `_written_vault()`，顺便让断言失败时能打印整份配置。
+
 ### Changed — 自动召回并入本包，核心写入者回归「三把锁」
 
 这一轮只做两件事：把原先要装第二个插件的自动召回收进本包，以及把「谁是唯一写者」

@@ -111,9 +111,25 @@ class UseExistingVaultTest(unittest.TestCase):
             mem_mod.cmd_use(argparse.Namespace(vault=str(vault or self.vault)))
         return out.getvalue()
 
+    def _written_vault(self) -> Path:
+        """The `vault:` value as written, resolved for comparison.
+
+        `cmd_use` stores and prints `Path(args.vault).expanduser().resolve()`,
+        so an assertion must resolve too: on macOS `/var` is a symlink to
+        `/private/var`, and a Windows CI runner's temp dir is an 8.3 short name.
+        Both differ from the unresolved temp path the test holds, which is why
+        the raw `assertIn(str(self.vault), ...)` passed locally and failed on
+        every other machine.
+        """
+        text = self.config.read_text(encoding="utf-8")
+        for line in text.splitlines():
+            if line.startswith("vault:"):
+                return Path(line.split("vault:", 1)[1].strip())
+        raise AssertionError(f"no vault: key written — config is {text!r}")
+
     def test_use_writes_the_vault_key(self):
         self._run_use()
-        self.assertIn(f"vault: {self.vault}", self.config.read_text(encoding="utf-8"))
+        self.assertEqual(self._written_vault().resolve(), self.vault.resolve())
 
     def test_use_keeps_other_keys_and_does_not_touch_the_vault(self):
         self.config.write_text("# my notes\ndigest: enabled\n\nvault: C:\\old\n", encoding="utf-8")
@@ -182,7 +198,8 @@ class UseExistingVaultTest(unittest.TestCase):
         spaced.mkdir()
         with self.assertRaises(SystemExit) as raised:
             self._run_use(spaced)
-        self.assertIn(f'memory init --vault "{spaced}"', str(raised.exception))
+        # The advice quotes the resolved path — see `_written_vault`.
+        self.assertIn(f'memory init --vault "{spaced.resolve()}"', str(raised.exception))
 
     def test_use_refuses_a_vault_without_the_context_index(self):
         # A folder that merely has 50-Agent-Context is not a memory vault: the

@@ -239,8 +239,27 @@ class ScratchIsolationGuardTest(unittest.TestCase):
             self.assertIn("vault: /tmp/redirected", redirected.read_text(encoding="utf-8"))
         finally:
             common.CONFIG_PATH = saved
-        # And the guard can actually see a change to the real file.
-        self.assertIsNotNone(_REAL_CONFIG_PRINT, "the developer's real config should exist here")
+        # And the guard can actually SEE a change. Prove it against a synthetic
+        # file rather than against the developer's real config: on a clean
+        # machine — every CI runner — there is no ~/.unified-memory.yaml, and a
+        # test that fails for want of one is testing the developer's laptop
+        # instead of the code. This version also asserts the guard *fires*,
+        # which the old "a real config should exist here" check never did.
+        synthetic = _GUARD_ROOT / "synthetic-real.yaml"
+        synthetic.write_text("vault: /tmp/original\n", encoding="utf-8")
+        global _REAL_CONFIG, _REAL_CONFIG_PRINT
+        saved_path, saved_print = _REAL_CONFIG, _REAL_CONFIG_PRINT
+        try:
+            _REAL_CONFIG = synthetic
+            _REAL_CONFIG_PRINT = _fingerprint(synthetic)
+            assert_real_config_untouched()  # unchanged → silent
+            synthetic.write_text("vault: /tmp/hijacked\n", encoding="utf-8")
+            with self.assertRaises(AssertionError):
+                assert_real_config_untouched()  # changed → loud
+        finally:
+            _REAL_CONFIG, _REAL_CONFIG_PRINT = saved_path, saved_print
+            synthetic.unlink()
+        # The real file, when the developer has one, is still untouched.
         assert_real_config_untouched()
 
 

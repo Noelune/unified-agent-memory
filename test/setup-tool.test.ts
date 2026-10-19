@@ -8,11 +8,22 @@ import type { PluginConfig } from '../src/types.ts'
 
 type ExecCall = { file: string; args: string[]; env: Record<string, string> }
 
+// Fixtures must be absolute on *every* platform. A literal `C:\Vault` is not
+// absolute on POSIX, and `memory_setup` refuses a relative vaultPath — so the
+// whole suite passed on Windows and reported "vaultPath 必须是绝对路径" on every
+// other CI runner. `join(tmpdir(), …)` is absolute everywhere and keeps the
+// assertions reading like real paths.
+const VAULT = join(tmpdir(), 'uam-fixture-vault')
+const HOME = join(tmpdir(), 'uam-fixture-home')
+const PYTHON = join(tmpdir(), 'fixture-python', 'python.exe')
+const CORE = join(tmpdir(), 'fixture-plug', 'core')
+const DEPLOY = join(tmpdir(), 'fixture-plug', 'setup', 'deploy.py')
+
 function cfg(): PluginConfig {
   return {
-    vaultPath: 'C:\\Vault',
-    pythonPath: 'C:\\Python311\\python.exe',
-    corePath: 'C:\\plug\\core',
+    vaultPath: VAULT,
+    pythonPath: PYTHON,
+    corePath: CORE,
     remoteEnabled: false,
     agentName: 'dsh-desktop',
   }
@@ -25,12 +36,12 @@ function deps(overrides: Partial<SetupDepsForTool> = {}) {
   let reloaded = 0
   const base: SetupDepsForTool = {
     cfg: cfg(),
-    home: 'C:\\Users\\z',
-    deployScript: 'C:\\plug\\setup\\deploy.py',
-    storagePath: join('C:\\Users\\z', '.unified-memory', 'onboarding.json'),
+    home: HOME,
+    deployScript: DEPLOY,
+    storagePath: join(HOME, '.unified-memory', 'onboarding.json'),
     readState: () => null,
     writeState: (state) => states.push(state),
-    detectTargets: () => [{ agent: 'dsh' as const, path: join('C:\\Users\\z', '.dsh', 'AGENTS.md') }],
+    detectTargets: () => [{ agent: 'dsh' as const, path: join(HOME, '.dsh', 'AGENTS.md') }],
     reload: () => {
       reloaded += 1
     },
@@ -56,7 +67,7 @@ const grantedState: OnboardingState = {
   version: 1,
   consent: 'granted',
   grantedAt: '2026-10-19T00:00:00+08:00',
-  vaultPath: 'C:\\Vault',
+  vaultPath: VAULT,
   scope: ['vault', 'config', 'instructions', 'shim', 'registry'],
   targets: ['.dsh/AGENTS.md'],
 }
@@ -68,7 +79,7 @@ describe('memory_setup consent gate', () => {
     const result = (await tool.execute({}, { agent: 'dsh-desktop' })) as Record<string, unknown>
     expect(result.needsConsent).toBe(true)
     expect(result.reason).toContain('不上传、不联网、不改凭据')
-    expect(result.plan).toContain('C:\\Vault')
+    expect(result.plan).toContain(VAULT)
     expect(result.hint).toContain('同意')
     expect(h.calls).toEqual([])
     expect(h.written).toEqual([])
@@ -90,19 +101,19 @@ describe('memory_setup consent gate', () => {
 
   it('promises reuse only for a complete vault, and quotes the path', async () => {
     // The consent text and runSetup must answer the same question the same way.
-    const structure = join('C:\\Vault', '50-Agent-Context')
+    const structure = join(VAULT, '50-Agent-Context')
     const h = deps({ exists: (path) => path === structure || path === join(structure, '上下文索引.md') })
     const result = (await defineSetupTool(h.deps).execute({}, { agent: 'dsh-desktop' })) as Record<string, unknown>
     expect(result.reason).toContain('复用已存在的记忆库')
     expect(result.reason).toContain('不覆盖已有文件')
-    expect(String(result.plan)).toContain('memory use --vault "C:\\Vault"')
+    expect(String(result.plan)).toContain(`memory use --vault "${VAULT}"`)
   })
 
   it('refuses a half-built vault before asking for consent', async () => {
     // A folder named 50-Agent-Context without the index cannot be reused and
     // cannot be re-initialised. Asking the user to approve work that will fail
     // at step 1 is worse than saying so now.
-    const structure = join('C:\\Vault', '50-Agent-Context')
+    const structure = join(VAULT, '50-Agent-Context')
     let asked = 0
     const h = deps({
       exists: (path) => path === structure,
@@ -218,11 +229,13 @@ describe('memory_setup consent gate', () => {
   })
 
   it('does not mistake a sibling directory for a path inside home', async () => {
-    // `startsWith(home)` also matches C:\Users\bobby for home C:\Users\bob, which
-    // would print "by/.dsh/AGENTS.md" as the target and deploy-nothing.
+    // `startsWith(home)` also matches `<root>/bobby` for home `<root>/bob`, which
+    // would print "by/.dsh/AGENTS.md" as the target and deploy nothing. Built
+    // from tmpdir() so the prefix relationship holds on any platform.
+    const root = join(tmpdir(), 'uam-sibling')
     const h = deps({
-      home: 'C:\\Users\\bob',
-      detectTargets: () => [{ agent: 'dsh' as const, path: 'C:\\Users\\bobby\\.dsh\\AGENTS.md' }],
+      home: join(root, 'bob'),
+      detectTargets: () => [{ agent: 'dsh' as const, path: join(root, 'bobby', '.dsh', 'AGENTS.md') }],
     })
     const result = (await defineSetupTool(h.deps).execute({}, { agent: 'dsh-desktop' })) as Record<string, unknown>
     expect(String(result.plan)).toContain('bobby')
@@ -235,7 +248,7 @@ describe('tool registration', () => {
     // only mutated the config object, so every reader kept answering "not
     // configured" until the host restarted. Registration must read the config
     // at call time.
-    const live = { ...cfg(), vaultPath: '', pythonPath: join('C:\\nope', 'python.exe') }
+    const live = { ...cfg(), vaultPath: '', pythonPath: join(tmpdir(), 'nope', 'python.exe') }
     const tools: Array<{ name: string; execute: (args: unknown, exec: unknown) => Promise<unknown> }> = []
     registerAll({ tools: { register: (tool) => tools.push(tool as never) } }, live, {})
     const search = tools.find((tool) => tool.name === 'memory_search')
@@ -244,7 +257,7 @@ describe('tool registration', () => {
     const before = (await search!.execute({ query: 'x' }, { agent: 'dsh-desktop' })) as { output?: string }
     expect(String(before.output)).toContain('not configured')
 
-    live.vaultPath = 'C:\\Vault'
+    live.vaultPath = VAULT
     const after = (await search!.execute({ query: 'x' }, { agent: 'dsh-desktop' })) as { output?: string }
     expect(String(after.output)).not.toContain('not configured')
   })
@@ -261,9 +274,9 @@ describe('memory_setup renders readable text', () => {
   it('renders the consent plan, not a stringified object', async () => {
     const tool = defineSetupTool(deps().deps)
     const result = await tool.execute({}, { agent: 'dsh-desktop' })
-    expect(String((result as Record<string, unknown>).output)).toContain('C:\\Vault')
+    expect(String((result as Record<string, unknown>).output)).toContain(VAULT)
     const text = rendered(tool, result)
-    expect(text).toContain('C:\\Vault')
+    expect(text).toContain(VAULT)
     expect(text).toContain('apply=true')
     expect(text).not.toContain('[object Object]')
   })
@@ -279,6 +292,6 @@ describe('memory_setup renders readable text', () => {
     const result = await tool.execute({ apply: true }, { agent: 'dsh-desktop' })
     const text = rendered(tool, result)
     expect(text).toContain('已完成')
-    expect(text).toContain('C:\\Vault')
+    expect(text).toContain(VAULT)
   })
 })

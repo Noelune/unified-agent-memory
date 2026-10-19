@@ -4,13 +4,23 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { runSetup, type SetupExec, type SetupPlan } from '../src/setup-run.ts'
 
+// Absolute on every platform. The runner derives paths with `join()`, so the
+// expectations have to be derived the same way: literal `C:\Vault\50-Agent-Context`
+// strings match on Windows and mismatch everywhere else, where `join` yields
+// `C:\Vault/50-Agent-Context`. That made this suite a Windows-only one.
+const VAULT = join(tmpdir(), 'uam-run-vault')
+const HOME = join(tmpdir(), 'uam-run-home')
+const CORE = join(tmpdir(), 'uam-run-plug', 'core')
+const PYTHON = join(tmpdir(), 'uam-run-python', 'python.exe')
+const DEPLOY = join(tmpdir(), 'uam-run-plug', 'setup', 'deploy.py')
+
 function plan(overrides: Partial<SetupPlan> = {}): SetupPlan {
   return {
-    vaultPath: 'C:\\Vault',
-    home: 'C:\\Users\\z',
-    corePath: 'C:\\plug\\core',
-    pythonPath: 'C:\\Python311\\python.exe',
-    deployScript: 'C:\\plug\\setup\\deploy.py',
+    vaultPath: VAULT,
+    home: HOME,
+    corePath: CORE,
+    pythonPath: PYTHON,
+    deployScript: DEPLOY,
     agentName: 'dsh-desktop',
     writeShim: true,
     writeRegistry: true,
@@ -36,20 +46,32 @@ function actionOf(args: string[]): string {
   return 'unknown'
 }
 
+/**
+ * The probes `inspectVault` makes, joined the way it joins them.
+ *
+ * `withIndex` distinguishes "ready" from "half-built" without the caller
+ * spelling out both paths — which is what made the old literals platform-bound.
+ */
+function structureProbes(vault: string, withIndex: boolean) {
+  return (path: string) =>
+    path === join(vault, '50-Agent-Context') ||
+    (withIndex && path === join(vault, '50-Agent-Context', '上下文索引.md'))
+}
+
 describe('runSetup', () => {
   it('inits the vault, deploys instructions, then selfchecks — in that order', async () => {
     const { calls, exec } = recorder()
     const result = await runSetup(plan(), { exec, writeFile: () => {} })
     expect(result.ok).toBe(true)
     expect(calls.map((call) => actionOf(call.args))).toEqual(['init', 'apply', 'selfcheck'])
-    expect(calls[0]?.args).toEqual(['-m', 'unified_memory.memory', 'init', '--vault', 'C:\\Vault'])
+    expect(calls[0]?.args).toEqual(['-m', 'unified_memory.memory', 'init', '--vault', VAULT])
     expect(calls[1]?.args).toEqual([
-      'C:\\plug\\setup\\deploy.py',
+      DEPLOY,
       'apply',
       '--home',
-      'C:\\Users\\z',
+      HOME,
       '--vault',
-      'C:\\Vault',
+      VAULT,
     ])
     expect(calls[2]?.args).toEqual(['-m', 'unified_memory.memory', 'status'])
   })
@@ -61,8 +83,8 @@ describe('runSetup', () => {
     // fail (or worse, silently pass) on a fresh install.
     const { calls, exec } = recorder()
     await runSetup(plan(), { exec, writeFile: () => {} })
-    expect(calls[0]?.env.UNIFIED_MEMORY_VAULT).toBe('C:\\Vault')
-    expect(calls[2]?.env.UNIFIED_MEMORY_VAULT).toBe('C:\\Vault')
+    expect(calls[0]?.env.UNIFIED_MEMORY_VAULT).toBe(VAULT)
+    expect(calls[2]?.env.UNIFIED_MEMORY_VAULT).toBe(VAULT)
   })
 
   it('treats a vault as missing when no probe is given', async () => {
@@ -95,16 +117,15 @@ describe('runSetup', () => {
     // existing Obsidian vault is the advertised reuse case, and the 0.8.0
     // upgrade case, so it must skip init entirely.
     const { calls, exec } = recorder()
-    const exists = (path: string) =>
-      path === 'C:\\Vault\\50-Agent-Context' || path === 'C:\\Vault\\50-Agent-Context\\上下文索引.md'
+    const exists = structureProbes(VAULT, true)
     const result = await runSetup(plan(), { exec, writeFile: () => {}, exists })
     expect(result.ok).toBe(true)
     // `use` is what persists `vault:` on this path. init is the only other
     // writer, and it is skipped here, so without this call every reader — and
     // the shim, which runs without UNIFIED_MEMORY_VAULT — keeps the old vault.
     expect(calls.map((call) => actionOf(call.args))).toEqual(['use', 'apply', 'selfcheck'])
-    expect(calls[0]?.args).toEqual(['-m', 'unified_memory.memory', 'use', '--vault', 'C:\\Vault'])
-    expect(calls[0]?.env.UNIFIED_MEMORY_VAULT).toBe('C:\\Vault')
+    expect(calls[0]?.args).toEqual(['-m', 'unified_memory.memory', 'use', '--vault', VAULT])
+    expect(calls[0]?.env.UNIFIED_MEMORY_VAULT).toBe(VAULT)
     expect(result.steps[0]).toMatchObject({ name: 'vault', ok: true })
     expect(result.steps[0]?.detail).toContain('复用')
   })
@@ -114,7 +135,7 @@ describe('runSetup', () => {
     // report success while search/show have nothing to read, and init cannot
     // repair it (it refuses an existing structure).
     const { calls, exec } = recorder()
-    const exists = (path: string) => path === 'C:\\Vault\\50-Agent-Context'
+    const exists = structureProbes(VAULT, false)
     const result = await runSetup(plan(), { exec, writeFile: () => {}, exists })
     expect(result.ok).toBe(false)
     expect(calls).toEqual([])
@@ -139,8 +160,7 @@ describe('runSetup', () => {
       exec,
       writeFile: (path, content) => written.push({ path, content }),
       readFile: (path) => (path.includes('前缀登记') ? existing : undefined),
-      exists: (path) =>
-        path === 'C:\\Vault\\50-Agent-Context' || path === 'C:\\Vault\\50-Agent-Context\\上下文索引.md',
+      exists: structureProbes(VAULT, true),
     })
     const registry = written.find((item) => item.path.includes('前缀登记'))
     expect(registry?.content).toContain('`dsh-web-`')
@@ -178,9 +198,9 @@ describe('runSetup', () => {
       chmod: (path, mode) => chmods.push({ path, mode }),
       platform: 'linux',
     })
-    expect(written[0]?.path).toBe('C:\\Users\\z\\.unified-memory\\bin\\memory')
+    expect(written[0]?.path).toBe(join(HOME, '.unified-memory', 'bin', 'memory'))
     expect(written[0]?.content.startsWith('#!/bin/sh')).toBe(true)
-    expect(chmods).toEqual([{ path: 'C:\\Users\\z\\.unified-memory\\bin\\memory', mode: 0o755 }])
+    expect(chmods).toEqual([{ path: join(HOME, '.unified-memory', 'bin', 'memory'), mode: 0o755 }])
   })
 
   it('fails the selfcheck when the core reports a missing vault structure', async () => {
@@ -201,10 +221,17 @@ describe('runSetup', () => {
   it('writes the shim and registry only when asked', async () => {
     const written: Array<{ path: string; content: string }> = []
     const { exec } = recorder()
-    await runSetup(plan(), { exec, writeFile: (path, content) => written.push({ path, content }) })
+    // `platform` is pinned instead of inherited: the shim's filename is
+    // `memory.cmd` on Windows and `memory` elsewhere, so reading it off
+    // process.platform made this assertion a Windows-only one.
+    await runSetup(plan(), {
+      exec,
+      writeFile: (path, content) => written.push({ path, content }),
+      platform: 'win32',
+    })
     expect(written.map((item) => item.path)).toEqual([
-      'C:\\Users\\z\\.unified-memory\\bin\\memory.cmd',
-      'C:\\Vault\\50-Agent-Context\\Agent提交区\\前缀登记.md',
+      join(HOME, '.unified-memory', 'bin', 'memory.cmd'),
+      join(VAULT, '50-Agent-Context', 'Agent提交区', '前缀登记.md'),
     ])
     expect(written[0]?.content).toContain('unified_memory.memory')
     expect(written[1]?.content).toContain('dsh-desktop-')
@@ -227,12 +254,12 @@ describe('runSetup', () => {
         : { code: 0, stdout: 'ok', stderr: '' }
     const result = await runSetup(plan(), { exec, writeFile: () => {} })
     expect(result.ok).toBe(false)
-    expect(result.steps.at(-1)?.detail).toContain('已指向 C:\\Vault')
+    expect(result.steps.at(-1)?.detail).toContain(`已指向 ${VAULT}`)
   })
 
   it('does not claim a repoint when the vault step itself fails', async () => {
     // Nothing wrote `vault:` yet, so the note would be a lie.
-    const exists = (path: string) => path.startsWith('C:\\Vault\\50-Agent-Context')
+    const exists = (path: string) => path.startsWith(join(VAULT, '50-Agent-Context'))
     const exec: SetupExec = async (_file, args) =>
       actionOf(args) === 'use'
         ? { code: 1, stdout: '', stderr: 'use failed' }
@@ -257,6 +284,6 @@ describe('runSetup', () => {
     ])
     expect(result.steps[1]?.detail).toContain('deploy failed')
     // Init already repointed the machine's default vault; the failure has to say so.
-    expect(result.steps[1]?.detail).toContain('已指向 C:\\Vault')
+    expect(result.steps[1]?.detail).toContain(`已指向 ${VAULT}`)
   })
 })
