@@ -15,9 +15,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdtempSync, statSync, writeFileSync, mkdirSync, rmSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { upgradeStatePath } from '../src/upgrade.ts'
 
 vi.mock('../src/updater.ts', () => ({
   checkForUpdate: vi.fn(),
@@ -209,6 +210,26 @@ describe('host plugin contract', () => {
   it('exposes a cordis plugin shape', () => {
     expect(typeof host.apply).toBe('function')
     expect(host.name).toBe('dsh-unified-agent-memory')
+  })
+
+  it('does not let a boot of the plugin write into the real home directory', async () => {
+    // `apply()` schedules the upgrade reconcile, whose default home is
+    // `homedir()`. Under a test runner that is the developer's actual home, and
+    // this really happened: `npm run check` wrote `~/.unified-memory/bin/memory`
+    // and `~/.unified-memory/upgrade.json`, with the shim pointing at the source
+    // checkout instead of the installed package. The guard is `isTestProcess()`
+    // in upgrade-boot.ts; this test is what keeps it there.
+    const { ctx } = makeCtx()
+    const before = existsSync(upgradeStatePath(homedir()))
+    const beforeMtime = before ? statSync(upgradeStatePath(homedir())).mtimeMs : 0
+
+    host.apply(ctx as never, { vaultPath: 'C:/tmp/vault' })
+    // Let the scheduled setImmediate (if any) run and its writes land.
+    await new Promise((resolve) => setTimeout(resolve, 60))
+
+    const after = existsSync(upgradeStatePath(homedir()))
+    expect(after).toBe(before)
+    if (before) expect(statSync(upgradeStatePath(homedir())).mtimeMs).toBe(beforeMtime)
   })
 
   it('registers the automatic recall hook under the real package name', () => {

@@ -30,6 +30,19 @@ vault 模版文件这三样留在磁盘上一动不动。老用户升完级，�
 状态记在 `~/.unified-memory/upgrade.json`。设计见
 `docs/superpowers/specs/2026-10-20-plugin-upgrade-design.md`。
 
+### Fixed — 测试跑一次就改了真实的 `~/.unified-memory`
+
+`apply()` 的默认 home 是 `homedir()`，而 `test/plugin.test.ts` 会为了验证工具
+与路由注册而调用 `apply()`。于是 `npm run check` 会悄悄在开发机上写出
+`~/.unified-memory/bin/memory` 和 `~/.unified-memory/upgrade.json`，其中 shim
+指向的是**源码仓库**而不是安装包——这比它想验证的任何东西都糟。
+
+测试自己防不住：写盘是从被测模块内部调度的。所以由模块侧拒绝：`startUpgradeReconcile`
+在没有显式 `home` 且进程是测试运行器（`VITEST` / `NODE_ENV=test`）时直接返回。
+显式传 `home` 表示调用方已经为写入位置负责，测试和将来可能的手动工具都走这条。
+另加一条回归测试：`apply()` 之后真实 `upgrade.json` 的存在性与 mtime 均不得变化。
+
+
 ### Fixed — 修掉 `shimTarget` 读不出 Windows shim 的 bug
 
 上一版没发出去，但值得一提：第一版正则 `PYTHONPATH=(?:"([^"]*)"|'([^']*)')` 只
@@ -42,6 +55,22 @@ set "PYTHONPATH=C:\path with spaces\core"
 引号在赋值两边，`=` 后面直接是 `C:`，于是**每个 Windows 用户的 shim 每次启动
 都会被判成「内容无法识别」并重写一遍**。三个方言的正确顺序是 cmd 那条吃掉闭合
 引号、排在最先。这个 bug 是单元测试抓到的，不是读代码看出来的。
+
+### Fixed — 升级核对在三处自相矛盾
+
+都是拿真实 vault 的副本跑完整流程才暴露的，单测的假数据盖住了：
+
+- **报告是执行前的状态。** 一趟 pass 创建了 shim，`/status` 却仍然报「shim
+  不存在」，而同一份载荷里的 `done` 已经是 `true`。现在执行后**重新规划**一次。
+  重新规划读的是这一趟刚写的记录，所以 `fromVersion` 从原计划沿用，否则每次
+  升级都会显示成 `0.8.1 → 0.8.1`，把用户真正走过的变化从唯一展示它的地方抹掉。
+- **幂等的 deploy 被当成「重写」。** deploy 对每个目标打印一行
+  `{"changed": "True"|"False", "written": "True"|"False"}` —— 是 Python 的
+  `str(bool)`，所以是**字符串**。原来按行数（或只看 `written`）统计，导致每次
+  启动都报「已按当前版本重写托管段」，并把 `instructions` 永久记进 `changed`。
+  现在逐目标读 `changed`，三个状态三句话，且「什么都没打印」不再声称重写过。
+- **`existsSync` 问在写入之后。** 登记表那一步先 `writeAtomic` 再检查文件是否
+  存在，于是「已创建」永远不会出现，每个首次创建都报「已合并」。
 
 ### Fixed — 提交前缀永远是「dsh（未识别 profile）」
 

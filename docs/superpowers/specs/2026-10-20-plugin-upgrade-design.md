@@ -176,7 +176,65 @@ reconcile（和全新安装跑的是同一趟）；因为一个 JSON 文件解�
 - **`summarizePlan()`**：一行话，给日志、工具结果和面板共用。版本没变、只有工件
   要修时**不打印 `0.8.0 → 0.8.0`** —— 那读起来像一次没发生的迁移。
 
-## 9. 今后的迭代怎么复用这套东西
+## 9. 执行之后必须重新规划
+
+`report` 里存的是**规划**结果和**执行**结果两半。如果只存执行前的那份计划，载荷
+就会自相矛盾：一趟创建了 shim 的 pass，`/status` 仍然报「shim 不存在」，而同一份
+载荷里的 `done` 已经是 `true`。所以执行完要再 `planUpgrade()` 一次。
+
+重新规划会读这一趟**刚写**的 `upgrade.json`，于是它自己的 `fromVersion` 已经是
+新版本了。直接采用会得到 `0.8.1 → 0.8.1`，把用户真正走过的变化从唯一展示它的
+地方抹掉。所以 `fromVersion` 从原计划沿用：
+
+```ts
+const fresh = replan(cfg, home)
+report = { plan: fresh === null ? plan : { ...fresh, fromVersion: plan.fromVersion }, result }
+```
+
+重新规划失败不是升级失败：退回原计划即可，`result` 里的逐步结果仍然是真实的。
+
+## 10. deploy 的输出是字符串布尔
+
+`deploy.py apply` 每个目标打印一行：
+
+```json
+{"path": "...", "changed": "True", "written": "True", "backup": "..."}
+{"path": "...", "changed": "False", "written": "False", "backup": "None"}
+```
+
+`"True"` / `"False"` 是 **`str(bool)` 的产物，不是 JSON 布尔**。任何真值判断都会
+把 `"False"` 读成真（非空字符串恒真），于是幂等的一次运行被当成重写。
+
+第一版就是这么错的，而且错得很隐蔽：它按「有几个 `{` 开头的行」统计，再只数
+`written: "True"`。后果是每次启动都报「已按当前版本重写托管段」，并把
+`instructions` 永久记进 `changed`——一份声称每次都改了的记录，等于没有记录。
+
+现在逐目标解析 `changed`，三种状态三句话；一行都不是 JSON 时（deploy 也打印
+人类可读的行）**不声称重写**，只说「已核对托管段（deploy 未报告明细）」。
+
+## 11. 测试进程不许碰真实 home
+
+`apply()` 的默认 home 是 `homedir()`，而 `test/plugin.test.ts` 为验证工具与路由
+注册会调用 `apply()`。于是 `npm run check` 在开发机上写出了
+`~/.unified-memory/bin/memory`（指向源码仓库而非安装包）和 `upgrade.json`。
+
+测试自己防不住这件事——写盘是从被测模块内部调度的，测试没有机会注入 home。所以
+由模块侧拒绝：
+
+```ts
+function isTestProcess(): boolean {
+  return Boolean(process.env.VITEST) || process.env.NODE_ENV === 'test'
+}
+export function startUpgradeReconcile(cfg: PluginConfig, home?: string): void {
+  if (home === undefined && isTestProcess()) return
+  ...
+}
+```
+
+显式传 `home` 表示调用方已经为写入位置负责 —— 测试和将来可能的手动工具走这条。
+另有一条回归测试盯着：`apply()` 之后真实 `upgrade.json` 的存在性与 mtime 都不许变。
+
+## 12. 今后的迭代怎么复用这套东西
 
 对新版本的要求只有三条，都不需要改升级代码：
 
@@ -188,7 +246,7 @@ reconcile（和全新安装跑的是同一趟）；因为一个 JSON 文件解�
 唯一需要人做的事：**改 `package.json` 的 version**。`upgrade.json` 里的版本是
 唯一的「已应用」凭据，所以发版流程本身成了升级流程的触发器。
 
-## 10. 未验证项 / 后续
+## 13. 未验证项 / 后续
 
 - 目前只在 Windows 上跑过真实 `reconcile`。POSIX 的 shim 分支有单测覆盖
   （`sh` 方言、`chmodSync 0o755`），但没有在真机上升级过一次。

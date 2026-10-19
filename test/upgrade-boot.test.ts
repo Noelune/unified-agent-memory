@@ -144,6 +144,39 @@ describe('reconcile — an installed machine', () => {
     for (const problem of info?.problems ?? []) expect(problem).toContain('：')
   })
 
+  it('reports what is on disk after the pass, not before it', async () => {
+    // The reproduced bug: a pass created the shim and then the panel still said
+    // "shim missing" next to `done: true` — the two halves of one payload
+    // contradicting each other. The report has to be re-planned.
+    const report = await reconcile(cfg(), home)
+
+    expect(report?.result).not.toBeNull()
+    const shim = report?.plan.artifacts.find((a) => a.key === 'shim')
+    // This pass creates the shim (it did not exist), so the plan it reports
+    // must say `ok`, not `missing`.
+    expect(shim?.state).toBe('ok')
+    expect(upgradeInfo()?.problems.join('\n') ?? '').not.toContain('不存在，其它 Agent 无法通过')
+  })
+
+  it('keeps the version it came from, even though the pass already recorded the new one', async () => {
+    // The re-plan reads the record the pass just wrote, so its own `fromVersion`
+    // is already the new version. Copying it would turn every upgrade summary
+    // into `0.8.1 → 0.8.1` and erase the transition from the only place that
+    // ever showed it.
+    const old = '0.7.9'
+    mkdirSync(join(home, '.unified-memory'), { recursive: true })
+    writeFileSync(
+      join(home, '.unified-memory', 'upgrade.json'),
+      JSON.stringify({ version: old, corePath: core, installPath: join(home, 'plug'), appliedAt: '', changed: [] }),
+      'utf8',
+    )
+
+    const report = await reconcile(cfg(), home)
+
+    expect(report?.plan.fromVersion).toBe(old)
+    expect(report?.plan.toVersion).not.toBe(old)
+  })
+
   it('caps the problems it hands the client', async () => {
     await reconcile(cfg(), home)
     // The pane is 380px wide; a fourth line is already below the fold.

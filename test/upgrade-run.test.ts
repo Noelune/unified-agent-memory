@@ -188,10 +188,53 @@ describe('runUpgrade — instruction sections', () => {
     expect(stepOf(result, 'instructions')?.detail).toContain('已是最新')
   })
 
-  it('handles deploy printing nothing at all', async () => {
+  it('distinguishes the strings "True"/"False" deploy actually prints', async () => {
+    // deploy emits Python's str(bool), so these are the six-character strings
+    // "True" / "False". A truthiness check would read "False" as changed.
+    const result = await runUpgrade(
+      deps({}, recorder(0, '{"changed": "False", "written": "False"}\n')),
+    )
+    expect(stepOf(result, 'instructions')?.detail).toContain('已是最新')
+  })
+
+  it('does not mark instructions as changed on an idempotent deploy', async () => {
+    // The version record's `changed` list is what a later reader uses to see
+    // what a pass touched. A no-op deploy must not appear there — otherwise
+    // every boot claims it rewrote the instruction sections.
+    await runUpgrade(deps({}, recorder(0, '{"changed": "False", "written": "False"}\n')))
+    const state = readUpgradeState(upgradeStatePath(home))
+    expect(state?.changed ?? []).not.toContain('instructions')
+  })
+
+  it('does mark instructions as changed when deploy rewrote them', async () => {
+    await runUpgrade(deps({}, recorder(0, '{"changed": "True", "written": "True"}\n')))
+    const state = readUpgradeState(upgradeStatePath(home))
+    expect(state?.changed).toContain('instructions')
+  })
+
+  it('counts per target instead of per line', async () => {
+    // Two targets, one rewritten: the sentence has to say 1, not 2.
+    const stdout = [
+      '{"changed": "True", "written": "True"}',
+      '{"changed": "False", "written": "False"}',
+    ].join('\n')
+    const result = await runUpgrade(deps({}, recorder(0, stdout)))
+    expect(stepOf(result, 'instructions')?.detail).toContain('1 个指令文件')
+  })
+
+  it('does not fail on a human-readable deploy line', async () => {
+    const stdout = ['deploying...', '{"changed": "False", "written": "False"}', 'done'].join('\n')
+    const result = await runUpgrade(deps({}, recorder(0, stdout)))
+    expect(stepOf(result, 'instructions')?.ok).toBe(true)
+    expect(stepOf(result, 'instructions')?.detail).toContain('已是最新')
+  })
+
+  it('handles deploy printing nothing at all without claiming a rewrite', async () => {
     const result = await runUpgrade(deps({}, recorder(0, '')))
     expect(stepOf(result, 'instructions')?.ok).toBe(true)
-    expect(stepOf(result, 'instructions')?.detail).toBe('已按当前版本重写托管段')
+    // The old fallback said "已按当前版本重写托管段" — a rewrite claim for a
+    // run that reported nothing at all.
+    expect(stepOf(result, 'instructions')?.detail).not.toContain('重写')
   })
 })
 
@@ -206,7 +249,8 @@ describe('runUpgrade — the version record', () => {
   })
 
   it('records which artifacts it actually rewrote', async () => {
-    await runUpgrade(deps())
+    // deploy reports a rewrite, so `instructions` belongs in `changed`.
+    await runUpgrade(deps({}, recorder(0, '{"changed": "True", "written": "True"}\n')))
     const state = readUpgradeState(upgradeStatePath(home))
     expect(state?.changed).toContain('shim')
     expect(state?.changed).toContain('registry')

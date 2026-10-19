@@ -166,7 +166,17 @@ export async function reconcile(cfg: PluginConfig, home: string = homedir()): Pr
       agentName: cfg.agentName,
       deployApply: deployRunner(cfg),
     })
-    report = { plan, result }
+    // Re-plan, so the report describes what is on disk *now* rather than what
+    // was there before the pass. Without this the panel keeps showing "shim
+    // missing" for a shim this very pass created, alongside `done: true` — the
+    // two halves of the same payload contradicting each other.
+    //
+    // `fromVersion` is carried over from the original plan, because the re-plan
+    // reads the record this pass just wrote: it would answer `0.8.1 → 0.8.1`
+    // and the transition the user actually went through would be erased from
+    // the only place that ever showed it.
+    const fresh = replan(cfg, home)
+    report = { plan: fresh === null ? plan : { ...fresh, fromVersion: plan.fromVersion }, result }
   } catch {
     // The runner reports per-step failures itself; this catch is for a throw
     // it did not anticipate, which must not reach the host.
@@ -175,15 +185,53 @@ export async function reconcile(cfg: PluginConfig, home: string = homedir()): Pr
 }
 
 /**
+ * Plan again after a pass, or null if the disk has become unreadable.
+ *
+ * `fromVersion` is carried over from the record the pass just wrote, so a
+ * successful upgrade reports `0.8.0 → 0.8.1` and not `0.8.1 → 0.8.1`.
+ */
+function replan(cfg: PluginConfig, home: string): UpgradePlan | null {
+  try {
+    const fresh = probeFor(cfg, home)
+    return fresh === null ? null : planUpgrade(fresh)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Whether this process is a test runner.
+ *
+ * The reason to care: `apply()` is called by unit tests that boot the host
+ * half, and its default home is the *real* home directory. Before this guard
+ * existed, `npm run check` silently wrote `~/.unified-memory/bin/memory` and
+ * `~/.unified-memory/upgrade.json` on the developer's machine — pointing the
+ * shim at the source checkout instead of the installed package. A test that
+ * writes outside its temp directory is a bug in the test, but a test cannot
+ * prevent it on its own: the write is scheduled from inside the module under
+ * test. So the module refuses by default.
+ */
+function isTestProcess(): boolean {
+  return Boolean(process.env.VITEST) || process.env.NODE_ENV === 'test'
+}
+
+/**
  * Schedule the pass and forget about it.
  *
  * `setImmediate` rather than a timer: the work should start as soon as the
  * current tick ends, and it must not sit behind the plugin's own startup work.
  * The promise is never awaited, so the rejection path is closed explicitly.
+ *
+ * An explicit `home` means the caller has taken responsibility for where this
+ * writes — that is what the tests and any future manual tool pass. Without one,
+ * the real home directory is the target in production and the wrong target
+ * under a test runner, so the pass is skipped there (see `isTestProcess`).
  */
-export function startUpgradeReconcile(cfg: PluginConfig, home: string = homedir()): void {
+export function startUpgradeReconcile(cfg: PluginConfig, home?: string): void {
+  if (home === undefined && isTestProcess()) return
+  const target = home ?? homedir()
   setImmediate(() => {
-    void reconcile(cfg, home).catch(() => undefined)
+    void reconcile(cfg, target).catch(() => undefined)
   })
 }
 

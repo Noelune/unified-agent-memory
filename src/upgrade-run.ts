@@ -176,8 +176,15 @@ export async function runUpgrade(deps: UpgradeDeps): Promise<UpgradeResult> {
       '--agent', deps.agentName,
     ])
     if (code === 0) {
-      changed.push('instructions')
-      steps.push({ name: 'instructions', ok: true, detail: summarizeDeploy(stdout) })
+      // `changed` is the honest signal, and it is per-target: deploy prints one
+      // JSON line per instruction file with `changed`/`written` as the strings
+      // "True"/"False". An idempotent run exits 0 with every line "False", so
+      // counting the lines (or trusting the exit code) would report a rewrite on
+      // every single boot and mark `instructions` as changed forever.
+      const targets = deployTargets(stdout)
+      const rewritten = targets.filter((t) => t.changed).length
+      if (rewritten > 0) changed.push('instructions')
+      steps.push({ name: 'instructions', ok: true, detail: summarizeDeploy(targets) })
     } else {
       steps.push({
         name: 'instructions',
@@ -244,19 +251,47 @@ export async function runUpgrade(deps: UpgradeDeps): Promise<UpgradeResult> {
 }
 
 /**
- * First useful line of deploy output.
+ * Parse `deploy.py apply` output: one JSON object per instruction file.
  *
- * `deploy.py apply` prints one JSON object per target. Turning that into the
- * count is more useful on a card than the raw blob, and it keeps the panel
- * from rendering a JSON wall at 380px wide.
+ * The fields arrive as the *strings* `"True"` / `"False"`, not booleans — they
+ * come from Python's `str(bool)`. Reading them as booleans directly would make
+ * every value truthy (a non-empty string), so `"False"` has to be compared as
+ * text.
+ *
+ * A line that is not JSON is skipped rather than failing the step: deploy also
+ * prints human lines, and a changed summary format must not turn a successful
+ * upgrade into a failure.
  */
-function summarizeDeploy(stdout: string): string {
-  const lines = stdout.split('\n').map((l) => l.trim()).filter((l) => l.startsWith('{'))
-  if (lines.length === 0) return '已按当前版本重写托管段'
-  const written = lines.filter((l) => l.includes('"written": "True"')).length
-  return written === 0
-    ? `${lines.length} 个指令文件的托管段已是最新`
-    : `${written} 个指令文件的托管段已更新（改前有备份）`
+function deployTargets(stdout: string): Array<{ changed: boolean; written: boolean }> {
+  const targets: Array<{ changed: boolean; written: boolean }> = []
+  for (const line of stdout.split('\n')) {
+    const text = line.trim()
+    if (!text.startsWith('{')) continue
+    try {
+      const parsed = JSON.parse(text) as { changed?: unknown; written?: unknown }
+      targets.push({
+        changed: parsed.changed === 'True' || parsed.changed === true,
+        written: parsed.written === 'True' || parsed.written === true,
+      })
+    } catch {
+      // Not a JSON line. Nothing to learn from it.
+    }
+  }
+  return targets
+}
+
+/**
+ * One line about what deploy did, from its parsed output.
+ *
+ * Three distinct sentences, because the three states are genuinely different
+ * and the old fallback ("已按当前版本重写托管段") claimed a rewrite even when
+ * deploy had reported `changed: False` for every file.
+ */
+function summarizeDeploy(targets: Array<{ changed: boolean; written: boolean }>): string {
+  if (targets.length === 0) return '已核对托管段（deploy 未报告明细）'
+  const rewritten = targets.filter((t) => t.changed).length
+  if (rewritten === 0) return `${targets.length} 个指令文件的托管段已是最新`
+  return `${rewritten} 个指令文件的托管段已更新（改前有备份）`
 }
 
 function errorText(error: unknown): string {
