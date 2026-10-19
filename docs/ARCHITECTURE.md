@@ -112,6 +112,15 @@ layout; the index/model layer organizes content across layers.
 2. **Digest (optional, default on)** — `digest.py` summarizes archived
    sessions into durable facts via a small LLM call and drops them into the
    inbox (redacted, credential-checked, cursor-idempotent).
+   `--source state` additionally reads Hermes's `state.db` through
+   `sessiondb.py`, which covers sessions that were never archived as Markdown.
+   That adapter is deliberately one-way and read-only: it projects the database
+   onto the same `(date, transcript)` contract the archive produces, opens the
+   file with `mode=ro`, checks the columns it uses and names any that moved,
+   and strips tool output before anything reaches the LLM. Each source keeps
+   its own cursor, so switching between them never re-bills a date. See
+   `docs/SESSIONDB.md` for the measured gap this closes and the reasons a
+   schema dependency was avoided.
 3. **Promote** — the promoter classifies (English + Chinese rules), dedups
    (char-bigram similarity), detects **supersession** (replacement cues such as
    “改用/迁移到/instead of” move the old line under a `已取代` section) and
