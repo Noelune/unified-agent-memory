@@ -4,6 +4,30 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed — 提交前缀永远是「dsh（未识别 profile）」
+
+插件的写前缀本该跟着 DSH profile 走（desktop → `dsh-desktop`），好让同一个
+vault 上的多端各写各的。实际上从装上那天起，每台机器都停在 `dsh`，健康页那一
+行一直挂着 `dsh（未识别 profile）`。
+
+原因是我读错了宿主的约定。宿主**不给插件进程设 `DSH_PROFILE`**：它只在于模型
+执行 bash 时现建一个 `DSH_*` 命名空间（`dsh-subprocess` 的 `collect()` 把
+`profileContext.name` 填进去），并且明确丢弃外部传入的同名变量。插件是普通
+Node 模块，`process.env.DSH_PROFILE` 永远是空的，于是永远落到 `fallback`。
+
+宿主的正常通道是 `profileContext` 服务：`hostCtx.provide('profileContext',
+{ name, dir, ... })`。现在 `apply()` 用 `ctx.get('profileContext')` 取它
+（`profileNameOf()`，取不到 / Cordis 拒绝都返回 null），再交给
+`resolveConfig(config, { profile })`。
+
+优先级仍是「显式配置 > `UNIFIED_MEMORY_AGENT` > profile > `dsh`」，行为变化只有
+一条：`fallback` 终于只会在宿主确实没发布 profile 时出现，而不是每次都出现。
+`DSH_PROFILE` 环境变量保留为手工启动的旁路（`DSH_PROFILE=web dsh`），宿主自己
+给的值优先于它。
+
+已经用补丁层写死 `agentName` 的安装不受影响——那种写法本来就对，只是把问题盖住
+了；现在可以不写。
+
 ### Added — 体检页可以把问题直接交给 Agent
 
 上一版给了修法，但修法还是要人复制、切终端、看输出、再回来点重新体检。

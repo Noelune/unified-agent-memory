@@ -178,7 +178,7 @@ flowchart LR
 
 **多 Agent 怎么共享同一个框架**：插件只能自动接管它自己所在的那一端（DSH），其余运行时靠两样已经落在磁盘上的东西接入——①`<vault>/50-Agent-Context/` 里的 README 与协作规则说明（告诉对方读什么、写哪里、前缀怎么定），②稳定的 CLI shim `~/.unified-memory/bin/memory`（不依赖 Python 装没装到 PATH，也不依赖 checkout 路径）。把 ① 的托管段复制进对方指令文件、让对方调 ②，它就是这个框架的一员，不需要再装一份插件。
 
-贡献与归属按前缀区分：本端前缀默认跟着 profile 走（`DSH_PROFILE=desktop` → `dsh-desktop-`），`memory_status` 里会显示前缀及其来源（`config` / `env` / `profile` / `fallback`）；出现 `fallback` 说明两端会写成同一个前缀，值得先修配置。
+贡献与归属按前缀区分：本端前缀默认跟着 profile 走（desktop → `dsh-desktop-`），`memory_status` 里会显示前缀及其来源（`config` / `env` / `profile` / `fallback`）；出现 `fallback` 说明宿主没给出 profile、两端会写成同一个前缀，值得先修配置。
 
 ---
 

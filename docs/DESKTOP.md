@@ -178,10 +178,16 @@ A patch entry replaces the matched entry's whole config, so keep every field you
 want to keep. Optional keys: `pythonPath` (default `python`), `corePath`
 (defaults to the plugin's bundled `core/`, auto-added to `PYTHONPATH`),
 `remoteEnabled` (default `false`) and `agentName` — the submission prefix in
-`Agent提交区/`. `agentName` defaults to `dsh-<DSH_PROFILE>` (so desktop and web
+`Agent提交区/`. `agentName` defaults to `dsh-<profile>` (so desktop and web
 runtimes sharing one vault stay distinguishable) and falls back to plain `dsh`
-when `DSH_PROFILE` is unset; `UNIFIED_MEMORY_AGENT` overrides it when the plugin
-config does not set it.
+when the host publishes no profile; `UNIFIED_MEMORY_AGENT` overrides it when the
+plugin config does not set it.
+
+The profile name is read from the host's `profileContext` service, not from the
+environment: `DSH_PROFILE` is injected into model shell commands and never into
+the plugin's own process, so an env-only lookup always concluded "no profile".
+Setting `agentName` explicitly in the patch layer still wins, and is the right
+move if you want a fixed prefix regardless of which profile is running.
 
 ---
 

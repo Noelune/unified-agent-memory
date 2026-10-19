@@ -449,7 +449,7 @@ else:
 | `corePath` | string | 核心包路径 |
 | `remoteEnabled` | boolean | 是否启用远端索引 |
 | `agentName` | string | 本运行时的提交前缀；同机多端共用一个 vault 时以此区分 |
-| `agentSource` | `"config"\|"env"\|"profile"\|"fallback"` | 前缀来源。`fallback` 表示既没配 `agentName` 也没有 `DSH_PROFILE`，两端会写成同一个前缀——属可见的告警状态 |
+| `agentSource` | `"config"\|"env"\|"profile"\|"fallback"` | 前缀来源。`profile` 来自宿主的 `profileContext`（手工启动时也可由 `DSH_PROFILE` 环境变量提供）；`fallback` 表示宿主没有发布 profile、也没配 `agentName`，两端会写成同一个前缀——属可见的告警状态 |
 | `recall` | `{"mode":"auto"\|"always"\|"off","limit":number,"maxChars":number,"minQueryChars":number,"timeoutMs":number,"instructions":boolean}` | `agent/pre-step` 自动召回的**生效值**（不是默认值）。发布它的理由：`off`、没命中话题、core 坏掉，从外部看都是「这一轮没有召回」，只有把模式发出来才能区分 |
 | `onboarding` | `{"granted": boolean}` | 当前 vault 是否已完成首次引导（逐个 vault 判定，换 vault 需重新授权） |
 | `version` | string | `ui.currentVersion` |

@@ -119,6 +119,42 @@ export function readCoreConfigVault(path: string = CORE_CONFIG_PATH): string {
 }
 
 /**
+ * The host's profile name, or null.
+ *
+ * `DSH_PROFILE` is not readable here, and assuming it was is a bug this
+ * function exists to undo: the host builds a `DSH_*` namespace afresh for every
+ * model shell call and discards ambient values, so a plugin that reads
+ * `process.env.DSH_PROFILE` always sees nothing and silently falls back to
+ * "dsh" — every desktop, web and headless runtime writing facts under one
+ * prefix, which is exactly what the prefix warning was trying to prevent.
+ *
+ * What the host does publish to plugins is the `profileContext` service
+ * (`hostCtx.provide('profileContext', { name, dir, ... })`). Returns null on a
+ * host that predates it, and on Cordis' throw-for-undeclared-service behaviour.
+ */
+export function profileNameOf(ctx: unknown): string | null {
+  if (!ctx) return null
+  try {
+    const get = (ctx as { get?: (name: string) => unknown }).get
+    if (typeof get !== 'function') return null
+    const profile = get.call(ctx, 'profileContext')
+    if (!profile || typeof profile !== 'object') return null
+    const name = (profile as { name?: unknown }).name
+    return typeof name === 'string' && name !== '' ? name : null
+  } catch {
+    return null
+  }
+}
+
+/** Inputs that do not come from the cordis config object. */
+export interface ResolveOptions {
+  /** The profile name the host published, i.e. `profileNameOf(ctx)`. */
+  profile?: string | null
+  /** Environment to read. Defaults to `process.env`; tests pass a plain object. */
+  env?: Record<string, string | undefined>
+}
+
+/**
  * Resolve plugin configuration from cordis config, then env vars.
  *
  * Resolution order for the vault mirrors the core's own precedence so the two
@@ -127,26 +163,34 @@ export function readCoreConfigVault(path: string = CORE_CONFIG_PATH): string {
  *
  * Every field has a valid fallback, so this never throws.
  */
-export function resolveConfig(config: Record<string, unknown> = {}): PluginConfig {
-  const env = process.env
+export function resolveConfig(
+  config: Record<string, unknown> = {},
+  opts: ResolveOptions = {},
+): PluginConfig {
+  const env = opts.env ?? process.env
   const vaultPath = String(
     config.vaultPath || env.UNIFIED_MEMORY_VAULT || readCoreConfigVault() || '',
   )
   // The agent name is the submission file prefix, i.e. the attribution of every
   // fact this runtime writes. Several DSH runtimes can share one vault (desktop,
-  // web, tui, headless…), so the fallback follows DSH_PROFILE — which the host
-  // always sets — instead of collapsing them all into "dsh".
+  // web, tui, headless…), so the name follows the host's profile instead of
+  // collapsing them all into "dsh".
+  //
+  // The host profile is the real source; `env.DSH_PROFILE` is kept only as a
+  // manual escape hatch for launching by hand (`DSH_PROFILE=web dsh`), because
+  // the host itself never sets it in this process.
+  const profile = opts.profile || env.DSH_PROFILE || ''
   const agentNameSource: PluginConfig['agentNameSource'] = config.agentName
     ? 'config'
     : env.UNIFIED_MEMORY_AGENT
       ? 'env'
-      : env.DSH_PROFILE
+      : profile
         ? 'profile'
         : 'fallback'
   const agentName = String(
     config.agentName ||
       env.UNIFIED_MEMORY_AGENT ||
-      (env.DSH_PROFILE ? `dsh-${env.DSH_PROFILE}` : 'dsh'),
+      (profile ? `dsh-${profile}` : 'dsh'),
   )
   return {
     vaultPath,

@@ -41,7 +41,7 @@ interface FakeRoute {
 }
 
 /** Build a cordis-like context that refuses services the plugin did not declare. */
-function makeCtx() {
+function makeCtx(opts: { profile?: string } = {}) {
   const declared = host.inject as readonly string[]
   const tools: string[] = []
   const routes: FakeRoute[] = []
@@ -79,6 +79,15 @@ function makeCtx() {
       }
       if (prop === 'logger') {
         return { warn: (message: string) => { warnings.push(message) } }
+      }
+      // `ctx.get(name)` is a Context method, not a service: Cordis answers it
+      // from the service registry. Only `profileContext` is modelled, because
+      // it is the one service the plugin reads through it (the write prefix).
+      if (prop === 'get') {
+        return (name: string) =>
+          name === 'profileContext' && opts.profile !== undefined
+            ? { name: opts.profile, dir: '/profiles/' + opts.profile }
+            : undefined
       }
       if (!(prop in services)) return undefined
       if (!declared.includes(prop)) {
@@ -226,6 +235,20 @@ describe('host plugin contract', () => {
     expect(body.recall.mode).toBe('always')
     expect(body.recall.timeoutMs).toBe(3000)
     expect(body.recall.instructions).toBe(true)
+  })
+
+  it('takes the write prefix from the host profile, not from the environment', async () => {
+    // End-to-end for the bug the panel used to show as "dsh（未识别 profile）":
+    // the host publishes its profile through `profileContext`, and nothing
+    // about this process looks like DSH_PROFILE.
+    const { ctx, routes } = makeCtx({ profile: 'desktop' })
+    host.apply(ctx as never, { vaultPath: 'C:/tmp/vault' })
+
+    const { res, out } = capture()
+    await routes[0].handler({ socket: { remoteAddress: '127.0.0.1' }, method: 'GET' }, res)
+    const body = JSON.parse(out.body)
+    expect(body.agentName).toBe('dsh-desktop')
+    expect(body.agentSource).toBe('profile')
   })
 
   it('registers the six tools and every route without tripping the guard', () => {

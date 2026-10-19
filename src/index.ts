@@ -56,7 +56,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import { resolveConfig, runCore } from './utils.ts'
+import { profileNameOf, resolveConfig, runCore } from './utils.ts'
 import { registerAll } from './tools.ts'
 import type { ApprovalLike } from './tools.ts'
 import { installRecall } from './recall.ts'
@@ -160,7 +160,11 @@ async function readStats(cfg: PluginConfig): Promise<StatusStats | null> {
 // ── Plugin entry ────────────────────────────────────────────────────
 
 export function apply(ctx: Context, config: Record<string, unknown> = {}): void {
-  const cfg = resolveConfig(config)
+  // The profile name decides the write prefix, and it has to come from the
+  // host: `DSH_PROFILE` is injected into model shell commands, never into this
+  // process, so `resolveConfig` cannot find it on its own.
+  const hostProfile = profileNameOf(ctx)
+  const cfg = resolveConfig(config, { profile: hostProfile })
 
   // ---- Optional approval service (memory_setup asks through it) ----
   // `ctx.inject(deps, cb)` is Cordis' plugin() under the hood: the callback gets
@@ -184,7 +188,7 @@ export function apply(ctx: Context, config: Record<string, unknown> = {}): void 
     approval: () => approvalRef,
     // setup writes a vault and a config; the live tools must stop reporting
     // "not configured" without requiring a restart.
-    reload: () => Object.assign(cfg, resolveConfig(config)),
+    reload: () => Object.assign(cfg, resolveConfig(config, { profile: hostProfile })),
   })
 
   // ---- Automatic pre-turn recall (the merged discipline layer) ----

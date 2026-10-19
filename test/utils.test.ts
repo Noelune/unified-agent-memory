@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   resolveConfig,
+  profileNameOf,
   checkVaultHealth,
   validateDocId,
   clampLimit,
@@ -24,6 +25,34 @@ import {
   readCoreConfigVault,
   DEPLOY_TASKBOOK,
 } from '../src/utils.ts'
+
+// ── profileNameOf ───────────────────────────────────────────────────
+
+describe('profileNameOf', () => {
+  it('reads the name off the host\'s profileContext service', () => {
+    const ctx = { get: (name: string) => (name === 'profileContext' ? { name: 'desktop', dir: '/p' } : undefined) }
+    expect(profileNameOf(ctx)).toBe('desktop')
+  })
+
+  it('returns null on a host that does not publish the service', () => {
+    // Older clients, or a bare Cordis context in a test harness.
+    expect(profileNameOf(null)).toBeNull()
+    expect(profileNameOf({})).toBeNull()
+    expect(profileNameOf({ get: () => undefined })).toBeNull()
+    expect(profileNameOf({ get: () => ({ dir: '/p' }) })).toBeNull()
+  })
+
+  it('returns null instead of throwing when the lookup is refused', () => {
+    // Cordis throws for an undeclared service; a panel that crashes on load is
+    // worse than one that reports "unrecognised profile".
+    expect(profileNameOf({ get: () => { throw new Error('not declared') } })).toBeNull()
+  })
+
+  it('ignores a blank or non-string name', () => {
+    expect(profileNameOf({ get: () => ({ name: '' }) })).toBeNull()
+    expect(profileNameOf({ get: () => ({ name: 42 }) })).toBeNull()
+  })
+})
 
 // ── resolveConfig ───────────────────────────────────────────────────
 
@@ -38,8 +67,8 @@ describe('resolveConfig', () => {
     delete process.env.UNIFIED_MEMORY_COREPATH
     delete process.env.UNIFIED_MEMORY_REMOTE
     delete process.env.UNIFIED_MEMORY_AGENT
-    // DSH sets this in every harness process, so a test that inherits the real
-    // value would assert the developer's profile instead of the default.
+    // Not a value the host sets in this process — see the `profile` cases below.
+    // Cleared anyway so a developer who exported it by hand cannot skew a test.
     delete process.env.DSH_PROFILE
   })
 
@@ -75,8 +104,40 @@ describe('resolveConfig', () => {
     expect(cfg.corePath).toContain('core')
   })
 
-  it('defaults the agent name to dsh when neither config nor DSH_PROFILE is set', () => {
+  it('defaults the agent name to dsh when no profile and no config is available', () => {
     expect(resolveConfig().agentName).toBe('dsh')
+  })
+
+  it('takes the profile name from the host, not from the environment', () => {
+    // The regression this covers: the host never exports DSH_PROFILE into this
+    // process (it builds a DSH_* namespace per model shell call and discards
+    // ambient values), so reading the env var always produced 'fallback' and
+    // the health pane said "dsh（未识别 profile）" on every real install.
+    const cfg = resolveConfig({}, { profile: 'desktop' })
+    expect(cfg.agentName).toBe('dsh-desktop')
+    expect(cfg.agentNameSource).toBe('profile')
+  })
+
+  it('prefers the host profile over a DSH_PROFILE left in the environment', () => {
+    // Someone launching by hand may export the variable; the host's own answer
+    // is the more authoritative one.
+    process.env.DSH_PROFILE = 'web'
+    const cfg = resolveConfig({}, { profile: 'desktop' })
+    expect(cfg.agentName).toBe('dsh-desktop')
+  })
+
+  it('still reads DSH_PROFILE when the host published no profile', () => {
+    process.env.DSH_PROFILE = 'web'
+    const cfg = resolveConfig({}, { profile: null })
+    expect(cfg.agentName).toBe('dsh-web')
+    expect(cfg.agentNameSource).toBe('profile')
+  })
+
+  it('holds the host profile above UNIFIED_MEMORY_AGENT only when unset', () => {
+    process.env.UNIFIED_MEMORY_AGENT = 'team-lead'
+    const cfg = resolveConfig({}, { profile: 'desktop' })
+    expect(cfg.agentName).toBe('team-lead')
+    expect(cfg.agentNameSource).toBe('env')
   })
 
   it('derives the agent name from DSH_PROFILE so runtimes sharing one vault stay separate', () => {
