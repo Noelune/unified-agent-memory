@@ -32,6 +32,8 @@ export const NOTE_URL = `${BASE_URL}/note`
 /** One canonical note's body, by file name — the search pane's open action. */
 export const DOC_URL = `${BASE_URL}/doc`
 export const DISMISS_URL = `${BASE_URL}/dismiss`
+export const ACCEPT_URL = `${BASE_URL}/accept`
+export const DECIDE_URL = `${BASE_URL}/decide`
 export const STATS_URL = `${BASE_URL}/stats`
 /** The core's own issue list — the health pane's "what do I do about it". */
 export const DOCTOR_URL = `${BASE_URL}/doctor`
@@ -515,6 +517,158 @@ export async function dismissItem(
   } catch {
     return { ok: false, reason: 'unavailable' }
   }
+}
+
+// ── Accept ─────────────────────────────────────────────────────────
+
+/** What one accept did: how many facts landed, and whether the rest were seen. */
+export interface AcceptResult {
+  ok: boolean
+  reason: string | null
+  promoted: number
+  duplicates: number
+  conflicts: number
+}
+
+/**
+ * Promote one inbox submission into memory.
+ *
+ * The yes button. `ok` is true only when the host confirms a promotion, and a
+ * 200 can still carry `ok:false` — a refusal (`conflicts`, `not-a-submission`,
+ * `not-found`) is a business answer, not a transport failure, so `reason` is
+ * returned next to the verdict instead of being flattened into a boolean.
+ *
+ * The counts travel because the pane has something useful to say afterwards:
+ * "收录 3 条" and "3 条重复，没有新事实" are different outcomes of the same
+ * click, and a bare `true` renders them identically.
+ */
+export async function acceptItem(name: string): Promise<AcceptResult> {
+  const empty = { ok: false, reason: 'unavailable', promoted: 0, duplicates: 0, conflicts: 0 }
+  try {
+    const r = await fetch(ACCEPT_URL, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name }),
+    })
+    const body = (await r.json().catch(function () { return null })) as
+      { ok?: boolean; reason?: unknown; promoted?: unknown; duplicates?: unknown; conflicts?: unknown } | null
+    if (!body) return empty
+    const count = function (v: unknown): number {
+      const n = Number(v)
+      return Number.isFinite(n) && n > 0 ? n : 0
+    }
+    return {
+      ok: body.ok === true,
+      reason: typeof body.reason === 'string' ? body.reason : null,
+      promoted: count(body.promoted),
+      duplicates: count(body.duplicates),
+      conflicts: count(body.conflicts),
+    }
+  } catch {
+    return empty
+  }
+}
+
+// ── Conflicts: the questions that actually need a person ───────────
+
+/** One queued conflict: a new fact and the existing line it contradicts. */
+export interface ConflictItem {
+  /** Stable handle for the ruling. Never a list index — resolving shifts them. */
+  key: string
+  new: string
+  old: string
+  source: string
+  /** Vault-relative note the new fact would land in. */
+  doc: string
+}
+
+/**
+ * Read the conflict queue.
+ *
+ * `null` means the read failed; `[]` means the queue really is empty. The two
+ * are different sentences in the pane ("读不到" vs "没有要裁决的"), so this
+ * never collapses one into the other.
+ *
+ * A row without a `key` is dropped: it cannot be ruled on, and rendering a row
+ * whose buttons would have nothing to send is worse than not showing it.
+ */
+export async function loadConflicts(limit: number = PREVIEW_LIMIT): Promise<ConflictItem[] | null> {
+  try {
+    const url = `${PREVIEW_URL}?view=conflicts&limit=${limit}`
+    const r = await fetch(url, { cache: 'no-store' })
+    if (!r.ok) return null
+    const body = (await r.json()) as { ok?: boolean; items?: unknown }
+    if (body.ok !== true || !Array.isArray(body.items)) return null
+    return body.items.flatMap(function (raw): ConflictItem[] {
+      if (!raw || typeof raw !== 'object') return []
+      const o = raw as Record<string, unknown>
+      const key = typeof o.key === 'string' ? o.key : ''
+      if (!key) return []
+      return [{
+        key,
+        new: typeof o.new === 'string' ? o.new : '',
+        old: typeof o.old === 'string' ? o.old : '',
+        source: typeof o.source === 'string' ? o.source : '',
+        doc: typeof o.doc === 'string' ? o.doc : '',
+      }]
+    })
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Rule on one conflict.
+ *
+ * `choice` is one of the three verdicts the route accepts (用新 / 保留旧 / 并存).
+ * `target` comes back when the ruling wrote to a note, so the pane can name the
+ * file it changed instead of saying "done".
+ */
+export async function decideConflict(
+  key: string, choice: string,
+): Promise<{ ok: boolean; reason: string | null; applied: boolean; target: string | null }> {
+  try {
+    const r = await fetch(DECIDE_URL, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ key, choice }),
+    })
+    const body = (await r.json().catch(function () { return null })) as
+      { ok?: boolean; reason?: unknown; applied?: unknown; target?: unknown } | null
+    return {
+      ok: body?.ok === true,
+      reason: typeof body?.reason === 'string' ? body.reason : null,
+      applied: body?.applied === true,
+      target: typeof body?.target === 'string' ? body.target : null,
+    }
+  } catch {
+    return { ok: false, reason: 'unavailable', applied: false, target: null }
+  }
+}
+
+/** Conflict-queue state for the 待确认 pane. Loads on mount; `reload` re-reads. */
+export function useConflicts(): {
+  items: ConflictItem[] | null
+  busy: boolean
+  reload: () => void
+} {
+  const [items, setItems] = useState<ConflictItem[] | null>(null)
+  const [busy, setBusy] = useState(true)
+  const [nonce, setNonce] = useState(0)
+
+  useEffect(function () {
+    const gate = newPreviewGate()
+    setBusy(true)
+    loadConflicts()
+      .then(function (rows) { if (canApplyPreview(gate)) setItems(rows) })
+      .catch(function () { if (canApplyPreview(gate)) setItems(null) })
+      .finally(function () { if (canApplyPreview(gate)) setBusy(false) })
+    return gate.dispose
+  }, [nonce])
+
+  return { items, busy, reload: function () { setNonce(function (n) { return n + 1 }) } }
 }
 
 // ── Stats ──────────────────────────────────────────────────────────

@@ -26,14 +26,18 @@
 
 import { h, useState } from '../deps.ts'
 import type { SearchHit, StatsPayload } from './types.ts'
-import { dismissItem, loadDoc, loadNote, useDoctor, usePreview, useRepair, useSearch, useStats } from './store.ts'
+import {
+  acceptItem, decideConflict, dismissItem, loadDoc, loadNote,
+  useConflicts, useDoctor, usePreview, useRepair, useSearch, useStats,
+} from './store.ts'
 import type { RepairApi, RepairEntry } from './store.ts'
 import {
   BreakdownDonut, CalendarHeatmap, GrowthChart, TopBars,
 } from './Figures.tsx'
 import {
-  COMMAND_NOTE, CONSOLE_TABS, INBOX_ACCEPT_NOTE, INBOX_LEAD, PENDING_BADGE_TAB,
-  SEVERITY_LABEL, TAB_LABEL,
+  COMMAND_NOTE, CONFLICT_CHOICES, CONFLICT_LEAD, CONSOLE_TABS,
+  INBOX_ACCEPT_NOTE, INBOX_LEAD, PENDING_BADGE_TAB, SEVERITY_LABEL, TAB_LABEL,
+  acceptOutcomeText, acceptReasonText, decideOutcomeText, decideReasonText,
   dismissReasonText, healthFindings, healthRows, healthSummary, highlightParts,
   inboxSummary, issueTitle, noteDigest, oldestFirst, openFailureText, previewEmptyText,
   relativeAge, rowFindings, searchFailureText, splitHealth, statKpis,
@@ -229,41 +233,54 @@ function Hit(props: {
 // ── Inbox ───────────────────────────────────────────────────────────
 
 /**
- * The queue: every submission waiting for a human, oldest first.
+ * The queue: everything an agent submitted that a person still has to decide.
  *
- * Three affordances, and each exists because its absence made the pane useless
- * in a different way:
+ * TWO KINDS OF ROW, and that distinction is the whole design:
  *
- *   - 查看 reads the submission through `/note`. A list of file names is a list
- *     of things you cannot judge, and judging IS the task.
- *   - 不采纳 moves one entry to `已处理/`. This is the panel's only write, and
- *     without it "待确认" was a number with no way to lower it. It used to be
- *     labelled 归档, which reads as "file it into memory" — the exact opposite
- *     of what it does: the submission is dropped, not promoted. A wrong verb on
- *     the only destructive-ish control in the pane is worse than no verb.
- *   - the age column. "3 条" tells you the size of the queue; "3 条，最老 21 天"
- *     tells you whether to open the panel at all.
+ *   - 需要你裁决 — a submitted fact CONTRADICTS something already in memory.
+ *     Yes/no is not an answer here. The three rulings are 取代 (the new fact is
+ *     true, drop the old line), 保留旧 (memory is right, void the submission)
+ *     and 共存 (both hold). The core has queued these in
+ *     `情境信息/事实冲突待裁决.md` for exactly this reason; before this pane
+ *     read that queue, a conflict could exist for days with no surface that
+ *     showed it, and `adjudicate` reported "nothing to adjudicate" because it
+ *     only understood the JSON line shape while the human shape was in use.
  *
- * The accept path is NOT here — promotion is vault-wide (`--review` builds one
- * list from the whole inbox, `--apply` writes it), so `INBOX_ACCEPT_NOTE` names
- * the command rather than offering a per-row button that would quietly decide
- * about every other row too.
+ *   - 待确认 — a submission nothing contradicts. That one really is yes/no:
+ *     收录 promotes it into memory, 不采纳 moves the file to `已处理/` (nothing
+ *     is deleted, and no canonical note is touched).
  *
- * A refusal is shown, not swallowed: `dismissItem` resolves a reason
- * (`outside-inbox`, `not-found`, `unavailable`), which says both what happened
- * and whether trying again could help.
+ * The refusal button used to be labelled 归档, which reads as "file it into
+ * memory" — the exact opposite of what it does. A wrong verb on the control
+ * that changes state is worse than no control, because the reader believes it
+ * worked. It is 不采纳 now, with 收录 beside it so the pane has both answers
+ * instead of only the negative one.
+ *
+ * Every refusal is shown, never swallowed: each action resolves a `reason`
+ * (`conflicts`, `not-found`, `unavailable`, …), which says both what happened
+ * and what to do next — a bare failure toast cannot.
  */
 function InboxTab(): Child {
   const preview = usePreview('pending')
+  const conflicts = useConflicts()
   const [openName, setOpenName] = useState<string | null>(null)
   const [bodies, setBodies] = useState<Record<string, string>>({})
   const [bodyError, setBodyError] = useState<string | null>(null)
   const [refusal, setRefusal] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const [working, setWorking] = useState<string | null>(null)
+  const [ruling, setRuling] = useState<string | null>(null)
 
   const items = oldestFirst(preview.data?.items ?? [])
   const summary = inboxSummary(items, Date.now())
   const empty = previewEmptyText(preview.data)
+  const rows = conflicts.items ?? []
+
+  /** One success line at a time; a stale notice beside a new refusal is noise. */
+  function done(text: string): void {
+    setNotice(text)
+    setRefusal(null)
+  }
 
   function toggle(name: string): void {
     if (openName === name) { setOpenName(null); return }
@@ -284,26 +301,103 @@ function InboxTab(): Child {
   function retire(name: string): void {
     setWorking(name)
     setRefusal(null)
+    setNotice(null)
     dismissItem(name).then(function (r) {
       setWorking(null)
       if (!r.ok) { setRefusal(dismissReasonText(r.reason)); return }
       setOpenName(null)
+      done(`已不采纳 ${name}，文件在 已处理/ 里`)
+      preview.reload()
+    })
+  }
+
+  function accept(name: string): void {
+    setWorking(name)
+    setRefusal(null)
+    setNotice(null)
+    acceptItem(name).then(function (r) {
+      setWorking(null)
+      if (!r.ok) {
+        setRefusal(acceptReasonText(r.reason))
+        // A `conflicts` refusal dequeued nothing and queued a ruling upstairs:
+        // re-read the conflict block so the reader sees the question it raised.
+        if (r.reason === 'conflicts') conflicts.reload()
+        return
+      }
+      setOpenName(null)
+      done(acceptOutcomeText(r))
+      preview.reload()
+      conflicts.reload()
+    })
+  }
+
+  function rule(key: string, choice: string): void {
+    setRuling(key)
+    setRefusal(null)
+    setNotice(null)
+    decideConflict(key, choice).then(function (r) {
+      setRuling(null)
+      if (!r.ok) {
+        setRefusal(decideReasonText(r.reason))
+        conflicts.reload()
+        return
+      }
+      done(decideOutcomeText({ applied: r.applied, target: r.target, choice }))
+      conflicts.reload()
+      // A ruling can add a line to a canonical note, but it never touches the
+      // inbox — reload the submissions list only once, so the two reads cannot
+      // disagree about what is still waiting.
       preview.reload()
     })
   }
 
   return h('div', { className: 'dsh-memory-pane' },
     refusal ? h(Failure, { text: refusal }) : null,
+    notice ? h('div', { className: 'dsh-memory-note' }, notice) : null,
+
+    // ── The questions that need a judgement, not a yes/no ──
+    conflicts.busy || rows.length === 0
+      ? null
+      : h('div', { className: 'dsh-memory-card dsh-memory-card-lead' },
+          h('div', { className: 'dsh-memory-cardhead' },
+            '需要你裁决',
+            h('span', { className: 'dsh-memory-cardcount' }, `${rows.length} 条`)),
+          h('div', { className: 'dsh-memory-note' }, CONFLICT_LEAD),
+          h('div', { className: 'dsh-memory-rows' },
+            ...rows.map(function (it) {
+              const busy = ruling === it.key
+              return h('div', { key: it.key, className: 'dsh-memory-item' },
+                h('div', { className: 'dsh-memory-row', 'data-tone': 'warn' },
+                  h('i', { className: 'dsh-memory-bar' }),
+                  h('span', { className: 'dsh-memory-rowname' },
+                    it.doc || '未指定笔记'),
+                ),
+                h('div', { className: 'dsh-memory-body' },
+                  h('div', null, '新的：' + (it.new || '（空）')),
+                  h('div', null, '旧的：' + (it.old || '（没有对应的旧记录）')),
+                  it.source ? h('div', null, '来源：' + it.source) : null,
+                ),
+                h('div', { className: 'dsh-memory-row' },
+                  ...CONFLICT_CHOICES.map(function (c) {
+                    return h('button', {
+                      key: c.value,
+                      type: 'button',
+                      className: 'dsh-memory-action',
+                      disabled: busy,
+                      title: c.hint,
+                      onClick: function () { rule(it.key, c.value) },
+                    }, busy ? '处理中…' : c.label)
+                  }),
+                ),
+              )
+            })),
+        ),
+
+    // ── The plain submissions: promote or retire, one row at a time ──
     h('div', { className: 'dsh-memory-card dsh-memory-card-lead' },
       h('div', { className: 'dsh-memory-cardhead' },
         '待确认',
         h('span', { className: 'dsh-memory-cardcount' }, summary.text)),
-      // Why the list exists and what confirming would even mean. Shown only
-      // when there is something to read: on an empty queue the Empty block
-      // already answers, and two paragraphs of explanation for zero rows is
-      // noise. The accept command stays visible either way — an empty queue is
-      // exactly when a reader needs to know how the queue gets filled and
-      // drained.
       items.length > 0
         ? h('div', { className: 'dsh-memory-note' }, INBOX_LEAD)
         : null,
@@ -311,8 +405,6 @@ function InboxTab(): Child {
       preview.busy
         ? h(Skeleton, null)
         : !preview.data
-          // A null payload after a settled load is a failed read, not an empty
-          // queue — the same distinction `previewEmptyText` guards, one level up.
           ? h(Failure, { text: '待确认列表读不到，记忆核心暂不可用', onRetry: preview.reload })
           : empty
             ? h(Empty, { title: empty.title, hint: empty.hint })
@@ -320,6 +412,7 @@ function InboxTab(): Child {
               ...items.map(function (it) {
                 const expanded = openName === it.name
                 const known = bodies[it.name]
+                const busy = working === it.name
                 return h('div', { key: it.name, className: 'dsh-memory-item' },
                   h('div', { className: 'dsh-memory-row' },
                     h('i', { className: 'dsh-memory-bar dsh-memory-bar-doc' }),
@@ -335,10 +428,17 @@ function InboxTab(): Child {
                     h('button', {
                       type: 'button',
                       className: 'dsh-memory-action',
-                      disabled: working === it.name,
+                      disabled: busy,
+                      title: '把这些事实写进记忆，然后把文件移到 已处理/',
+                      onClick: function () { accept(it.name) },
+                    }, busy ? '处理中…' : '收录'),
+                    h('button', {
+                      type: 'button',
+                      className: 'dsh-memory-action',
+                      disabled: busy,
                       title: '移到 已处理/：不进记忆，也不删文件',
                       onClick: function () { retire(it.name) },
-                    }, working === it.name ? '处理中…' : '不采纳'),
+                    }, busy ? '处理中…' : '不采纳'),
                   ),
                   expanded
                     ? h('div', { className: 'dsh-memory-body' },

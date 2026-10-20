@@ -18,9 +18,9 @@
  *   memory_show    — print one canonical document
  *   memory_submit  — write facts into the submission inbox (only write path)
  *   memory_status  — configuration and index health
- *   memory_preview — read-only governance views (pending/conflicts/…; the
- *                    conflicts view reports itself unsupported until the
- *                    conflict detector writes type='conflict')
+ *   memory_preview — read-only governance views (pending/conflicts/…). The
+ *                    conflicts view reads the adjudication queue itself, so it
+ *                    answers "what is waiting for a ruling".
  *
  * Beyond the tools, the plugin listens to `agent/pre-step` and injects recall
  * for memory-sensitive turns (src/recall.ts). That used to be a second package
@@ -71,6 +71,8 @@ import {
 } from './route-preview.ts'
 import { DOC_PATH, handleDoc } from './route-doc.ts'
 import { DOCTOR_PATH, handleDoctor } from './route-doctor.ts'
+import { ACCEPT_PATH, handleAccept, parseAcceptBody } from './route-accept.ts'
+import { DECIDE_PATH, handleDecide, parseDecideBody } from './route-decide.ts'
 import { DISMISS_PATH, handleDismiss, parseDismissBody } from './route-dismiss.ts'
 import { STATS_PATH, buildStatsArgs, shapeStatsResult } from './route-stats.ts'
 import { startUpgradeReconcile, upgradeInfo } from './upgrade-boot.ts'
@@ -342,7 +344,73 @@ export function apply(ctx: Context, config: Record<string, unknown> = {}): void 
     },
   })
 
-  // ---- HTTP dismiss route: the plugin's ONLY write path ----
+  // ---- HTTP accept route: the positive half of the inbox queue ----
+  // POST-only, one file per call. `promoter --apply` is vault-wide (it executes
+  // the whole pending-list snapshot), so wiring a per-row 收录 button to it
+  // would accept every other row while looking like it accepted one. This route
+  // promotes exactly the named submission and retires exactly that file.
+  //
+  // Same guards as /dismiss for the same reasons: `guardWrite` (a write route an
+  // exact path never routes through the host's /api auth), the name whitelisted
+  // before the core is spawned, and status 200/409 chosen by the core's business
+  // answer rather than by whether the process exited cleanly.
+  ws.webServer.register({
+    kind: 'exact',
+    path: ACCEPT_PATH,
+    handler(req, res) {
+      if (!guardWrite(req, res)) return
+      return (async () => {
+        let raw: string
+        try {
+          raw = await readBody(req)
+        } catch {
+          sendJson(res, 413, { ok: false, error: 'body too large' })
+          return
+        }
+        const name = parseAcceptBody(raw)
+        if (!name) {
+          sendJson(res, 400, { ok: false, error: 'invalid name' })
+          return
+        }
+        const result = await handleAccept(cfg, name)
+        sendJson(res, result.ok ? 200 : 409, result)
+      })()
+    },
+  })
+
+  // ---- HTTP decide route: rule on one queued conflict ----
+  // The third writing route, and the one the 待确认 page actually needs. A
+  // conflict is a fact an agent wanted to remember that contradicts something
+  // already in memory; the core queues it (`情境信息/事实冲突待裁决.md`) instead
+  // of guessing, and `decide` applies one of three rulings. Same guards as the
+  // other two writes. `跳过` is refused at the parser: it dequeues the entry
+  // and suppresses the fact forever, which is not something a button should be
+  // able to do under the name "skip".
+  ws.webServer.register({
+    kind: 'exact',
+    path: DECIDE_PATH,
+    handler(req, res) {
+      if (!guardWrite(req, res)) return
+      return (async () => {
+        let raw: string
+        try {
+          raw = await readBody(req)
+        } catch {
+          sendJson(res, 413, { ok: false, error: 'body too large' })
+          return
+        }
+        const body = parseDecideBody(raw)
+        if (!body) {
+          sendJson(res, 400, { ok: false, error: 'invalid key or choice' })
+          return
+        }
+        const result = await handleDecide(cfg, body.key, body.choice)
+        sendJson(res, result.ok ? 200 : 409, result)
+      })()
+    },
+  })
+
+  // ---- HTTP dismiss route: retire one inbox entry without promoting it ----
   // POST-only, and narrow by construction: the core's `dismiss` moves one inbox
   // entry into `已处理/` — it never deletes and never rewrites a note, and the
   // canonical store stays read-only. The name is whitelisted here before the
@@ -356,10 +424,10 @@ export function apply(ctx: Context, config: Record<string, unknown> = {}): void 
   // failed core call degrades to `{ok:false}` inside handleDismiss rather than
   // becoming a 500; only a serialisation failure in sendJson can 500.
   //
-  // `guardWrite`, not `guard`: this is the only route that writes, and an exact
-  // route never reaches the host's `/api` prefix auth, so loopback alone would
-  // let a hostile page drive it (CSRF / DNS rebinding). Cross-site → 403 before
-  // the core is ever spawned.
+  // `guardWrite`, not `guard`: this is one of the two routes that write, and an
+  // exact route never reaches the host's `/api` prefix auth, so loopback alone
+  // would let a hostile page drive it (CSRF / DNS rebinding). Cross-site → 403
+  // before the core is ever spawned.
   ws.webServer.register({
     kind: 'exact',
     path: DISMISS_PATH,

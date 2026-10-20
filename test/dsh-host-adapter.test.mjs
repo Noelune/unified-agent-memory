@@ -50,6 +50,13 @@ const ROUTE_PATHS = [
   // submission inbox and answers `outside-inbox` for a canonical note, so the
   // two name spaces need two routes.
   '/api/dsh-unified-agent-memory/doc',
+  // The two answers to the 待确认 queue. `/accept` promotes ONE submission
+  // (the yes the queue used to lack); `/decide` rules on ONE conflict — 取代 /
+  // 保留旧 / 共存. Both are per-row on purpose: the vault-wide `--apply` behind
+  // a per-row button would decide the other rows too while looking like it
+  // decided one.
+  '/api/dsh-unified-agent-memory/accept',
+  '/api/dsh-unified-agent-memory/decide',
   '/api/dsh-unified-agent-memory/dismiss',
   '/api/dsh-unified-agent-memory/stats',
   // The core's own issue list, behind the health pane's verdict.
@@ -132,7 +139,7 @@ test('registers all six memory tools', () => {
   }
 })
 
-test('registers the seven exact HTTP routes for the browser half', () => {
+test('registers every exact HTTP route for the browser half', () => {
   const { ctx, routeList } = makeContext()
   plugin.apply(ctx, {})
 

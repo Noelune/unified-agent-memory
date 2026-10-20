@@ -75,6 +75,11 @@ export function previewEmptyText(data: PreviewData | null): EmptyText | null {
   if (data.view === 'pending') {
     return { title: '没有待确认的提交', hint: 'Agent 提交的事实会先出现在这里' }
   }
+  // An empty conflict queue is good news, not an empty view: nothing an agent
+  // submitted contradicts what memory already holds.
+  if (data.view === 'conflicts') {
+    return { title: '没有要裁决的冲突', hint: '提交和已有记忆对不上时会出现在这里' }
+  }
   return { title: '暂无内容', hint: '这里还没有条目' }
 }
 
@@ -594,16 +599,106 @@ export const COMMAND_NOTE =
 export const INBOX_LEAD = '这些是 Agent 提交、还没进记忆的事实。'
 
 /**
- * The accept path, and why the panel does not offer it as a button.
+ * The two exits from the submissions list, said plainly.
  *
- * Promotion is vault-wide: one `--review` pass builds a pending list from the
- * WHOLE inbox and one `--apply` writes it. A per-row accept button would
- * therefore decide about the other rows too, while looking like it acted on one
- * — so the honest surface for accepting is the command, and the pane says so
- * instead of pretending the queue has only one exit.
+ * An earlier revision could only say "this pane refuses; run the command to
+ * accept". That was true while promotion was vault-wide, but it made the pane a
+ * dead end: the one thing a reader wants to do with a submission is decide, and
+ * the only button refused it. The core now promotes one named file, so both
+ * answers exist and the sentence can describe them instead of apologising.
  */
 export const INBOX_ACCEPT_NOTE =
-  '这里只能「不采纳」；要收进记忆，跑 `promoter --review` 看清单，再 `--apply` 入库。'
+  '「收录」把这条写进记忆；「不采纳」移到 已处理/，不进记忆也不删文件。'
+
+/**
+ * Why the queue has two kinds of row.
+ *
+ * A plain submission is a yes/no. A conflicting one is not: the new fact and an
+ * existing line describe the same thing differently, so "yes" and "no" are not
+ * enough — someone has to say which reading is true. The core has queued these
+ * separately for exactly that reason; this is the sentence that explains why
+ * they get their own block and their own three buttons.
+ */
+export const CONFLICT_LEAD =
+  '这些提交和已有记忆对不上，需要你定谁对：新的成立、旧的对，还是两边都对。'
+
+/**
+ * The three rulings, in the words a person uses.
+ *
+ * Values are the core's own decision tokens (`用新` / `保留旧` / `并存`); labels
+ * are what the button says. `跳过` is absent on purpose: it records the decision
+ * and dequeues the entry, so a "skip" button would permanently silence a
+ * question the user declined to answer.
+ */
+export const CONFLICT_CHOICES = [
+  { value: '用新', label: '取代', hint: '删掉旧的那行，换成新的' },
+  { value: '保留旧', label: '保留旧', hint: '记忆不动，这条提交作废' },
+  { value: '并存', label: '共存', hint: '两条都留下' },
+] as const
+
+/** What one of the three rulings did, said in a sentence. */
+export function decideOutcomeText(
+  result: { applied: boolean; target: string | null; choice: string },
+): string {
+  const target = result.target ? `（写进 ${result.target}）` : ''
+  if (result.choice === '保留旧') return '已保留旧值，这条冲突清掉了'
+  if (result.choice === '并存') return `已并存，两条都留下${target}`
+  return `已取代，旧的那行删掉了${target}`
+}
+
+/**
+ * Turn a `decideConflict` refusal into a sentence.
+ *
+ * `not-found` is the interesting one: the queue is a file other tools also
+ * write, so a row can be resolved elsewhere between the read and the click.
+ * Saying "已不在了，刷新看看" is the only honest answer, and it is different
+ * from "核心不可用".
+ */
+export function decideReasonText(reason: string | null | undefined): string {
+  const r = String(reason ?? '')
+  if (r === 'not-found') return '这条冲突已经不在队列里了，可能刚被裁决过 — 刷新看一下'
+  if (r === 'invalid-key') return '这条冲突的编号不被接受，刷新后再试'
+  if (r === 'unknown-choice') return '这个选择不被支持，刷新后再试'
+  if (r === 'unavailable') return '记忆核心暂不可用，请稍后再试'
+  return '裁决没有完成，请稍后重试'
+}
+
+/**
+ * Turn an `acceptItem` refusal into a sentence.
+ *
+ * `conflicts` is not a failure: it means the submission contradicts memory, so
+ * the core neither promoted nor retired it. The next step is a ruling, not a
+ * retry, and the sentence has to send the reader to the block above rather than
+ * to the same button.
+ */
+export function acceptReasonText(reason: string | null | undefined): string {
+  const r = String(reason ?? '')
+  if (r === 'conflicts') return '这条和已有记忆冲突，先在「需要你裁决」里定一下'
+  if (r === 'not-a-submission') return '这个是提交区自带的说明/登记文件，不是待确认内容'
+  if (r === 'not-found') return '条目不存在，可能已被处理'
+  if (r === 'invalid-name') return '文件名不合法，只能处理提交区里的条目'
+  if (r === 'unavailable') return '记忆核心暂不可用，请稍后再试'
+  return '收录没有完成，请稍后重试'
+}
+
+/**
+ * What one accept actually did.
+ *
+ * Zero promoted is not a failure and must not read like one: the submission may
+ * have carried only facts memory already holds ("都是重复的") or no fact lines at
+ * all. Both are legitimate outcomes of a correct click, and saying "已收录 0 条"
+ * would look like the button is broken.
+ */
+export function acceptOutcomeText(
+  result: { promoted: number; duplicates: number },
+): string {
+  if (result.promoted > 0) {
+    const dup = result.duplicates > 0 ? `，另跳过 ${result.duplicates} 条重复` : ''
+    return `已收录 ${result.promoted} 条${dup}`
+  }
+  if (result.duplicates > 0) return '没有新事实，都是记忆里已有的'
+  return '这条里没有可收录的事实'
+}
 
 /**
  * Chinese copy per core issue code.

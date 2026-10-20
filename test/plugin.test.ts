@@ -287,7 +287,7 @@ describe('host plugin contract', () => {
     ])
     // Looked up by path, not by index: appending a route must not silently
     // re-point an assertion at a different endpoint.
-    expect(routes).toHaveLength(8)
+    expect(routes).toHaveLength(10)
     const byPath = new Map(routes.map((r) => [r.path, r.kind]))
     expect(byPath.get('/api/dsh-unified-agent-memory/status')).toBe('exact')
     expect(byPath.get('/api/dsh-unified-agent-memory/search')).toBe('exact')
@@ -301,6 +301,12 @@ describe('host plugin contract', () => {
     // `/doctor` carries the core's issue list — the "what do I do about it"
     // half of the health verdict. Read-only, like the rest.
     expect(byPath.get('/api/dsh-unified-agent-memory/doctor')).toBe('exact')
+    // The two answers to the 待确认 queue: `/accept` promotes ONE submission,
+    // `/decide` rules on ONE queued conflict. Both are per-row on purpose; the
+    // vault-wide `promoter --apply` behind a per-row button would decide the
+    // other rows too while looking like it decided one.
+    expect(byPath.get('/api/dsh-unified-agent-memory/accept')).toBe('exact')
+    expect(byPath.get('/api/dsh-unified-agent-memory/decide')).toBe('exact')
   })
 
   it('answers a loopback GET with the status payload', async () => {
