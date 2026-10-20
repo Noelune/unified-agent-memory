@@ -15,7 +15,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from . import index as index_mod
-from .common import redact
+from .common import NON_SUBMISSION_FILES, redact
 from .preview import INBOX_REL
 
 
@@ -161,8 +161,9 @@ def _inbox_count(vault: Path) -> int:
     inbox = Path(vault) / INBOX_REL
     if not inbox.is_dir():
         return 0
-    # README.md is documentation, not a pending submission.
-    return sum(1 for path in inbox.glob("*.md") if path.name != "README.md")
+    # README.md is documentation and 前缀登记.md is a bookkeeping registry;
+    # neither is a pending submission.
+    return sum(1 for path in inbox.glob("*.md") if path.name not in NON_SUBMISSION_FILES)
 
 
 def envelope(data: dict) -> str:

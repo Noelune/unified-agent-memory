@@ -69,19 +69,26 @@ export function previewEmptyText(data: PreviewData | null): EmptyText | null {
     return { title: '该视图暂不支持', hint: '核心尚未实现该治理视图' }
   }
   if ((data.items?.length ?? 0) > 0) return null
+  // The inbox gets its own sentence: "暂无内容" reads like the panel failed to
+  // find something, while an empty inbox is a healthy queue and the reader's
+  // question is whether anything is waiting on them.
+  if (data.view === 'pending') {
+    return { title: '没有待确认的提交', hint: 'Agent 提交的事实会先出现在这里' }
+  }
   return { title: '暂无内容', hint: '这里还没有条目' }
 }
 
 /**
  * Turn a `dismissItem` refusal reason into a sentence a user can act on.
  *
- * `dismissItem` resolves a reason ∈ `invalid-name` / `not-found` /
- * `outside-inbox` / `io-error:*` / `unavailable`. Showing the raw token makes
- * the user read the machine's vocabulary; this maps it to theirs.
+ * `dismissItem` resolves a reason ∈ `invalid-name` / `not-a-submission` /
+ * `not-found` / `outside-inbox` / `io-error:*` / `unavailable`. Showing the raw
+ * token makes the user read the machine's vocabulary; this maps it to theirs.
  */
 export function dismissReasonText(reason: string | null | undefined): string {
   const r = String(reason ?? '')
   if (r === 'invalid-name') return '文件名不合法，只能处理提交区里的条目'
+  if (r === 'not-a-submission') return '这个是提交区自带的说明/登记文件，不是待确认内容'
   if (r === 'not-found') return '条目不存在，可能已被处理'
   if (r === 'outside-inbox') return '该条目不在提交区，不能在这里处理'
   if (r === 'unavailable') return '记忆核心暂不可用，请稍后再试'
@@ -573,6 +580,30 @@ export const SEVERITY_LABEL: Record<HealthFinding['severity'], string> = {
 /** How to read the command lines, printed once under the list. */
 export const COMMAND_NOTE =
   '命令里的 `memory` 是核心自带的命令行；没装它时等价于 `python -m unified_memory.memory <子命令>`。'
+
+/**
+ * What the 待确认 list actually is, printed above it.
+ *
+ * The pane used to open straight into file names and two buttons named 查看 and
+ * 归档, and neither word said what was being confirmed: these files are facts an
+ * agent wanted remembered, and 归档 is a REFUSAL — the file moves to 已处理/ and
+ * never reaches memory. A reader who took 归档 for "file it into memory" would
+ * empty the queue while believing they had accepted everything, which is the
+ * worst possible reading of a button: it looks like it worked.
+ */
+export const INBOX_LEAD = '这些是 Agent 提交、还没进记忆的事实。'
+
+/**
+ * The accept path, and why the panel does not offer it as a button.
+ *
+ * Promotion is vault-wide: one `--review` pass builds a pending list from the
+ * WHOLE inbox and one `--apply` writes it. A per-row accept button would
+ * therefore decide about the other rows too, while looking like it acted on one
+ * — so the honest surface for accepting is the command, and the pane says so
+ * instead of pretending the queue has only one exit.
+ */
+export const INBOX_ACCEPT_NOTE =
+  '这里只能「不采纳」；要收进记忆，跑 `promoter --review` 看清单，再 `--apply` 入库。'
 
 /**
  * Chinese copy per core issue code.

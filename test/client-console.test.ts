@@ -32,6 +32,8 @@ import { execSync } from 'node:child_process'
 
 import {
   CONSOLE_TABS,
+  INBOX_ACCEPT_NOTE,
+  INBOX_LEAD,
   PENDING_BADGE_TAB,
   TAB_LABEL,
   compactCount,
@@ -414,9 +416,19 @@ describe('previewEmptyText', () => {
   })
 
   it('says there is no content for a supported, empty view', () => {
-    const t = previewEmptyText(preview({ status: 'ok', items: [] }))!
+    const t = previewEmptyText(preview({ view: 'recent', status: 'ok', items: [] }))!
     expect(t.title).toBe('暂无内容')
     expect(t.title).not.toContain('暂不支持')
+  })
+
+  it('tells an empty inbox apart from an empty generic view', () => {
+    // "暂无内容" reads like a failed lookup. An empty 待确认 queue is a healthy
+    // state, and the reader's actual question is whether anything waits on
+    // them — so the inbox gets its own words, not the generic ones.
+    const t = previewEmptyText(preview({ view: 'pending', status: 'ok', items: [] }))!
+    expect(t.title).toBe('没有待确认的提交')
+    expect(t.hint).toContain('Agent')
+    expect(t.title).not.toBe('暂无内容')
   })
 
   it('returns null when there are items to show', () => {
@@ -498,6 +510,50 @@ describe('inboxSummary', () => {
       now,
     )
     expect(s.oldestDays).toBe(10)
+  })
+})
+
+describe('the inbox says what confirming means', () => {
+  function inboxBody(): string {
+    const at = CONSOLE_CODE.indexOf('function InboxTab(')
+    const end = CONSOLE_CODE.indexOf('// ── Search', at)
+    return at < 0 ? '' : CONSOLE_CODE.slice(at, end < 0 ? CONSOLE_CODE.length : end)
+  }
+
+  it('names the queue and the accept path in words', () => {
+    expect(INBOX_LEAD).toContain('还没进记忆')
+    expect(INBOX_LEAD).toContain('Agent')
+    // The pane cannot promote, so the sentence must say where promoting lives
+    // and must not imply the button does it.
+    expect(INBOX_ACCEPT_NOTE).toContain('不采纳')
+    expect(INBOX_ACCEPT_NOTE).toContain('review')
+    expect(INBOX_ACCEPT_NOTE).toContain('apply')
+  })
+
+  it('labels the pane’s only write as a refusal, never as filing it away', () => {
+    // 归档 reads as "file it into memory" — the exact opposite of what the core
+    // does (move to 已处理/, promote nothing). A wrong verb on the one control
+    // that changes state is worse than no verb at all: the reader believes the
+    // facts were kept. CONSOLE_CODE has comments stripped, so this asserts the
+    // visible label, not the prose around it.
+    expect(CONSOLE_CODE).toContain('不采纳')
+    expect(CONSOLE_CODE).not.toContain('归档')
+  })
+
+  it('prints both sentences in the pane, not only in the model', () => {
+    const body = inboxBody()
+    expect(body).toMatch(/INBOX_LEAD/)
+    expect(body).toMatch(/INBOX_ACCEPT_NOTE/)
+  })
+
+  it('says the file survives the refusal, in the tooltip', () => {
+    // "不采纳" alone could still be read as "delete it". The tooltip is the one
+    // place with room for the three-part truth: where it goes, what happens to
+    // memory, and that nothing is destroyed.
+    const body = inboxBody()
+    expect(body).toContain('已处理/')
+    expect(body).toContain('不进记忆')
+    expect(body).toContain('不删')
   })
 })
 
@@ -781,6 +837,14 @@ describe('dismissReasonText', () => {
     expect(dismissReasonText('outside-inbox')).toContain('提交区')
   })
 
+  it('explains that the readme / registry is not a submission', () => {
+    // The core refuses to retire these (inbox.process_inbox_item); the panel
+    // has to say why, or the button looks broken instead of protective.
+    const t = dismissReasonText('not-a-submission')
+    expect(t).toContain('登记')
+    expect(t).not.toBe('not-a-submission')
+  })
+
   it('explains an io-error with its detail, and one without', () => {
     expect(dismissReasonText('io-error:EPERM')).toContain('EPERM')
     expect(dismissReasonText('io-error')).not.toContain(':')
@@ -792,7 +856,8 @@ describe('dismissReasonText', () => {
 
   it('gives every reason a distinct, non-empty sentence', () => {
     const reasons = [
-      'invalid-name', 'not-found', 'outside-inbox', 'io-error', 'unavailable',
+      'invalid-name', 'not-a-submission', 'not-found', 'outside-inbox',
+      'io-error', 'unavailable',
     ]
     const texts = reasons.map(dismissReasonText)
     for (const t of texts) expect(t.length).toBeGreaterThan(0)
@@ -800,7 +865,7 @@ describe('dismissReasonText', () => {
   })
 
   it('never leaks a raw machine token to the user', () => {
-    for (const r of ['invalid-name', 'not-found', 'outside-inbox', 'unavailable']) {
+    for (const r of ['invalid-name', 'not-a-submission', 'not-found', 'outside-inbox', 'unavailable']) {
       expect(dismissReasonText(r)).not.toBe(r)
     }
   })

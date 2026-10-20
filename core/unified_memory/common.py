@@ -68,6 +68,28 @@ CANONICAL_DOCS = {
 
 SUBMISSION_DIR = "Agent提交区"
 PROCESSED_DIR = "已处理"
+
+# Files that live in the submission directory but are NOT submissions.
+#
+#   README.md      documents the directory.
+#   前缀登记.md    the prefix registry that `memory_setup` and the upgrade flow
+#                 merge into (src/upgrade-run.ts). A bookkeeping table, never a
+#                 batch of facts.
+#
+# Every inbox reader used to hard-code `name != "README.md"`, and that is exactly
+# how the registry became a phantom pending item: the panel listed it under
+# 待确认, `status` counted it, the doctor reported "1 inbox file". There was
+# nothing to confirm — the file is the plugin's own note to itself.
+#
+# The consequences were not merely cosmetic. `promote --review` reads every
+# unmasked `*.md` as fact lines, so it would have ingested the table rows as
+# memories; `dismiss` (the panel's 归档) moves the file into 已处理/, where the
+# next upgrade cannot merge it and recreates it with only this runtime's row —
+# silently dropping every other runtime's registrations, which the merge exists
+# to preserve. One constant, checked at every reader, is what keeps those three
+# paths consistent.
+NON_SUBMISSION_FILES = frozenset({"README.md", "前缀登记.md"})
+
 SITUATION_DIR = "情境信息"
 PENDING_FILE = "待晋升.md"
 CONFLICT_FILE = "事实冲突待裁决.md"

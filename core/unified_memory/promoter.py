@@ -31,6 +31,7 @@ from .common import (
     ADJUDICATED_FILE,
     CANONICAL_DOCS,
     CONFLICT_FILE,
+    NON_SUBMISSION_FILES,
     PENDING_FILE,
     UNCLASSIFIED_FACT_REL,
     atomic_write,
@@ -146,7 +147,7 @@ def review(vault: Path, verbose: bool = True) -> dict:
     # reported as a fresh conflict on every run.
     existing_cache: dict[Path, list[str]] = {}
     for src in sorted(inbox.glob("*.md")):
-        if src.name == "README.md":
+        if src.name in NON_SUBMISSION_FILES:
             continue
         source_files.add(src.name)
         for fact in fact_lines(src.read_text(encoding="utf-8", errors="replace")):
@@ -505,7 +506,7 @@ def archive_sources(vault: Path, sources: set[str], *, locked: bool = False) -> 
     inbox = canonical_dir(vault) / "Agent提交区"
     for name in sorted(sources):
         candidate = Path(name)
-        if candidate.name != name or candidate.suffix.lower() != ".md" or name == "README.md":
+        if candidate.name != name or candidate.suffix.lower() != ".md" or name in NON_SUBMISSION_FILES:
             continue
         src = inbox / candidate.name
         if not src.is_file():

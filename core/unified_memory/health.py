@@ -26,6 +26,7 @@ from . import graph as graph_mod
 from . import index as index_mod
 from .common import (
     CONFLICT_FILE,
+    NON_SUBMISSION_FILES,
     SITUATION_DIR,
     bare_fact_line,
     canonical_dir,
@@ -135,7 +136,7 @@ def doctor(vault: Path) -> dict:
         if (ctx / "Agent提交区").is_dir()
         else []
     )
-    inbox_files = [p for p in inbox_files if p.name != "README.md"]
+    inbox_files = [p for p in inbox_files if p.name not in NON_SUBMISSION_FILES]
     oldest = min((p.stat().st_mtime for p in inbox_files), default=None)
     report["inbox"] = {
         "count": len(inbox_files),

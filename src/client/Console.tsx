@@ -32,7 +32,8 @@ import {
   BreakdownDonut, CalendarHeatmap, GrowthChart, TopBars,
 } from './Figures.tsx'
 import {
-  COMMAND_NOTE, CONSOLE_TABS, PENDING_BADGE_TAB, SEVERITY_LABEL, TAB_LABEL,
+  COMMAND_NOTE, CONSOLE_TABS, INBOX_ACCEPT_NOTE, INBOX_LEAD, PENDING_BADGE_TAB,
+  SEVERITY_LABEL, TAB_LABEL,
   dismissReasonText, healthFindings, healthRows, healthSummary, highlightParts,
   inboxSummary, issueTitle, noteDigest, oldestFirst, openFailureText, previewEmptyText,
   relativeAge, rowFindings, searchFailureText, splitHealth, statKpis,
@@ -235,10 +236,18 @@ function Hit(props: {
  *
  *   - 查看 reads the submission through `/note`. A list of file names is a list
  *     of things you cannot judge, and judging IS the task.
- *   - 归档 moves one entry to `已处理/`. This is the panel's only write, and
- *     without it "待确认" was a number with no way to lower it.
+ *   - 不采纳 moves one entry to `已处理/`. This is the panel's only write, and
+ *     without it "待确认" was a number with no way to lower it. It used to be
+ *     labelled 归档, which reads as "file it into memory" — the exact opposite
+ *     of what it does: the submission is dropped, not promoted. A wrong verb on
+ *     the only destructive-ish control in the pane is worse than no verb.
  *   - the age column. "3 条" tells you the size of the queue; "3 条，最老 21 天"
  *     tells you whether to open the panel at all.
+ *
+ * The accept path is NOT here — promotion is vault-wide (`--review` builds one
+ * list from the whole inbox, `--apply` writes it), so `INBOX_ACCEPT_NOTE` names
+ * the command rather than offering a per-row button that would quietly decide
+ * about every other row too.
  *
  * A refusal is shown, not swallowed: `dismissItem` resolves a reason
  * (`outside-inbox`, `not-found`, `unavailable`), which says both what happened
@@ -289,6 +298,16 @@ function InboxTab(): Child {
       h('div', { className: 'dsh-memory-cardhead' },
         '待确认',
         h('span', { className: 'dsh-memory-cardcount' }, summary.text)),
+      // Why the list exists and what confirming would even mean. Shown only
+      // when there is something to read: on an empty queue the Empty block
+      // already answers, and two paragraphs of explanation for zero rows is
+      // noise. The accept command stays visible either way — an empty queue is
+      // exactly when a reader needs to know how the queue gets filled and
+      // drained.
+      items.length > 0
+        ? h('div', { className: 'dsh-memory-note' }, INBOX_LEAD)
+        : null,
+      h('div', { className: 'dsh-memory-note' }, INBOX_ACCEPT_NOTE),
       preview.busy
         ? h(Skeleton, null)
         : !preview.data
@@ -317,9 +336,9 @@ function InboxTab(): Child {
                       type: 'button',
                       className: 'dsh-memory-action',
                       disabled: working === it.name,
-                      title: '移到 已处理/，不会删除',
+                      title: '移到 已处理/：不进记忆，也不删文件',
                       onClick: function () { retire(it.name) },
-                    }, working === it.name ? '处理中…' : '归档'),
+                    }, working === it.name ? '处理中…' : '不采纳'),
                   ),
                   expanded
                     ? h('div', { className: 'dsh-memory-body' },

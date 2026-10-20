@@ -33,6 +33,7 @@ from .common import (
     AGENT_CONTEXT,
     CANONICAL_DOCS,
     CONFIG_PATH,
+    NON_SUBMISSION_FILES,
     VAULT_ENV,
     atomic_create,
     atomic_write,
@@ -790,9 +791,10 @@ def cmd_status(args: argparse.Namespace) -> None:
             if not getattr(args, "json", False):
                 print("memories: unavailable")
         inbox = canonical_dir(vault) / "Agent提交区"
-        # README.md documents the inbox; it is not a submission.
+        # README.md documents the inbox and 前缀登记.md registers submission
+        # prefixes; neither is a submission.
         pending = (
-            len([p for p in inbox.glob("*.md") if p.name != "README.md"])
+            len([p for p in inbox.glob("*.md") if p.name not in NON_SUBMISSION_FILES])
             if inbox.is_dir()
             else 0
         )

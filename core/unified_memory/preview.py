@@ -21,7 +21,7 @@ import os
 from pathlib import Path
 
 from . import index as index_mod
-from .common import AGENT_CONTEXT, SUBMISSION_DIR, canonical_dir, redact
+from .common import AGENT_CONTEXT, NON_SUBMISSION_FILES, SUBMISSION_DIR, canonical_dir, redact
 
 VIEWS = ("pending", "conflicts", "forgetting", "recent")
 
@@ -80,12 +80,12 @@ def _pending(vault: Path, limit: int) -> list[dict]:
     inbox = Path(vault) / INBOX_REL
     if not inbox.is_dir():
         return []
-    # README.md documents the inbox format; it is not a submission. The
-    # promoter has always skipped it (`review`: `if src.name == "README.md"`)
-    # and `memory status` counts without it, so showing it here made the panel
-    # report one pending item in a vault that had none.
+    # README.md documents the inbox and 前缀登记.md is the prefix registry; both
+    # are infrastructure, not submissions. The promoter skips exactly the same
+    # set, so showing one of them here made the panel report a pending item in a
+    # vault that had none — a queue with nothing to judge.
     files = sorted(
-        (p for p in inbox.glob("*.md") if p.name != "README.md"),
+        (p for p in inbox.glob("*.md") if p.name not in NON_SUBMISSION_FILES),
         key=lambda p: p.stat().st_mtime,
         reverse=True,
     )[:limit]

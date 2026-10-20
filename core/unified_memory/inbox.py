@@ -12,7 +12,7 @@ import shutil
 import time
 from pathlib import Path
 
-from .common import file_lock
+from .common import NON_SUBMISSION_FILES, file_lock
 from .preview import INBOX_REL, _safe_inbox_name
 
 DONE_DIR = "已处理"
@@ -59,6 +59,18 @@ def process_inbox_item(vault: str, name: str) -> dict:
     if not _safe_inbox_name(name):
         return {"ok": False, "name": name, "movedTo": None,
                 "reason": "invalid-name"}
+    # The directory's own documentation and the prefix registry are not
+    # submissions, so there is nothing to retire. Refusing here rather than
+    # relying on the listing is what makes the rule hold for a caller that
+    # names the file directly — an older panel build, or the route by hand.
+    #
+    # The registry matters most: moving it into 已处理/ looks harmless (the
+    # file is only relocated, never deleted) but the next upgrade merges into
+    # the path that no longer exists and recreates the table with just this
+    # runtime's row, dropping every other runtime's registrations.
+    if name in NON_SUBMISSION_FILES:
+        return {"ok": False, "name": name, "movedTo": None,
+                "reason": "not-a-submission"}
     inbox = os.path.join(vault, INBOX_REL)
     src = os.path.join(inbox, name)
     if os.path.realpath(os.path.dirname(src)) != os.path.realpath(inbox):
