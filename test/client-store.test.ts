@@ -29,9 +29,12 @@ const TYPES = readFileSync(new URL('../src/client/types.ts', import.meta.url), '
 // Imported statically: touching window.location at module scope would make this
 // URL invalid, and store.ts must therefore not depend on a window.
 import {
+  acceptItem,
   canApplyPreview,
+  decideConflict,
   dismissItem,
   isCurrentSearch,
+  loadConflicts,
   loadDoc,
   loadDoctor,
   loadNote,
@@ -328,6 +331,134 @@ describe('dismissItem', () => {
   it('reports a transport failure as unavailable, never as a refusal', async () => {
     stubFetch({ throws: true })
     await expect(dismissItem('a.md')).resolves.toEqual({ ok: false, reason: 'unavailable' })
+  })
+})
+
+describe('acceptItem', () => {
+  const post = () =>
+    calls.length > 0 ? calls[calls.length - 1] : ({} as { url: string; init?: RequestInit })
+
+  it('promotes one named submission and reports the counts', async () => {
+    stubFetch({
+      status: 200,
+      body: { ok: true, name: 'a.md', reason: null, promoted: 3, duplicates: 1, conflicts: 0 },
+    })
+
+    await expect(acceptItem('a.md')).resolves.toEqual({
+      ok: true, reason: null, promoted: 3, duplicates: 1, conflicts: 0,
+    })
+    expect(post().url).toBe('/api/dsh-unified-agent-memory/accept')
+    expect(post().init?.body).toBe('{"name":"a.md"}')
+  })
+
+  it('carries the refusal reason, because "conflicts" is not a retry', async () => {
+    // A conflicting submission is neither promoted nor retired: the next step
+    // is a ruling, and the pane can only say that if the reason survives.
+    stubFetch({
+      status: 409,
+      body: { ok: false, name: 'a.md', reason: 'conflicts', promoted: 0, duplicates: 0, conflicts: 2 },
+    })
+
+    await expect(acceptItem('a.md')).resolves.toEqual({
+      ok: false, reason: 'conflicts', promoted: 0, duplicates: 0, conflicts: 2,
+    })
+  })
+
+  it('never reports a negative or nan count as a number', async () => {
+    stubFetch({ status: 200, body: { ok: true, promoted: -1, duplicates: 'x', conflicts: null } })
+
+    const got = await acceptItem('a.md')
+
+    expect(got.promoted).toBe(0)
+    expect(got.duplicates).toBe(0)
+    expect(got.conflicts).toBe(0)
+  })
+
+  it('reports a transport failure as unavailable', async () => {
+    stubFetch({ throws: true })
+    await expect(acceptItem('a.md')).resolves.toEqual({
+      ok: false, reason: 'unavailable', promoted: 0, duplicates: 0, conflicts: 0,
+    })
+  })
+})
+
+describe('loadConflicts', () => {
+  it('reads both sides of every queued conflict', async () => {
+    stubFetch({
+      status: 200,
+      body: {
+        ok: true,
+        items: [{
+          key: '20261019030125-1',
+          new: '备份目录已迁移到 D:/backups',
+          old: '- 备份目录是 C:/backups（写入 2026-10-16）',
+          source: '[[Hermes会话自动归档/2026-10-18]]',
+          doc: '50-Agent-Context\\常用路径与环境.md',
+        }],
+      },
+    })
+
+    await expect(loadConflicts()).resolves.toEqual([{
+      key: '20261019030125-1',
+      new: '备份目录已迁移到 D:/backups',
+      old: '- 备份目录是 C:/backups（写入 2026-10-16）',
+      source: '[[Hermes会话自动归档/2026-10-18]]',
+      doc: '50-Agent-Context\\常用路径与环境.md',
+    }])
+    expect(calls[0].url).toContain('view=conflicts')
+  })
+
+  it('drops a row with no key, because nothing could rule on it', async () => {
+    // The key is what a button sends. Rendering a row whose buttons would have
+    // nothing to submit is worse than not showing it at all.
+    stubFetch({ status: 200, body: { ok: true, items: [{ new: 'x', old: 'y' }, { key: 'k1' }] } })
+
+    const got = await loadConflicts()
+
+    expect(got).toHaveLength(1)
+    expect(got![0].key).toBe('k1')
+    expect(got![0].new).toBe('')
+  })
+
+  it('separates "could not read" from "nothing queued"', async () => {
+    stubFetch({ status: 500, body: { ok: false } })
+    await expect(loadConflicts()).resolves.toBeNull()
+
+    stubFetch({ status: 200, body: { ok: true, items: [] } })
+    await expect(loadConflicts()).resolves.toEqual([])
+  })
+
+  it('is null, not empty, when the transport dies', async () => {
+    stubFetch({ throws: true })
+    await expect(loadConflicts()).resolves.toBeNull()
+  })
+})
+
+describe('decideConflict', () => {
+  it('posts the key and the choice, and reports what was written', async () => {
+    stubFetch({
+      status: 200,
+      body: { ok: true, key: 'k1', choice: '用新', reason: null, applied: true, target: '50-Agent-Context/常用路径与环境.md' },
+    })
+
+    await expect(decideConflict('k1', '用新')).resolves.toEqual({
+      ok: true, reason: null, applied: true, target: '50-Agent-Context/常用路径与环境.md',
+    })
+    expect(calls[0].init?.body).toBe('{"key":"k1","choice":"用新"}')
+  })
+
+  it('separates "already ruled on" from "core is down"', async () => {
+    // `not-found` means someone else resolved it between the read and the
+    // click; retrying is pointless, reloading is right.
+    stubFetch({ status: 409, body: { ok: false, reason: 'not-found' } })
+    await expect(decideConflict('k1', '保留旧')).resolves.toEqual({
+      ok: false, reason: 'not-found', applied: false, target: null,
+    })
+
+    stubFetch({ throws: true })
+    await expect(decideConflict('k1', '保留旧')).resolves.toEqual({
+      ok: false, reason: 'unavailable', applied: false, target: null,
+    })
   })
 })
 

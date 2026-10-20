@@ -31,12 +31,18 @@ import { dirname, join } from 'node:path'
 import { execSync } from 'node:child_process'
 
 import {
+  CONFLICT_CHOICES,
+  CONFLICT_LEAD,
   CONSOLE_TABS,
   INBOX_ACCEPT_NOTE,
   INBOX_LEAD,
   PENDING_BADGE_TAB,
   TAB_LABEL,
+  acceptOutcomeText,
+  acceptReasonText,
   compactCount,
+  decideOutcomeText,
+  decideReasonText,
   dismissReasonText,
   healthRows,
   healthSummary,
@@ -520,14 +526,19 @@ describe('the inbox says what confirming means', () => {
     return at < 0 ? '' : CONSOLE_CODE.slice(at, end < 0 ? CONSOLE_CODE.length : end)
   }
 
-  it('names the queue and the accept path in words', () => {
+  it('names both exits, and no longer tells the reader to go run a command', () => {
     expect(INBOX_LEAD).toContain('还没进记忆')
     expect(INBOX_LEAD).toContain('Agent')
-    // The pane cannot promote, so the sentence must say where promoting lives
-    // and must not imply the button does it.
+    // The pane can now BOTH accept and refuse one row, so the sentence must
+    // describe the two buttons. The previous revision said "this pane can only
+    // refuse; run `promoter --review` then `--apply` to accept", which was true
+    // while promotion was vault-wide and is now a lie: the command would decide
+    // the other rows too.
+    expect(INBOX_ACCEPT_NOTE).toContain('收录')
     expect(INBOX_ACCEPT_NOTE).toContain('不采纳')
-    expect(INBOX_ACCEPT_NOTE).toContain('review')
-    expect(INBOX_ACCEPT_NOTE).toContain('apply')
+    expect(INBOX_ACCEPT_NOTE).toContain('已处理/')
+    expect(INBOX_ACCEPT_NOTE).not.toContain('只能')
+    expect(INBOX_ACCEPT_NOTE).not.toContain('--apply')
   })
 
   it('labels the pane’s only write as a refusal, never as filing it away', () => {
@@ -554,6 +565,78 @@ describe('the inbox says what confirming means', () => {
     expect(body).toContain('已处理/')
     expect(body).toContain('不进记忆')
     expect(body).toContain('不删')
+  })
+
+  it('offers the yes as well as the no, per row', () => {
+    // The queue used to have one button and it was the refusal — so "confirm"
+    // could only ever mean "no". Both actions must be wired to the per-row
+    // handler; a button with no onClick is the same dead end in a nicer font.
+    const body = inboxBody()
+    expect(body).toContain('收录')
+    expect(body).toMatch(/accept\(it\.name\)/)
+    expect(body).toMatch(/retire\(it\.name\)/)
+  })
+
+  it('asks the three rulings on a conflicting fact, not a yes/no', () => {
+    // A conflict is not "keep it or not": the new fact and an existing line
+    // describe the same thing differently. The labels are the user's words;
+    // the values are the core's tokens.
+    const labels = CONFLICT_CHOICES.map((c) => c.label)
+    expect(labels).toEqual(['取代', '保留旧', '共存'])
+    expect(CONFLICT_CHOICES.map((c) => c.value)).toEqual(['用新', '保留旧', '并存'])
+    // `跳过` is absent on purpose: it dequeues the entry AND suppresses the
+    // fact forever, so a "skip" button would silently settle a question the
+    // user declined to answer.
+    expect(CONFLICT_CHOICES.some((c) => c.value === '跳过')).toBe(false)
+
+    const body = inboxBody()
+    expect(body).toMatch(/CONFLICT_CHOICES/)
+    expect(body).toMatch(/rule\(it\.key, c\.value\)/)
+  })
+
+  it('explains why the conflicts have their own block', () => {
+    expect(CONFLICT_LEAD).toContain('对不上')
+    expect(CONFLICT_LEAD).toContain('你定')
+    expect(inboxBody()).toMatch(/CONFLICT_LEAD/)
+  })
+
+  it('shows both sides of a conflict, never just the new fact', () => {
+    // "新的：…" alone is unanswerable — you cannot rule on a replacement without
+    // seeing what it would replace. Both lines are rendered as text.
+    const body = inboxBody()
+    expect(body).toContain('新的：')
+    expect(body).toContain('旧的：')
+    expect(body).toContain('没有对应的旧记录')
+  })
+})
+
+describe('turn a refusal into a sentence', () => {
+  it('sends a conflicting accept to the ruling block, not back to the button', () => {
+    // `conflicts` is not a failure: retrying can never work, and the next step
+    // is a decision. A "失败，请重试" toast would send the reader in a circle.
+    const text = acceptReasonText('conflicts')
+    expect(text).toContain('裁决')
+    expect(text).not.toContain('重试')
+  })
+
+  it('says a re-read is needed when the conflict is already gone', () => {
+    expect(decideReasonText('not-found')).toContain('刷新')
+    expect(decideReasonText('not-found')).not.toBe(decideReasonText('unavailable'))
+  })
+
+  it('does not call zero promoted a success or a failure', () => {
+    // A click that found only duplicates worked correctly; saying "已收录 0 条"
+    // would look like a broken button.
+    expect(acceptOutcomeText({ promoted: 3, duplicates: 1 })).toContain('3')
+    expect(acceptOutcomeText({ promoted: 0, duplicates: 2 })).toContain('已有的')
+    expect(acceptOutcomeText({ promoted: 0, duplicates: 0 })).toContain('没有可收录')
+  })
+
+  it('names the note a ruling wrote to', () => {
+    const text = decideOutcomeText({ applied: true, target: '50-Agent-Context/环境.md', choice: '用新' })
+    expect(text).toContain('取代')
+    expect(text).toContain('50-Agent-Context/环境.md')
+    expect(decideOutcomeText({ applied: false, target: null, choice: '保留旧' })).toContain('保留旧')
   })
 })
 
