@@ -3,7 +3,7 @@ import { parseDismissBody } from './route-dismiss.ts'
 import type { PluginConfig } from './types.ts'
 
 /**
- * Accept one inbox submission — the 待确认 queue's yes button.
+ * Accept one inbox submission — the yes button on the 待晋升的提交 queue.
  *
  * The sibling of `/dismiss`, and narrow in the same way: it promotes the facts
  * of exactly one file and moves that one file into `已处理/`. It is NOT

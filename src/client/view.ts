@@ -23,7 +23,13 @@ export type TabId = (typeof CONSOLE_TABS)[number]
 
 /** Chinese label per tab. */
 export const TAB_LABEL: Record<TabId, string> = {
-  inbox: '待确认',
+  // Not 待确认: this pane holds two queues with two different owners. Conflicts
+  // wait on the user (「需要你裁决」); submissions wait on the next promotion run
+  // (「待晋升的提交」), and the user may only OPT to act early. Labelling the tab
+  // after the first queue made the second look like it was asking for a
+  // confirmation it never asked for — the reader opens the tab before the daily
+  // promotion and reasonably asks why anything is there at all.
+  inbox: '待处理',
   search: '搜索',
   health: '健康',
   stats: '统计',
@@ -32,7 +38,7 @@ export const TAB_LABEL: Record<TabId, string> = {
 /**
  * The tab that carries the pending-inbox count.
  *
- * It rides on 待确认 because that tab IS the queue: the number and the list it
+ * It rides on 待处理 because that tab IS the queue: the number and the list it
  * counts are the same fact, and a user who sees "3" expects the tab to open on
  * those three. (It rode on 搜索 while the inbox pane did not exist — a count
  * you could not act on.)
@@ -73,7 +79,10 @@ export function previewEmptyText(data: PreviewData | null): EmptyText | null {
   // find something, while an empty inbox is a healthy queue and the reader's
   // question is whether anything is waiting on them.
   if (data.view === 'pending') {
-    return { title: '没有待确认的提交', hint: 'Agent 提交的事实会先出现在这里' }
+    return {
+      title: '没有待晋升的提交',
+      hint: 'Agent 提交的事实会先落在这里，等每天的晋升任务处理',
+    }
   }
   // An empty conflict queue is good news, not an empty view: nothing an agent
   // submitted contradicts what memory already holds.
@@ -93,7 +102,7 @@ export function previewEmptyText(data: PreviewData | null): EmptyText | null {
 export function dismissReasonText(reason: string | null | undefined): string {
   const r = String(reason ?? '')
   if (r === 'invalid-name') return '文件名不合法，只能处理提交区里的条目'
-  if (r === 'not-a-submission') return '这个是提交区自带的说明/登记文件，不是待确认内容'
+  if (r === 'not-a-submission') return '这个是提交区自带的说明/登记文件，不是待晋升的提交'
   if (r === 'not-found') return '条目不存在，可能已被处理'
   if (r === 'outside-inbox') return '该条目不在提交区，不能在这里处理'
   if (r === 'unavailable') return '记忆核心暂不可用，请稍后再试'
@@ -273,10 +282,10 @@ export function inboxSummary(
     return {
       count,
       oldestDays,
-      text: count + ' 条待确认，最老一条已经积压 ' + oldestDays + ' 天',
+      text: count + ' 条待晋升，最老一条已经积压 ' + oldestDays + ' 天',
     }
   }
-  return { count, oldestDays, text: count + ' 条待确认' }
+  return { count, oldestDays, text: count + ' 条待晋升' }
 }
 
 /**
@@ -369,7 +378,7 @@ export function healthRows(input: HealthInput): HealthRow[] {
     { key: 'vectors', label: '向量', value: num(stats?.vectors), tone: stats ? 'ok' : 'muted' },
     {
       key: 'pending',
-      label: '待确认',
+      label: '待晋升',
       value: stats ? num(stats.pending) + ' 条' : '—',
       tone: stats ? 'ok' : 'muted',
     },
@@ -598,16 +607,32 @@ export const COMMAND_NOTE =
   '命令里的 `memory` 是核心自带的命令行；没装它时等价于 `python -m unified_memory.memory <子命令>`。'
 
 /**
- * What the 待确认 list actually is, printed above it.
+ * What the submission list actually is — AND who clears it.
  *
- * The pane used to open straight into file names and two buttons named 查看 and
- * 归档, and neither word said what was being confirmed: these files are facts an
- * agent wanted remembered, and 归档 is a REFUSAL — the file moves to 已处理/ and
- * never reaches memory. A reader who took 归档 for "file it into memory" would
- * empty the queue while believing they had accepted everything, which is the
- * worst possible reading of a button: it looks like it worked.
+ * The second half is the point. This sentence used to stop at 「还没进记忆的
+ * 事实」, which is true but says nothing about the two things a reader standing
+ * in front of a non-empty queue needs: that the next promotion run handles it
+ * by itself, and that the two buttons are an OPTION rather than the only exit.
+ * Without that, the pane looks like it is asking for a confirmation it never
+ * asked for — someone who opens it before the daily promotion cannot tell
+ * whether the queue is waiting on *them* or on the clock, and reasonably
+ * concludes the page is broken.
+ *
+ * No time of day is printed on purpose: the schedule belongs to the user's own
+ * promoter job, so a hardcoded 「03:00」 would be wrong for every install that
+ * runs it at another hour.
+ *
+ * The rest of the history is why the buttons had to be renamed: the pane used
+ * to open straight into file names and two buttons named 查看 and 归档, and
+ * neither word said what was being confirmed. 归档 is a REFUSAL — the file
+ * moves to 已处理/ and never reaches memory — so a reader who took it for "file
+ * it into memory" would empty the queue while believing they had accepted
+ * everything.
  */
-export const INBOX_LEAD = '这些是 Agent 提交、还没进记忆的事实。'
+export const INBOX_LEAD =
+  '这些是 Agent 提交、还没进记忆的事实，等每天的晋升任务处理：重复的会合并，' +
+  '判不了矛盾的会移到上面的「需要你裁决」。现在就点「收录」或「不采纳」，' +
+  '等于提前替晋升任务处理掉这一条。'
 
 /**
  * The two exits from the submissions list, said plainly.
@@ -811,7 +836,7 @@ export function decideReasonText(reason: string | null | undefined): string {
 export function acceptReasonText(reason: string | null | undefined): string {
   const r = String(reason ?? '')
   if (r === 'conflicts') return '这条和已有记忆冲突，先在「需要你裁决」里定一下'
-  if (r === 'not-a-submission') return '这个是提交区自带的说明/登记文件，不是待确认内容'
+  if (r === 'not-a-submission') return '这个是提交区自带的说明/登记文件，不是待晋升的提交'
   if (r === 'not-found') return '条目不存在，可能已被处理'
   if (r === 'invalid-name') return '文件名不合法，只能处理提交区里的条目'
   if (r === 'unavailable') return '记忆核心暂不可用，请稍后再试'
@@ -859,7 +884,7 @@ const ISSUE_COPY: Record<string, { title: string; detail: string; fix: string; c
     command: 'python -m unified_memory.promoter --adjudicate',
   },
   'inbox-stale': {
-    title: '待确认积压太久',
+    title: '待晋升的提交积压太久',
     detail: '收件箱里的提交放了两周以上，越积越多，新事实会排在后面。',
     fix: '先复查一遍待晋升清单，确认没问题再批量入库。',
     command: 'python -m unified_memory.promoter --review',
@@ -982,7 +1007,7 @@ function countedDetail(code: string, base: string, counts?: DoctorCounts | null)
     return counts.orphans + ' 个孤儿索引库（旧 vault 留下的），和现在的库无关，只占磁盘。'
   }
   if (code === 'inbox-stale' && counts.inbox > 0) {
-    return '收件箱有 ' + counts.inbox + ' 条待确认，最老的超过两周，新事实会排在它们后面。'
+    return '收件箱有 ' + counts.inbox + ' 条提交还没晋升，最老的超过两周，新事实会排在它们后面。'
   }
   return base
 }
@@ -1078,7 +1103,7 @@ export function statKpis(data: StatsData | null): StatKpi[] {
     { key: 'memories', label: '记忆', value: compactCount(data.totals.memories) },
     { key: 'accesses', label: '被取用', value: compactCount(data.totals.accesses) },
     { key: 'types', label: '类型', value: compactCount(data.types.length) },
-    { key: 'inbox', label: '待确认', value: compactCount(data.totals.inbox) },
+    { key: 'inbox', label: '待晋升', value: compactCount(data.totals.inbox) },
   ]
 }
 

@@ -390,12 +390,12 @@ describe('wiring: the pending count rides the queue it counts', () => {
   })
 
   it('spells out the subject for a reader who arrives at the badge cold', () => {
-    // The badge sits on 待确认 now, so the digit is arguably self-explaining —
+    // The badge sits on 待处理 now, so the digit is arguably self-explaining —
     // but the strip is also read by screen readers and by anyone who lands on
     // the tab stripped of its label. `title` is the only carrier of that
     // meaning, so it needs an assertion of its own; without one it can be
     // deleted and every other test in this file stays green.
-    expect(CONSOLE_CODE).toMatch(/title:\s*[^\n]*条待处理/)
+    expect(CONSOLE_CODE).toMatch(/title:\s*[^\n]*条待晋升的提交/)
   })
 
   it('feeds the strip from the status payload', () => {
@@ -433,12 +433,13 @@ describe('previewEmptyText', () => {
   })
 
   it('tells an empty inbox apart from an empty generic view', () => {
-    // "暂无内容" reads like a failed lookup. An empty 待确认 queue is a healthy
+    // "暂无内容" reads like a failed lookup. An empty 待晋升 queue is a healthy
     // state, and the reader's actual question is whether anything waits on
     // them — so the inbox gets its own words, not the generic ones.
     const t = previewEmptyText(preview({ view: 'pending', status: 'ok', items: [] }))!
-    expect(t.title).toBe('没有待确认的提交')
+    expect(t.title).toBe('没有待晋升的提交')
     expect(t.hint).toContain('Agent')
+    expect(t.hint).toContain('晋升')
     expect(t.title).not.toBe('暂无内容')
   })
 
@@ -496,8 +497,8 @@ describe('inboxSummary', () => {
   const DAY = 86_400
   const now = 1_790_000_000_000
 
-  it('says the queue is empty instead of "0 条待确认"', () => {
-    // "0 条待确认" is a count; "提交区是空的" is a state. The second is what
+  it('says the queue is empty instead of "0 条待晋升"', () => {
+    // "0 条待晋升" is a count; "提交区是空的" is a state. The second is what
     // tells a user they do not need to open this tab at all.
     const s = inboxSummary([], now)
     expect(s.count).toBe(0)
@@ -506,7 +507,7 @@ describe('inboxSummary', () => {
   })
 
   it('promotes staleness only once it crosses a week', () => {
-    expect(inboxSummary([{ mtime: now / 1000 - 60 }], now).text).toBe('1 条待确认')
+    expect(inboxSummary([{ mtime: now / 1000 - 60 }], now).text).toBe('1 条待晋升')
     const stale = inboxSummary([{ mtime: now / 1000 - DAY * 21 }], now)
     expect(stale.oldestDays).toBe(21)
     expect(stale.text).toContain('21 天')
@@ -554,6 +555,28 @@ describe('the inbox says what confirming means', () => {
     // visible label, not the prose around it.
     expect(CONSOLE_CODE).toContain('不采纳')
     expect(CONSOLE_CODE).not.toContain('归档')
+  })
+
+  it('says who clears the queue, and that the buttons are an option', () => {
+    // The question this exists for: a reader opens the pane BEFORE the daily
+    // promotion and asks "why is anything here — promotion runs at 3". The
+    // answer has to be on the page, because the queue is fed by `memory_submit`
+    // the moment an agent writes, not by the promotion run. Without these three
+    // parts the pane reads as a confirmation nobody asked for.
+    expect(INBOX_LEAD).toContain('晋升')
+    // ...the conflicts it cannot settle go where the user will look for them
+    expect(INBOX_LEAD).toContain('需要你裁决')
+    // ...and acting now is explicitly an alternative to waiting, not the only exit
+    expect(INBOX_LEAD).toContain('收录')
+    expect(INBOX_LEAD).not.toContain('03:00')
+  })
+
+  it('does not label the whole tab after the queue that waits on the user', () => {
+    // 待确认 was wrong for the same reason: the tab holds two queues with two
+    // owners, and only one of them is waiting for a confirmation.
+    expect(TAB_LABEL.inbox).toBe('待处理')
+    expect(Object.values(TAB_LABEL)).not.toContain('待确认')
+    expect(CONSOLE_CODE).toContain('待晋升的提交')
   })
 
   it('prints both sentences in the pane, not only in the model', () => {
@@ -2073,7 +2096,7 @@ describe('mutation: statKpis', () => {
         { key: 'memories', label: '记忆', value: '0' },
         { key: 'accesses', label: '被取用', value: '0' },
         { key: 'types', label: '类型', value: '0' },
-        { key: 'inbox', label: '待确认', value: '0' },
+        { key: 'inbox', label: '待晋升', value: '0' },
       ]
     }
     const assert = function (f: typeof statKpis) {

@@ -379,7 +379,7 @@ export function apply(ctx: Context, config: Record<string, unknown> = {}): void 
   })
 
   // ---- HTTP decide route: rule on one queued conflict ----
-  // The third writing route, and the one the 待确认 page actually needs. A
+  // The third writing route, and the one the 待处理 page actually needs. A
   // conflict is a fact an agent wanted to remember that contradicts something
   // already in memory; the core queues it (`情境信息/事实冲突待裁决.md`) instead
   // of guessing, and `decide` applies one of three rulings. Same guards as the

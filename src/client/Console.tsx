@@ -130,9 +130,10 @@ function TabBar(props: { active: TabId; onPick: (t: TabId) => void; pending: num
         TAB_LABEL[t],
         // The count is the inbox queue, and the tab it rides on IS that queue
         // — so the digit and the list it counts are one thing. `title` still
-        // spells the subject out for a reader who arrives at the badge cold.
+        // spells the subject out for a reader who arrives at the badge cold,
+        // because the tab label (待处理) covers the conflict block too.
         t === PENDING_BADGE_TAB && props.pending > 0
-          ? h('span', { className: 'dsh-memory-pill', title: String(props.pending) + ' 条待处理' },
+          ? h('span', { className: 'dsh-memory-pill', title: String(props.pending) + ' 条待晋升的提交' },
               String(props.pending))
           : null,
       )
@@ -247,7 +248,7 @@ function Hit(props: {
  *     showed it, and `adjudicate` reported "nothing to adjudicate" because it
  *     only understood the JSON line shape while the human shape was in use.
  *
- *   - 待确认 — a submission nothing contradicts. That one really is yes/no:
+ *   - 待晋升的提交 — a submission nothing contradicts. That one really is yes/no:
  *     收录 promotes it into memory, 不采纳 moves the file to `已处理/` (nothing
  *     is deleted, and no canonical note is touched).
  *
@@ -438,7 +439,7 @@ function InboxTab(): Child {
     // ── The plain submissions: promote or retire, one row at a time ──
     h('div', { className: 'dsh-memory-card dsh-memory-card-lead' },
       h('div', { className: 'dsh-memory-cardhead' },
-        '待确认',
+        '待晋升的提交',
         h('span', { className: 'dsh-memory-cardcount' }, summary.text)),
       items.length > 0
         ? h('div', { className: 'dsh-memory-note' }, INBOX_LEAD)
@@ -447,7 +448,7 @@ function InboxTab(): Child {
       preview.busy
         ? h(Skeleton, null)
         : !preview.data
-          ? h(Failure, { text: '待确认列表读不到，记忆核心暂不可用', onRetry: preview.reload })
+          ? h(Failure, { text: '待晋升的提交读不到，记忆核心暂不可用', onRetry: preview.reload })
           : empty
             ? h(Empty, { title: empty.title, hint: empty.hint })
             : h('div', { className: 'dsh-memory-rows' },
@@ -781,7 +782,7 @@ function FindingCard(props: { finding: HealthFinding; repair: RepairApi }): Chil
                 f.agent.mode === 'analyze'
                   ? '它会先只读核对，然后给你建议；不会直接改库。'
                   : f.agent.mode === 'judge'
-                    ? '它会先只读核对，能判的直接判掉并写清理由；判不了的连同推荐和通俗解释留在待确认里等你点头。'
+                    ? '它会先只读核对，能判的直接判掉并写清理由；判不了的连同推荐和通俗解释留在「需要你裁决」里等你点头。'
                     : '它会先只读核对，改库之前会再问你一次。',
               ),
               h('div', { className: 'dsh-memory-confirm-row' },

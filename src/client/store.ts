@@ -714,7 +714,7 @@ export async function decideConflict(
   }
 }
 
-/** Conflict-queue state for the 待确认 pane. Loads on mount; `reload` re-reads. */
+/** Conflict-queue state for the 「需要你裁决」 block. Loads on mount; `reload` re-reads. */
 export function useConflicts(): {
   items: ConflictItem[] | null
   busy: boolean

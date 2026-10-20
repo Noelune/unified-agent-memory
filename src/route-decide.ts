@@ -2,7 +2,7 @@ import { runCore } from './utils.ts'
 import type { PluginConfig } from './types.ts'
 
 /**
- * Resolve one queued conflict — the 待确认 page's actual question.
+ * Resolve one queued conflict — the question the 「需要你裁决」 block asks.
  *
  * The queue is `情境信息/事实冲突待裁决.md`: facts an agent wanted to remember
  * that look like a state change to something already in memory. Only a person
