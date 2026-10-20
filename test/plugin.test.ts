@@ -36,9 +36,32 @@ interface FakeRoute {
   kind: string
   path: string
   handler: (
-    req: { socket?: { remoteAddress?: string }; method?: string },
+    req: {
+      socket?: { remoteAddress?: string }
+      method?: string
+      headers?: Record<string, string>
+    },
     res: { writeHead: (code: number, headers: Record<string, string>) => void; end: (body: string) => void },
   ) => void | Promise<void>
+}
+
+/**
+ * A request a local client would actually send.
+ *
+ * The routes now fence on `Host` (DNS rebinding: a browser can be told to
+ * resolve `attacker.example` to 127.0.0.1, so the socket address alone does
+ * not prove the caller meant to reach the loopback server). A request fixture
+ * without that header is not a local request — it is a malformed one — so
+ * every "should succeed" case has to carry it.
+ */
+const LOCAL_HOST = '127.0.0.1:3081'
+
+function localReq(method = 'GET'): {
+  socket: { remoteAddress: string }
+  method: string
+  headers: Record<string, string>
+} {
+  return { socket: { remoteAddress: '127.0.0.1' }, method, headers: { host: LOCAL_HOST } }
 }
 
 /** Build a cordis-like context that refuses services the plugin did not declare. */
@@ -154,7 +177,7 @@ describe('status route: corrupt core readings degrade the whole stats object', (
     const { ctx, routes } = makeCtx()
     host.apply(ctx as never, { vaultPath: 'C:/tmp/vault', pythonPath: PYTHON, corePath: dir })
     const { res, out } = capture()
-    await routes[0].handler({ socket: { remoteAddress: '127.0.0.1' }, method: 'GET' }, res)
+    await routes[0].handler(localReq(), res)
     return JSON.parse(out.body)
   }
 
@@ -251,7 +274,7 @@ describe('host plugin contract', () => {
     host.apply(ctx as never, { vaultPath: 'C:/tmp/vault', recall: 'always', recallTimeoutMs: 3000 })
 
     const { res, out } = capture()
-    await routes[0].handler({ socket: { remoteAddress: '127.0.0.1' }, method: 'GET' }, res)
+    await routes[0].handler(localReq(), res)
     const body = JSON.parse(out.body)
     expect(body.recall.mode).toBe('always')
     expect(body.recall.timeoutMs).toBe(3000)
@@ -266,7 +289,7 @@ describe('host plugin contract', () => {
     host.apply(ctx as never, { vaultPath: 'C:/tmp/vault' })
 
     const { res, out } = capture()
-    await routes[0].handler({ socket: { remoteAddress: '127.0.0.1' }, method: 'GET' }, res)
+    await routes[0].handler(localReq(), res)
     const body = JSON.parse(out.body)
     expect(body.agentName).toBe('dsh-desktop')
     expect(body.agentSource).toBe('profile')
@@ -316,7 +339,7 @@ describe('host plugin contract', () => {
     const { res, out } = capture()
     // The handler now awaits a read-only core call, so completion is observed
     // by awaiting it rather than by reading `out` synchronously.
-    await routes[0].handler({ socket: { remoteAddress: '127.0.0.1' }, method: 'GET' }, res)
+    await routes[0].handler(localReq(), res)
 
     expect(out.code).toBe(200)
     const body = JSON.parse(out.body)

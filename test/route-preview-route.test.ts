@@ -34,11 +34,24 @@ import * as host from '../src/index.ts'
 import { PREVIEW_VIEWS } from '../src/route-preview.ts'
 import { runCore } from '../src/utils.ts'
 
+/**
+ * The `Host` a local client sends. The routes fence on it: a browser can be
+ * told to resolve `attacker.example` to 127.0.0.1, so the socket address alone
+ * does not prove the caller meant to reach the loopback server. A fixture
+ * without this header is not a local request, it is a malformed one.
+ */
+const LOCAL_HOST = '127.0.0.1:3081'
+
 interface FakeRoute {
   kind: string
   path: string
   handler: (
-    req: { socket?: { remoteAddress?: string }; method?: string; url?: string },
+    req: {
+      socket?: { remoteAddress?: string }
+      method?: string
+      url?: string
+      headers?: Record<string, string>
+    },
     res: { writeHead: (code: number, headers: Record<string, string>) => void; end: (body: string) => void },
   ) => void | Promise<void>
 }
@@ -79,7 +92,7 @@ async function getPreview(url: string) {
   host.apply(ctx as never, { vaultPath: 'C:/tmp/vault' })
   const route = routes.find((r) => r.path.endsWith('/preview'))!
   const { res, out } = capture()
-  await route.handler({ socket: { remoteAddress: '127.0.0.1' }, method: 'GET', url }, res)
+  await route.handler({ socket: { remoteAddress: '127.0.0.1' }, method: 'GET', url, headers: { host: LOCAL_HOST } }, res)
   return out
 }
 
@@ -95,7 +108,7 @@ async function getNote(url: string) {
   host.apply(ctx as never, { vaultPath: 'C:/tmp/vault' })
   const route = routes.find((r) => r.path.endsWith('/note'))!
   const { res, out } = capture()
-  await route.handler({ socket: { remoteAddress: '127.0.0.1' }, method: 'GET', url }, res)
+  await route.handler({ socket: { remoteAddress: '127.0.0.1' }, method: 'GET', url, headers: { host: LOCAL_HOST } }, res)
   return out
 }
 

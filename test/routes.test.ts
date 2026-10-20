@@ -132,10 +132,46 @@ describe('guard', () => {
     expect(res.calls.headers?.['cache-control']).toBe('no-store')
   })
 
-  it('passes a loopback GET and always sets no-store', () => {
+  it('passes a loopback GET from a local Host and always sets no-store', () => {
     const res = fakeRes()
-    const ok = guard({ socket: { remoteAddress: '127.0.0.1' }, method: 'GET' }, res, ['GET'])
+    const ok = guard(
+      { socket: { remoteAddress: '127.0.0.1' }, method: 'GET', headers: { host: '127.0.0.1:3081' } },
+      res,
+      ['GET'],
+    )
     expect(ok).toBe(true)
+  })
+
+  // DNS rebinding: a browser can be pointed at `attacker.example` and have it
+  // resolve to 127.0.0.1, so the socket address alone does not prove the
+  // caller meant to reach this server. Read routes carry local absolute paths
+  // and vault contents, so they need the same fence the write routes have.
+  it('403s a read whose Host names a foreign site', () => {
+    const res = fakeRes()
+    const ok = guard(
+      { socket: { remoteAddress: '127.0.0.1' }, method: 'GET', headers: { host: 'evil.com' } },
+      res,
+      ['GET'],
+    )
+    expect(ok).toBe(false)
+    expect(res.calls.code).toBe(403)
+    expect(res.calls.headers?.['cache-control']).toBe('no-store')
+  })
+
+  it('403s a read with a look-alike Host, and one with no Host at all', () => {
+    for (const host of ['127.0.0.1.evil.com', 'localhost.evil.com', '']) {
+      const res = fakeRes()
+      const ok = guard(
+        { socket: { remoteAddress: '127.0.0.1' }, method: 'GET', headers: { host } },
+        res,
+        ['GET'],
+      )
+      expect(ok, `host ${JSON.stringify(host)}`).toBe(false)
+      expect(res.calls.code).toBe(403)
+    }
+    const res = fakeRes()
+    expect(guard({ socket: { remoteAddress: '127.0.0.1' }, method: 'GET' }, res, ['GET'])).toBe(false)
+    expect(res.calls.code).toBe(403)
   })
 
   it('sets no-store on rejection too', () => {
@@ -211,12 +247,15 @@ describe('guardWrite', () => {
     // and the target LOOK same-origin, so Origin == Host == evil.com — a
     // same-origin compare is satisfied and lets the write through. Only
     // "Host must be loopback" catches it; Origin never can.
+    //
+    // The fence now lives in `guard`, so this is refused before the CSRF layer
+    // runs: the reason reported is the Host one, not `cross-site write`.
     const res = fakeRes()
     const ok = guardWrite(writeReq({ origin: 'http://evil.com', host: 'evil.com' }), res)
     expect(ok).toBe(false)
     expect(res.calls.code).toBe(403)
     expect(res.calls.headers?.['cache-control']).toBe('no-store')
-    expect(JSON.parse(res.calls.body!)).toEqual({ ok: false, error: 'forbidden: cross-site write' })
+    expect(JSON.parse(res.calls.body!)).toEqual({ ok: false, error: 'forbidden: non-local host' })
   })
 
   it('403s the same agreeing-Origin rebinding request when Sec-Fetch-Site is absent', () => {

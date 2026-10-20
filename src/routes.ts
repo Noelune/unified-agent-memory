@@ -1,10 +1,12 @@
 /**
  * Shared HTTP plumbing for the admin routes.
  *
- * Every route in this plugin is read-only and local, so the same three rules
- * apply everywhere and live here once: only the loopback interface may call,
- * only an allow-listed method is accepted, and nothing is ever cached — a
- * cached panel reading is a stale panel reading.
+ * The baseline rules live here once so no route can be written without them:
+ * only the loopback interface may call, only an allow-listed method is
+ * accepted, the `Host` header must name this machine (the DNS-rebinding fence,
+ * applied to reads as well — they return vault paths), and nothing is ever
+ * cached: a cached panel reading is a stale panel reading. The mutating routes
+ * add a CSRF layer on top (`guardWrite`).
  */
 
 export interface RouteReq {
@@ -75,6 +77,24 @@ export function isLoopbackHost(host: string | undefined): boolean {
 /**
  * Apply the shared baseline. Returns false when the request was already
  * answered (403 or 405); the caller must then return without writing more.
+ *
+ * Three gates, and the `Host` one used to live in `guardWrite` only — which
+ * left every READ route open to DNS rebinding. That was a real hole, not a
+ * theoretical one: `/status`, `/preview`, `/doc` and `/search` hand back vault
+ * paths and memory content, so a hostile page that rebinds its own name to
+ * 127.0.0.1 could read the whole store from a browser tab. The old comment
+ * claimed reads kept `guard` alone so a local `curl` would keep working, but
+ * that reasoning is wrong: `isLoopbackHost` only rejects a *foreign* Host, and
+ * curl to `http://127.0.0.1:3081/status` sends `Host: 127.0.0.1:3081`. The
+ * fence costs local tooling nothing.
+ *
+ * The CSRF layer (Origin / Sec-Fetch-Site / Referer) stays write-only and is
+ * not part of this function: a read has nothing to forge, and requiring an
+ * Origin would only add a way to break local callers.
+ *
+ * Order: loopback, then method, then Host. Method comes before Host so a
+ * caller that used the wrong verb still gets the accurate 405 instead of a
+ * confusing 403 — it reveals nothing the caller did not already send.
  */
 export function guard(req: RouteReq, res: RouteRes, allowed: readonly string[]): boolean {
   if (!isLoopback(req.socket?.remoteAddress)) {
@@ -86,6 +106,11 @@ export function guard(req: RouteReq, res: RouteRes, allowed: readonly string[]):
   if (!allowed.includes(method)) {
     res.writeHead(405, JSON_HEADERS)
     res.end('{"ok":false,"error":"method not allowed"}')
+    return false
+  }
+  if (!isLoopbackHost(headerValue(req, 'host'))) {
+    res.writeHead(403, JSON_HEADERS)
+    res.end('{"ok":false,"error":"forbidden: non-local host"}')
     return false
   }
   return true
@@ -135,32 +160,32 @@ function headerValue(req: RouteReq, name: string): string | undefined {
 }
 
 /**
- * `guard` plus a cross-site check, for the ONE mutating route.
+ * `guard` plus a cross-site check, for the mutating routes.
  *
  * Why the extra check exists: our routes are registered `kind: 'exact'` and the
  * host's `match()` consults the exact table *before* its `/api` prefix, so an
  * exact route never reaches the host's own Host-fence + cookie auth. A hostile
  * page therefore reaches this handler with `remoteAddress` still `127.0.0.1`,
- * which `guard` alone waves through — the loopback check was never a CSRF
- * defence. Read routes deliberately keep `guard` only: an agent running curl
- * against the local memory store is a supported use, and nothing there writes.
+ * which the loopback check waves through — that check was never a CSRF defence.
  *
- * Two distinct attacks, two distinct fences, and the order matters:
+ * The rebinding fence itself lives in `guard` now, because reads need it too
+ * (they return vault paths and memory content). What stays here is the second,
+ * *different* attack:
  *
- *   - **DNS rebinding** is stopped by `isLoopbackHost` alone, and ONLY by it.
- *     After the attacker's DNS answer flips to 127.0.0.1 the page and the target
- *     look same-origin, so the browser sends `Origin: http://evil.com` *and*
- *     `Host: evil.com` — `origin === host` is satisfied and waves it through.
- *     (An earlier revision compared those two and claimed rebinding solved; it
- *     was not, and a probe showed `Origin=evil.com, Host=evil.com` allowed.)
- *     Rebinding cannot fake a loopback `Host`, so that check is the fence.
+ *   - **DNS rebinding** is stopped by `isLoopbackHost`, i.e. by `guard`. After
+ *     the attacker's DNS answer flips to 127.0.0.1 the page and the target look
+ *     same-origin, so the browser sends `Origin: http://evil.com` *and*
+ *     `Host: evil.com` — an "is Origin equal to Host" compare is satisfied and
+ *     would wave it through. (An earlier revision did exactly that and claimed
+ *     rebinding solved; a probe showed `Origin=evil.com, Host=evil.com`
+ *     allowed.) Rebinding cannot fake a loopback `Host`, so that is the fence.
  *   - **CSRF** needs the Origin/Sec-Fetch-Site/Referer layer below, because its
  *     `Host` is genuinely `127.0.0.1:3081` and the rebinding fence passes it.
  *
  * Decision order (fail-closed throughout):
  *
- *   1. `Host` must name this machine — `127.0.0.1` / `localhost` / `[::1]`, any
- *      port, any case. Anything else, including an absent Host, is a 403.
+ *   1. `guard` has already required a loopback caller, an allowed method and a
+ *      loopback `Host`.
  *   2. `Origin` present -> must be same-origin with the request's own Host.
  *      Cross-site or unparseable is a 403.
  *   3. No `Origin` -> `Sec-Fetch-Site`. `same-origin` / `none` pass; everything
@@ -168,7 +193,7 @@ function headerValue(req: RouteReq, name: string): string | undefined {
  *   4. Neither present -> allowed. This is the deliberate carve-out: no browser
  *      has sent either header, so the caller is a local CLI (curl, another
  *      agent) and refusing would break the documented read/write tooling. It is
- *      still gated on rule 1, so it is "a local CLI talking to a local Host",
+ *      still gated on rules 1–2, so it is "a local CLI talking to a local Host",
  *      never a blanket pass. `ponytail:` the ceiling is exactly that — a minimal
  *      hand-rolled HTTP client that sends a loopback Host and neither header is
  *      indistinguishable from curl and gets through. Closing it needs a shared
@@ -186,11 +211,8 @@ export function guardWrite(req: RouteReq, res: RouteRes, allowed: readonly strin
     return false
   }
 
-  const host = headerValue(req, 'host')
-  // The rebinding fence, and it comes first: nothing below can distinguish a
-  // rebound request, because a rebound request looks same-origin by design.
-  if (!isLoopbackHost(host)) return deny()
-  const local = host!.toLowerCase()
+  // Safe to assert: `guard` already answered anything without a loopback Host.
+  const local = headerValue(req, 'host')!.toLowerCase()
 
   const origin = headerValue(req, 'origin')
   if (origin !== undefined) {
