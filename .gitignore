@@ -9,6 +9,9 @@ sessions/
 *.bak*
 *.tmp
 .tmp_*
+
+# 统计看板产物（本地生成，不入库）
+.stats/
 *.log
 
 # Local user config & index (never commit YOUR vault config)
