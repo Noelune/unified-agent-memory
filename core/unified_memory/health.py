@@ -187,10 +187,18 @@ def doctor(vault: Path) -> dict:
         pass
 
     orphaned = _orphan_indexes(vault)
+    # `gc` refuses to delete an orphan younger than ORPHAN_INDEX_DAYS, so a report
+    # that counts every orphan makes its own hint a no-op: the reader runs
+    # `memory gc --apply`, nothing is removed, and the item stays on the page
+    # saying the same thing tomorrow. Split the two, and let each one carry the
+    # command that actually applies to it.
+    prunable = [item for item in orphaned if item["ageDays"] >= ORPHAN_INDEX_DAYS]
     report["orphanIndexes"] = {
         "count": len(orphaned),
         "bytes": sum(item["bytes"] for item in orphaned),
         "files": [item["path"] for item in orphaned],
+        "prunable": len(prunable),
+        "newestAgeDays": min((item["ageDays"] for item in orphaned), default=None),
     }
 
     # ---- issues ---------------------------------------------------------
@@ -258,15 +266,37 @@ def doctor(vault: Path) -> dict:
             )
         )
     if report["orphanIndexes"]["count"]:
-        issues.append(
-            _issue(
-                "info",
-                "orphan-indexes",
-                f"{report['orphanIndexes']['count']} orphan index database(s), "
-                f"{report['orphanIndexes']['bytes'] / 1e6:.1f} MB",
-                "Run `memory gc --apply` to remove indexes whose vault no longer exists.",
-            )
+        total = report["orphanIndexes"]["count"]
+        ready = report["orphanIndexes"]["prunable"]
+        waiting = total - ready
+        message = (
+            f"{total} orphan index database(s), "
+            f"{report['orphanIndexes']['bytes'] / 1e6:.1f} MB"
         )
+        if waiting and ready:
+            message += f" — {ready} older than {ORPHAN_INDEX_DAYS} days, {waiting} newer"
+        elif waiting:
+            message += f" — all newer than {ORPHAN_INDEX_DAYS} days"
+        # Three cases, because two of them used to share a sentence that was
+        # only true for one: "removes the N that are old enough" reads as an
+        # instruction even when N is 0, and the reader has no way to know the
+        # command they just ran was a no-op by design.
+        if not waiting:
+            hint = "Run `memory gc --apply` to remove indexes whose vault no longer exists."
+        elif not ready:
+            hint = (
+                f"All {waiting} are younger than {ORPHAN_INDEX_DAYS} days, so the default "
+                "`memory gc --apply` keeps them — a vault can only be temporarily unavailable, "
+                "and deleting its index over a disconnected drive would be worse than the disk "
+                "it costs. To remove them now: `memory gc --apply --older-than 0`."
+            )
+        else:
+            hint = (
+                f"`memory gc --apply` removes the {ready} that are old enough; the other "
+                f"{waiting} are younger than {ORPHAN_INDEX_DAYS} days and are kept for the same "
+                "reason. To remove all of them now: `memory gc --apply --older-than 0`."
+            )
+        issues.append(_issue("info", "orphan-indexes", message, hint))
     if report["canonical"]["unclassifiedLines"]:
         issues.append(
             _issue(

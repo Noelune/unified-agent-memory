@@ -46,6 +46,79 @@ class DoctorTest(unittest.TestCase):
         self.assertIn("inbox-stale", [issue["code"] for issue in report["issues"]])
 
 
+class OrphanIndexReportTest(unittest.TestCase):
+    """doctor must not print a command that removes nothing.
+
+    `gc` only deletes an orphan older than ORPHAN_INDEX_DAYS, and that guard is
+    right — a vault can be temporarily unavailable, and deleting its index over
+    a disconnected drive would be worse than the wasted disk. But the report
+    counted every orphan and told the reader to run the default command, which
+    is a no-op for the case that actually occurs: a database orphaned minutes
+    ago by a vault move. The reader runs it, nothing happens, and the item is
+    still on the page tomorrow saying the same thing.
+
+    `_orphan_indexes` is patched rather than exercised here: these tests are
+    about the branch, and the real `~/.unified-memory` directory is shared
+    machine state, so a stray orphan from some other run would decide which
+    branch the test ends up on.
+    """
+
+    def setUp(self):
+        self.vault = make_scratch_vault()
+
+    def tearDown(self):
+        destroy_scratch(self.vault)
+
+    def _report(self, items: list[dict]) -> dict:
+        with patch("unified_memory.health._orphan_indexes", return_value=items), \
+             patch("unified_memory.embed.configured", return_value=False):
+            return health.doctor(self.vault)
+
+    def _issue(self, report: dict) -> dict:
+        return next(issue for issue in report["issues"] if issue["code"] == "orphan-indexes")
+
+    def test_a_fresh_orphan_gets_a_command_that_would_actually_remove_it(self):
+        report = self._report([{"path": "x/index-1.db", "bytes": 1024, "ageDays": 0.2}])
+
+        self.assertEqual(report["orphanIndexes"]["count"], 1)
+        self.assertEqual(report["orphanIndexes"]["prunable"], 0)
+        self.assertEqual(report["orphanIndexes"]["newestAgeDays"], 0.2)
+        hint = self._issue(report)["hint"]
+        self.assertIn("--older-than 0", hint)
+        self.assertNotIn("Run `memory gc --apply` to remove indexes", hint)
+        # "removes the 0 that are old enough" is a sentence that reads as an
+        # instruction while describing a no-op. When nothing is prunable, say so.
+        self.assertNotIn("removes the 0", hint)
+        self.assertIn("All 1 are younger than", hint)
+        # And the message says why the count it reports is not the count it can
+        # act on — otherwise the next doctor run is a surprise.
+        self.assertIn("all newer than", self._issue(report)["message"])
+
+    def test_an_old_orphan_gets_the_plain_command_and_no_caveat(self):
+        report = self._report([{"path": "x/index-2.db", "bytes": 1024, "ageDays": 45}])
+
+        self.assertEqual(report["orphanIndexes"]["prunable"], 1)
+        hint = self._issue(report)["hint"]
+        self.assertIn("Run `memory gc --apply` to remove indexes", hint)
+        self.assertNotIn("--older-than 0", hint)
+        self.assertNotIn("newer", self._issue(report)["message"])
+
+    def test_a_mixed_pair_is_reported_as_two_numbers(self):
+        # "1 orphan index" and then "the command removed 0" is the same bug
+        # wearing a different hat. Both halves are named.
+        report = self._report([
+            {"path": "x/index-3.db", "bytes": 1024, "ageDays": 45},
+            {"path": "x/index-4.db", "bytes": 2048, "ageDays": 0.1},
+        ])
+
+        self.assertEqual(report["orphanIndexes"]["count"], 2)
+        self.assertEqual(report["orphanIndexes"]["prunable"], 1)
+        self.assertEqual(report["orphanIndexes"]["newestAgeDays"], 0.1)
+        message = self._issue(report)["message"]
+        self.assertIn("1 older than", message)
+        self.assertIn("1 newer", message)
+
+
 class GcTest(unittest.TestCase):
     def setUp(self):
         self.vault = make_scratch_vault()
