@@ -30,12 +30,15 @@ from unified_memory.common import (
 )
 from unified_memory.conflict import (
     append_conflict,
+    classify_against,
     describe,
     entry_key,
     find_conflict,
     read_conflicts,
     remove_conflict,
+    same_subject,
     split_change,
+    subject_of,
 )
 
 BLOCK = (
@@ -361,6 +364,139 @@ class ConflictReadabilityTest(unittest.TestCase):
 
         self.assertTrue(change["prefix"].endswith("\\"))
         self.assertGreater(len(change["prefix"]), 10)
+
+
+class SubjectTest(unittest.TestCase):
+    """What a pair of facts is about, as opposed to how much they look alike.
+
+    The queue used to fill with pairs that merely shared a template. On a real
+    vault the look-alikes scored HIGHER than the contradictions, so the honest
+    question is not "how similar" but "about the same thing".
+    """
+
+    # ── reading the subject off a line ─────────────────────────────
+
+    def test_the_head_of_a_sentence_is_what_it_is_about(self):
+        self.assertEqual(subject_of("备份目录是 C:/backups"), "备份目录")
+        self.assertEqual(subject_of("备份目录已迁移到 D:/backups"), "备份目录")
+        self.assertEqual(subject_of("端口：8080"), "端口")
+
+    def test_a_drive_letter_is_not_a_separator(self):
+        # `C:` is part of the value. Reading it as the colon leaves the subject
+        # as `备份目录是 C`, which matches nothing and silently disables the check.
+        self.assertEqual(subject_of("备份目录是 C:/backups"), "备份目录")
+
+    def test_emphasis_markers_are_not_part_of_the_subject(self):
+        self.assertEqual(subject_of("**默认模型**：openrouter/free"), "默认模型")
+
+    def test_a_provenance_stamp_is_not_part_of_the_subject(self):
+        self.assertEqual(
+            subject_of("- 备份目录是 C:/backups（写入 2026-10-16｜来源：[[x]]）"),
+            "备份目录",
+        )
+
+    def test_a_dated_log_line_has_no_subject(self):
+        # The date is when it was written, not what it is about. Treating it as
+        # a subject would make every entry of one day contradict every other.
+        self.assertEqual(subject_of("2026-09-22：修了端口"), "")
+        self.assertEqual(subject_of("2026-09-22：部署在服务器上"), "")
+
+    def test_a_template_placeholder_line_has_no_subject(self):
+        # `示例：端口是 1` must stop at the placeholder. Falling through to the
+        # verb pattern reads it as `示例：端口`, a subject that exists nowhere.
+        self.assertEqual(subject_of("示例：端口是 1"), "")
+        self.assertEqual(subject_of("备注：部署在 D:/x"), "")
+
+    def test_a_truncated_path_is_not_a_subject(self):
+        self.assertEqual(subject_of("C:/data：备份"), "")
+
+    def test_a_head_that_is_only_punctuation_has_no_subject(self):
+        # Nothing but padding before the colon: the "head" is the separator's
+        # own whitespace. Returning it would make every such line share a
+        # subject, which is the opposite of what the check is for.
+        self.assertEqual(subject_of("  ：8080"), "")
+        self.assertEqual(subject_of("   "), "")
+
+    def test_a_line_that_states_no_relation_has_no_subject(self):
+        self.assertEqual(subject_of("凭据库脚本.py"), "")
+
+    def test_a_dash_separated_fact_has_a_subject(self):
+        self.assertEqual(
+            subject_of("UNIFIED_MEMORY_REMOTE_URL — optional remote index server URL"),
+            "UNIFIED_MEMORY_REMOTE_URL",
+        )
+
+    # ── comparing two subjects ─────────────────────────────────────
+
+    def test_a_shared_prefix_is_not_a_shared_subject(self):
+        # Straight from the vault: three environment variables that share a
+        # prefix scored 0.67-0.79 on their heads and were flagged as conflicts.
+        self.assertFalse(
+            same_subject("UNIFIED_MEMORY_REMOTE_URL", "UNIFIED_MEMORY_REMOTE_TOKEN")
+        )
+
+    def test_a_synonym_is_treated_as_a_different_subject(self):
+        # A known cost, pinned so nobody "fixes" it by lowering the threshold:
+        # `备份目录`/`备份路径` and `默认模型`/`可用模型` score the same (0.33), so
+        # any threshold that reunites the first also fuses the second. The pair
+        # stops being a question, but the new line is still written — both
+        # readings stay on the page rather than one silently winning.
+        self.assertFalse(same_subject("备份目录", "备份路径"))
+        self.assertFalse(same_subject("默认模型", "可用模型"))
+
+    def test_an_empty_subject_matches_nothing(self):
+        self.assertFalse(same_subject("", "端口"))
+        self.assertFalse(same_subject("端口", ""))
+        self.assertFalse(same_subject("", ""))
+
+    # ── deciding with it ───────────────────────────────────────────
+
+    def test_a_new_value_for_the_same_subject_is_a_conflict(self):
+        self.assertEqual(
+            classify_against("备份目录是 C:/backups", ["备份目录已迁移到 D:/backups"]),
+            ("conflict", "备份目录已迁移到 D:/backups"),
+        )
+        self.assertEqual(
+            classify_against(
+                "UNIFIED_MEMORY_TIMEOUT — seconds (default 10)",
+                ["UNIFIED_MEMORY_TIMEOUT — seconds (default 5)"],
+            ),
+            ("conflict", "UNIFIED_MEMORY_TIMEOUT — seconds (default 5)"),
+        )
+
+    def test_a_shared_template_alone_is_not_a_conflict(self):
+        # The complaint that started this: same value, different key, queued as
+        # a decision somebody had to make.
+        self.assertEqual(
+            classify_against(
+                "**默认模型**：openrouter/free", ["**可用模型**：openrouter/free"]
+            ),
+            ("new", None),
+        )
+
+    def test_an_unreadable_subject_falls_back_to_similarity(self):
+        # Neither line states a relation, so there is no subject to compare and
+        # the pair goes back to being a question. A question can be answered; a
+        # dropped contradiction cannot be recovered.
+        self.assertEqual(
+            classify_against("备份 C:/backups", ["备份 D:/backups"]),
+            ("conflict", "备份 D:/backups"),
+        )
+
+    def test_the_look_alike_does_not_hide_the_real_match(self):
+        # A different-subject line comes first and scores above the threshold.
+        # Skipping it must not end the search: the later line is the one this
+        # fact actually contradicts.
+        self.assertEqual(
+            classify_against(
+                "备份目录是 C:/backups",
+                ["默认模型：C:/backups", "备份目录是 D:/backups"],
+            ),
+            ("conflict", "备份目录是 D:/backups"),
+        )
+
+    def test_an_identical_line_is_a_duplicate_before_any_subject_check(self):
+        self.assertEqual(classify_against("端口是 8080", ["端口是 8080"]), ("duplicate", "端口是 8080"))
 
 
 if __name__ == "__main__":

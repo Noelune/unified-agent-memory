@@ -40,6 +40,7 @@ from .common import (
     ADJUDICATED_FILE,
     CONFLICT_FILE,
     atomic_write,
+    bare_fact_line,
     file_lock,
     read_maybe,
     situation_dir,
@@ -63,21 +64,100 @@ def similarity(a: str, b: str) -> float:
 
 CONFLICT_SIM_THRESHOLD = 0.5
 
+# A subject is the stable head of a fact — what it is ABOUT. Three common ways a
+# fact states its subject:
+#   `备份目录：C:/x`            colon (but not `C:` — see the lookahead)
+#   `UNIFIED_MEMORY_REMOTE_URL — optional …`   dash
+#   `备份目录是 C:/x` / `已迁移到` / `放在`     verb
+_SUBJECT_COLON = re.compile(r"^(.{2,20}?)\s*[：:]\s*(?![\\/])(.+)$")
+_SUBJECT_DASH = re.compile(r"^(.{2,40}?)\s+(?:—|--|–)\s*(.+)$")
+_SUBJECT_VERB = re.compile(
+    r"^(.{2,20}?)\s*"
+    r"(?:是|为|在|已改为|改为|已迁移到|迁移到|已换成|换成|现在在|放在)\s*(.+)$"
+)
+_DATE_ONLY = re.compile(r"^[0-9]{1,4}[-/.][0-9]{1,2}[-/.][0-9]{1,4}$")
+# Template placeholders: a line under these headings is an example, not a fact.
+_NOT_A_SUBJECT = {"示例", "example", "备注", "note"}
+
+
+def subject_of(text: str) -> str:
+    """The stable head of a fact: what it is about, with its value removed.
+
+    `备份目录是 C:/backups` and `备份目录已迁移到 D:/backups` are one statement
+    about 备份目录 with two values. `默认模型：X` and `可用模型：X` are two
+    statements that happen to share a value. Similarity cannot tell those apart —
+    on a real vault the second pair scored HIGHER (0.86) than the first (0.61) —
+    because look-alikes share a template while contradictions share only a
+    subject. So the head is compared separately.
+
+    Returns "" when the line has no recognisable head. An empty head disables the
+    check for that pair: falling back to similarity re-admits some look-alikes,
+    which is the safer direction — a spurious question can be answered, a silently
+    dropped contradiction cannot be recovered.
+    """
+    body = bare_fact_line(str(text or "")) or str(text or "")
+    body = body.replace("**", "").strip()
+    for pattern in (_SUBJECT_COLON, _SUBJECT_DASH, _SUBJECT_VERB):
+        match = pattern.match(body)
+        if not match:
+            continue
+        head = match.group(1).strip()
+        # A date-headed line is a log entry, not a statement about a thing; a
+        # template placeholder is an example. Both mean "no subject", and asking
+        # the next pattern would only read the same line a worse way.
+        if _DATE_ONLY.match(head) or head.lower() in _NOT_A_SUBJECT:
+            return ""
+        # A head containing a separator is a truncated path, not a subject.
+        if any(ch in head for ch in "\\/"):
+            return ""
+        return head
+    return ""
+
+
+# Two subjects are the same when they are the same words. Deliberately not a
+# similarity test: char-bigram overlap scores `备份目录`/`备份路径` and
+# `默认模型`/`可用模型` identically (both 0.33), so any threshold loose enough to
+# reunite the first also fuses the second. On a real vault every fuzzy-friendly
+# pair turned out to be a look-alike — `UNIFIED_MEMORY_REMOTE_URL` against
+# `UNIFIED_MEMORY_REMOTE_TOKEN` scores 0.79 and contradicts nothing — so a fuzzy
+# branch would be a knob that only ever points the wrong way. Synonyms are
+# therefore treated as different subjects: the pair stops being a question, but
+# the new line is still written, so both readings stay on the page.
+def same_subject(left: str, right: str) -> bool:
+    """Whether two heads name the same thing. Empty heads never match."""
+    return bool(left) and left == right
+
 
 def classify_against(new_fact: str, existing_lines: list[str]) -> tuple[str, str | None]:
     """Return ('duplicate'|'conflict'|'new', existing_line_or_None).
 
-    Only an exact (whitespace-normalized) match is a duplicate. A similar-but-
-    different fact is a CONFLICT for human adjudication — the conservative
-    choice, since similar wording with a different value is usually a state
-    change or a contradiction.
+    Only an exact (whitespace-normalized) match is a duplicate.
+
+    A CONFLICT needs two things: the two lines are similar, AND they are about
+    the same subject. Similarity alone queued pairs that merely shared a template
+    — `默认模型：openrouter/free` against `可用模型：openrouter/free` — while a real
+    contradiction about the same subject could score lower. Raising the
+    similarity threshold cannot fix that: it drops true contradictions before it
+    drops look-alikes, because the look-alikes are the ones that share a template.
+    The subject check is what makes "conflict" mean "same statement, new value".
+
+    When either side has no recognisable subject the pair falls back to plain
+    similarity. That re-admits some look-alikes and never drops a real
+    contradiction, which is the right side to err on: a wasted question gets
+    answered and leaves no trace, a missed contradiction gets written over.
     """
     for line in existing_lines:
         bare = line.strip()
         if new_fact.strip() == bare:
             return ("duplicate", line)
-        if similarity(new_fact, bare) >= CONFLICT_SIM_THRESHOLD:
-            return ("conflict", line)
+        if similarity(new_fact, bare) < CONFLICT_SIM_THRESHOLD:
+            continue
+        left, right = subject_of(new_fact), subject_of(bare)
+        if left and right and not same_subject(left, right):
+            # Same template, different subjects: not this line's contradiction.
+            # Keep looking — a later line about the same subject still counts.
+            continue
+        return ("conflict", line)
     return ("new", None)
 
 
