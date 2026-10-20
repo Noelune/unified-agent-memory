@@ -194,11 +194,26 @@ def entry_key(entry: dict) -> str:
     return hashlib.sha1("\x1f".join(_signature(entry)).encode("utf-8")).hexdigest()[:16]
 
 
+# What an agent's recommendation travels under once it has read a conflict and
+# could not settle it on its own. `建议` is one of `promoter.DECISIONS`; `解释`
+# is the plain-language reason, written for the person who still has to choose.
+ADVICE_CHOICE = "建议"
+ADVICE_WHY = "解释"
+
 # `- 新提交：…`, `- **新提交**：…`, `- 状态：[待裁决]`
 _BLOCK_FIELD = re.compile(r"^-\s*\**\s*([^：:*]+?)\s*\**\s*[：:]\s*(.*)$")
-# The five field names a block may carry, mapped onto the internal keys the rest
-# of the core already speaks (新/旧/来源/目标).
-_BLOCK_KEYS = {"新提交": "新", "既有": "旧", "来源": "来源", "所在": "目标", "状态": "状态"}
+# The field names a block may carry, mapped onto the internal keys the rest
+# of the core already speaks (新/旧/来源/目标). `建议`/`解释` are the agent's
+# recommendation on a conflict it could not settle — see `record_advice`.
+_BLOCK_KEYS = {
+    "新提交": "新",
+    "既有": "旧",
+    "来源": "来源",
+    "所在": "目标",
+    "状态": "状态",
+    "建议": ADVICE_CHOICE,
+    "解释": ADVICE_WHY,
+}
 # No `\s*` after the hash: `## 2026-10-19 … #20261019030125-1` must yield the
 # stamp, not the date — a heading starts with `## `, so a permissive gap makes
 # the date the first match and the id the second.
@@ -261,6 +276,72 @@ def append_conflict(vault: Path, new_fact: str, existing_line: str, source: str,
         if not current.endswith("\n"):
             current += "\n"
         atomic_write(path, current + entry)
+
+
+# `- 建议：…` / `- **建议**：…` / `- 解释：…` — replaced in place rather than
+# appended, so advising twice leaves one recommendation, not a pile.
+_ADVICE_LINE = re.compile(r"^-\s*\**\s*(?:建议|解释)\s*\**\s*[：:]")
+
+
+def record_advice(
+    vault: Path, entry: dict, choice: str, why: str, *, locked: bool = False
+) -> bool:
+    """Attach an agent's recommendation to a still-pending conflict.
+
+    Exists for the case the whole feature is built around: an agent reads both
+    sides, cannot honestly tell which one is true, and stops. Leaving the person
+    with the same two undifferentiated lines is what made the queue unreadable,
+    so the recommendation and its reason travel WITH the entry — the panel can
+    then show "Agent 建议共存，因为…" above the buttons instead of asking a
+    question the reader has no way to answer.
+
+    Rewrites the entry in place; returns False when the entry is gone (someone
+    else ruled while the advice was being composed, which is not an error).
+    """
+    if not locked:
+        with file_lock(vault):
+            return record_advice(vault, entry, choice, why, locked=True)
+    path = situation_dir(vault) / CONFLICT_FILE
+    lines = read_maybe(path).splitlines()
+    note = " ".join(str(why or "").split())
+    wanted = _signature(entry)
+
+    if entry.get("format") == "block":
+        heading = str(entry.get("heading", "")).strip()
+        if not heading:
+            return False
+        start = next((n for n, line in enumerate(lines) if line.strip() == heading), None)
+        if start is None:
+            return False
+        end = len(lines)
+        for n in range(start + 1, len(lines)):
+            if lines[n].strip().startswith("## "):
+                end = n
+                break
+        body = [line for line in lines[start + 1: end] if not _ADVICE_LINE.match(line.strip())]
+        while body and not body[-1].strip():
+            body.pop()
+        body.extend([f"- 建议：{choice}", f"- 解释：{note}"])
+        atomic_write(path, "\n".join(lines[: start + 1] + body + lines[end:]) + "\n")
+        return True
+
+    for n, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped.startswith("- [ ] 冲突"):
+            continue
+        parsed = _parse_inline_conflict(stripped)
+        if not parsed or _signature(parsed) != wanted:
+            continue
+        fields = {k: v for k, v in parsed.items() if k != "format"}
+        fields[ADVICE_CHOICE] = choice
+        fields[ADVICE_WHY] = note
+        # Rewritten as the JSON shape whichever shape it arrived in: the reader
+        # accepts both, and string surgery on the legacy `｜k：v｜` form would
+        # have to guess where one value ends.
+        lines[n] = "- [ ] 冲突 " + json.dumps(fields, ensure_ascii=False, separators=(",", ":"))
+        atomic_write(path, "\n".join(lines) + "\n")
+        return True
+    return False
 
 
 def read_conflicts(vault: Path) -> list[dict]:
@@ -496,10 +577,21 @@ def remove_conflict(vault: Path, entry: dict, *, locked: bool = False) -> None:
     atomic_write(path, "\n".join(kept) + ("\n" if kept else ""))
 
 
-def record_adjudication(vault: Path, entry: dict, decision: str, *, locked: bool = False) -> None:
+def record_adjudication(
+    vault: Path, entry: dict, decision: str, why: str = "", *, locked: bool = False
+) -> None:
+    """Append one settlement to the history log, with its reason when given.
+
+    The log has two readers: `promoter._adjudicated_facts` (which needs the new
+    fact on one parseable line) and a person asking "why was this decided?". So
+    the verdict stays a single `｜新：…｜旧：…` line, and the reason — free text,
+    possibly long — goes underneath as an indented continuation. Read back, the
+    continuation carries no `｜新：` and is skipped, which is exactly right: it
+    is justification, not another fact to honour.
+    """
     if not locked:
         with file_lock(vault):
-            record_adjudication(vault, entry, decision, locked=True)
+            record_adjudication(vault, entry, decision, why, locked=True)
         return
     path = situation_dir(vault) / ADJUDICATED_FILE
     if not path.exists():
@@ -509,5 +601,9 @@ def record_adjudication(vault: Path, entry: dict, decision: str, *, locked: bool
             "> 裁决记录（decision ∈ 用新 / 保留旧 / 并存 / 跳过）。\n\n",
         )
     stamp = time.strftime("%Y-%m-%d %H:%M")
+    written = f"- {stamp}｜裁决：{decision}｜新：{entry.get('新', '')}｜旧：{entry.get('旧', '')}\n"
     with open(path, "a", encoding="utf-8") as fh:
-        fh.write(f"- {stamp}｜裁决：{decision}｜新：{entry.get('新', '')}｜旧：{entry.get('旧', '')}\n")
+        fh.write(written)
+        note = " ".join(str(why or "").split())
+        if note:
+            fh.write(f"  理由：{note}\n")

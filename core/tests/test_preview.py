@@ -204,6 +204,71 @@ class PreviewViewTest(unittest.TestCase):
 
         self.assertEqual(data["count"], 0)
 
+    def test_a_row_nobody_has_advised_on_carries_no_advice(self):
+        # Null, not `{choice: "", why: ""}`: the panel draws the advice block
+        # when it has something to say, and an empty object would make every
+        # row claim an agent had looked at it.
+        from unified_memory.conflict import append_conflict
+
+        append_conflict(self.vault, "端口是 9090", "端口是 8080", "a.md", "env")
+
+        item = preview.build(self.vault, "conflicts", 10)["items"][0]
+        self.assertIsNone(item["detail"]["advice"])
+
+    def test_an_advised_row_carries_the_recommendation_to_the_panel(self):
+        # This is the payload the row is rendered from: without it the panel can
+        # only show the same two undifferentiated lines that made the queue
+        # unreadable in the first place.
+        from unified_memory.conflict import read_conflicts, record_advice
+
+        self._conflict_file().write_text(
+            "# 事实冲突待裁决队列\n\n---\n"
+            "## 2026-10-19 03:01 冲突 #20261019030125-1\n"
+            "- 状态：[待裁决]\n"
+            "- 新提交：备份目录已迁移到 D:\\backups\n"
+            "- 来源：[[Hermes会话自动归档/2026-10-18]]\n"
+            "- 既有：- 备份目录是 C:\\backups（写入 2026-10-16）\n"
+            "- 所在：50-Agent-Context\\常用路径与环境.md\n",
+            encoding="utf-8",
+        )
+        record_advice(
+            self.vault, read_conflicts(self.vault)[0], "并存",
+            "旧的说的是一个备份文件，新说的是存放副本的目录，两者不冲突。",
+        )
+
+        item = preview.build(self.vault, "conflicts", 10)["items"][0]
+
+        self.assertEqual(item["detail"]["advice"], {
+            "choice": "并存",
+            "why": "旧的说的是一个备份文件，新说的是存放副本的目录，两者不冲突。",
+        })
+        # Advising must not re-key or re-target the row: the panel's buttons
+        # send this key back, and the decision writes to this note.
+        self.assertEqual(item["key"], "20261019030125-1")
+        self.assertEqual(item["doc"], "50-Agent-Context\\常用路径与环境.md")
+
+    def test_the_advice_reason_is_redacted_like_every_other_vault_string(self):
+        # The reason is free text an agent wrote from vault content, so it can
+        # quote a key it happened to read. Every other string on this row goes
+        # through redact; the newest one does not get to skip it.
+        from unified_memory.conflict import read_conflicts, record_advice
+
+        self._conflict_file().write_text(
+            "## 2026-10-19 03:01 冲突 #20261019030125-1\n"
+            "- 新提交：端口是 9090\n"
+            "- 既有：端口是 8080\n",
+            encoding="utf-8",
+        )
+        record_advice(
+            self.vault, read_conflicts(self.vault)[0], "用新",
+            "旧行里带着 api_key: sk-abcdefghijklmnopqrstuvwxyz012345，那是过期的那个。",
+        )
+
+        why = preview.build(self.vault, "conflicts", 10)["items"][0]["detail"]["advice"]["why"]
+
+        self.assertIn("<REDACTED>", why)
+        self.assertNotIn("sk-abcdefghijklmnopqrstuvwxyz012345", why)
+
     def test_other_views_are_always_ok(self):
         for view in ("pending", "conflicts", "forgetting", "recent"):
             data = preview.build(self.vault, view, 10)

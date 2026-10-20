@@ -649,7 +649,59 @@ def cmd_accept_cli(args: argparse.Namespace) -> None:
         print(text)
 
 
-def cmd_decide(vault: str, key: str, choice: str, as_json: bool = False) -> str:
+def cmd_advise(vault: str, key: str, choice: str, why: str, as_json: bool = False) -> str:
+    """Attach a recommendation to a conflict the agent could not settle.
+
+    The counterpart of `decide` for the honest dead end. Handing the person the
+    same two lines the agent has just failed to separate is what made the queue
+    unreadable; this writes the recommendation and its plain-language reason
+    into the entry so the panel can show them above the buttons.
+
+    Restricted to the three rulings that mean something as a recommendation:
+    `跳过` is a way to defer, not advice about which side is true.
+    """
+    from . import conflict as conflict_mod
+    from . import promoter as promoter_mod
+
+    entry = conflict_mod.find_conflict(Path(vault), key)
+    if entry is None:
+        result = {"ok": False, "reason": "not-found", "key": key, "choice": choice}
+    elif choice not in promoter_mod.ADVISABLE:
+        result = {"ok": False, "reason": "unknown-choice", "key": key, "choice": choice,
+                  "allowed": list(promoter_mod.ADVISABLE)}
+    else:
+        wrote = conflict_mod.record_advice(Path(vault), entry, choice, why)
+        result = {
+            "ok": wrote,
+            "reason": None if wrote else "not-found",
+            "key": key, "choice": choice, "why": why,
+        }
+
+    if as_json:
+        # Same envelope rule as everywhere else: a business refusal exits 0,
+        # because runCore discards stdout from a failed subprocess and the panel
+        # needs `data.reason` to explain itself.
+        return json.dumps({"ok": result["ok"], "command": "advise", "data": result},
+                          ensure_ascii=False)
+    if result["ok"]:
+        return f"{key}: advised {choice}"
+    print(f"advise: {result['reason']}", file=sys.stderr)
+    return ""
+
+
+def cmd_advise_cli(args: argparse.Namespace) -> None:
+    """CLI adapter for cmd_advise: resolves the vault and prints the result."""
+    vault = resolve_vault()
+    ensure_vault(vault)
+    text = cmd_advise(
+        vault=str(vault), key=args.key, choice=args.choice,
+        why=args.why, as_json=args.json,
+    )
+    if text:
+        print(text)
+
+
+def cmd_decide(vault: str, key: str, choice: str, as_json: bool = False, why: str = "") -> str:
     """Resolve ONE pending conflict: 用新 / 保留旧 / 并存 / 跳过.
 
     `key` is `conflict.entry_key` — the stamp the human block format carries, or
@@ -660,6 +712,10 @@ def cmd_decide(vault: str, key: str, choice: str, as_json: bool = False) -> str:
     `reason` in a normal envelope: `not-found` means someone else already ruled
     (or the file was edited by hand), `unknown-choice` means the client sent a
     word this build does not implement.
+
+    `why` is optional and only ever lands in the history log. An agent that
+    decides on someone's behalf should say why in the same breath; a bare verdict
+    in `事实冲突已裁决.md` is unreadable a month later.
     """
     from . import conflict as conflict_mod
     from . import promoter as promoter_mod  # lazy: keeps `import memory` cheap
@@ -672,7 +728,7 @@ def cmd_decide(vault: str, key: str, choice: str, as_json: bool = False) -> str:
         result = {"ok": False, "reason": "unknown-choice", "key": key, "choice": choice,
                   "applied": False, "target": None}
     else:
-        result = promoter_mod.decide(Path(vault), entry, choice)
+        result = promoter_mod.decide(Path(vault), entry, choice, why=why)
         result["key"] = key
 
     if as_json:
@@ -689,7 +745,10 @@ def cmd_decide_cli(args: argparse.Namespace) -> None:
     """CLI adapter for cmd_decide: resolves the vault and prints the result."""
     vault = resolve_vault()
     ensure_vault(vault)
-    text = cmd_decide(vault=str(vault), key=args.key, choice=args.choice, as_json=args.json)
+    text = cmd_decide(
+        vault=str(vault), key=args.key, choice=args.choice,
+        as_json=args.json, why=getattr(args, "why", "") or "",
+    )
     if text:
         print(text)
 
@@ -1021,7 +1080,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_decide.add_argument("key")
     p_decide.add_argument("choice")
     p_decide.add_argument("--json", action="store_true", help="emit a machine-readable JSON envelope")
+    p_decide.add_argument("--why", default="", help="why this ruling is right; written to the history log")
     p_decide.set_defaults(fn=cmd_decide_cli)
+
+    # The agent's half of the queue: it read both sides and could not decide.
+    # Writing the recommendation down (with its reason) is what lets the panel
+    # ask a question the reader can actually answer.
+    p_advise = sub.add_parser("advise", help="attach a recommendation to a conflict you cannot settle")
+    p_advise.add_argument("key")
+    p_advise.add_argument("choice", help=" / ".join(("用新", "保留旧", "并存")))
+    p_advise.add_argument("--why", required=True, help="the reason, in plain language")
+    p_advise.add_argument("--json", action="store_true", help="emit a machine-readable JSON envelope")
+    p_advise.set_defaults(fn=cmd_advise_cli)
 
     p_stats = sub.add_parser("stats", help="read-only aggregates for the memory console")
     p_stats.add_argument("--json", action="store_true", help="emit the JSON envelope")

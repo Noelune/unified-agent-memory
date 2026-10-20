@@ -29,12 +29,16 @@ from unified_memory.common import (
     situation_dir,
 )
 from unified_memory.conflict import (
+    ADVICE_CHOICE,
+    ADVICE_WHY,
     append_conflict,
     classify_against,
     describe,
     entry_key,
     find_conflict,
     read_conflicts,
+    record_adjudication,
+    record_advice,
     remove_conflict,
     same_subject,
     split_change,
@@ -270,6 +274,192 @@ class ConflictFormatTest(unittest.TestCase):
         )
 
         self.assertIn("端口是 8080", promoter._adjudicated_facts(self.vault))
+
+
+class AdviceTest(unittest.TestCase):
+    """An agent that cannot settle a conflict still owes the person a reason.
+
+    The queue exists for the rows nobody could decide mechanically. Handing the
+    same two near-identical lines back is what made it unreadable: the reader
+    gets no closer to an answer than the machine did. So the recommendation and
+    its plain-language reason are written into the entry itself, where the panel
+    can show them above the buttons.
+
+    The two constraints that make it safe: advising must not disturb anything
+    else in the entry (it is still pending, still points at the same note, still
+    compares equal for de-duplication), and advising twice must not pile up.
+    """
+
+    JSON_LINE = (
+        '- [ ] 冲突 {"新":"端口是 9090","旧":"- 端口是 8080（写入 2026-10-16）",'
+        '"来源":"Agent提交区/x.md","目标":"50-Agent-Context\\\\常用路径与环境.md"}\n'
+    )
+    LEGACY_LINE = (
+        "- [ ] 冲突 ｜新：端口是 9090｜旧：- 端口是 8080（写入 2026-10-16）"
+        "｜来源：Agent提交区/x.md\n"
+    )
+
+    def setUp(self):
+        self.vault = make_scratch_vault()
+        self.queue = situation_dir(self.vault) / CONFLICT_FILE
+
+    def tearDown(self):
+        destroy_scratch(self.vault)
+
+    def _advice_of(self, key: str) -> tuple[str, str]:
+        entry = find_conflict(self.vault, key)
+        self.assertIsNotNone(entry, "the entry must still be in the queue")
+        return entry.get(ADVICE_CHOICE, ""), entry.get(ADVICE_WHY, "")
+
+    # ── the block shape ────────────────────────────────────────────
+
+    def test_a_block_carries_the_recommendation_under_its_own_fields(self):
+        self.queue.write_text(BLOCK, encoding="utf-8")
+        entry = read_conflicts(self.vault)[0]
+
+        self.assertTrue(record_advice(self.vault, entry, "并存", "一个指目录，一个指文件，不冲突。"))
+
+        choice, why = self._advice_of(entry_key(entry))
+        self.assertEqual(choice, "并存")
+        self.assertEqual(why, "一个指目录，一个指文件，不冲突。")
+
+    def test_advising_twice_leaves_one_recommendation(self):
+        # The entry is rewritten in place, so a second pass must replace the
+        # first pair of lines rather than append a third and fourth. Otherwise
+        # the row grows a different answer every time an agent looks at it.
+        self.queue.write_text(BLOCK, encoding="utf-8")
+        entry = read_conflicts(self.vault)[0]
+
+        record_advice(self.vault, entry, "并存", "第一次。")
+        record_advice(self.vault, find_conflict(self.vault, entry_key(entry)), "用新", "第二次。")
+
+        text = read_maybe(self.queue)
+        self.assertEqual(text.count("- 建议："), 1)
+        self.assertEqual(text.count("- 解释："), 1)
+        self.assertEqual(self._advice_of(entry_key(entry)), ("用新", "第二次。"))
+
+    def test_advice_does_not_touch_what_the_entry_is_about(self):
+        # Same fact, same source, same target note, still pending — and still
+        # the same conflict as far as de-duplication is concerned, or the next
+        # pass re-queues it as new.
+        self.queue.write_text(BLOCK, encoding="utf-8")
+        before = read_conflicts(self.vault)[0]
+
+        record_advice(self.vault, before, "并存", "理由。")
+        after = find_conflict(self.vault, entry_key(before))
+
+        self.assertEqual(after["新"], before["新"])
+        self.assertEqual(after["旧"], before["旧"])
+        self.assertEqual(after["来源"], before["来源"])
+        self.assertEqual(after["目标"], before["目标"])
+        append_conflict(self.vault, before["新"], before["旧"], before["来源"], before["目标"])
+        self.assertEqual(len(read_conflicts(self.vault)), 1, "an advised entry is still the same conflict")
+
+    def test_the_reason_is_collapsed_to_one_line(self):
+        # A block field is one line by construction. A reason with newlines in it
+        # would split the entry in half and the second half would parse as
+        # nothing — silently losing half of what the agent said.
+        self.queue.write_text(BLOCK, encoding="utf-8")
+        entry = read_conflicts(self.vault)[0]
+
+        record_advice(self.vault, entry, "并存", "第一行\n第二行\n\n第三行")
+
+        self.assertEqual(self._advice_of(entry_key(entry))[1], "第一行 第二行 第三行")
+        self.assertEqual(len(read_conflicts(self.vault)), 1)
+
+    # ── the one-line shapes ───────────────────────────────────────
+
+    def test_a_json_entry_keeps_its_fields_and_gains_the_advice(self):
+        self.queue.write_text(self.JSON_LINE, encoding="utf-8")
+        entry = read_conflicts(self.vault)[0]
+
+        self.assertTrue(record_advice(self.vault, entry, "并存", "两条说的是不同端口。"))
+
+        after = find_conflict(self.vault, entry_key(entry))
+        self.assertEqual(after["新"], "端口是 9090")
+        self.assertEqual(after["目标"], "50-Agent-Context\\常用路径与环境.md")
+        self.assertEqual(self._advice_of(entry_key(entry)), ("并存", "两条说的是不同端口。"))
+
+    def test_a_legacy_entry_is_upgraded_rather_than_string_patched(self):
+        # `｜k：v｜` has no escaping, so editing it in place means guessing where
+        # one value ends. Rewriting the line as JSON loses nothing — both shapes
+        # are read — and makes the next read unambiguous.
+        self.queue.write_text(self.LEGACY_LINE, encoding="utf-8")
+        entry = read_conflicts(self.vault)[0]
+        self.assertEqual(entry["format"], "legacy")
+
+        self.assertTrue(record_advice(self.vault, entry, "用新", "9090 是当前值。"))
+
+        after = find_conflict(self.vault, entry_key(entry))
+        self.assertEqual(after["format"], "json")
+        self.assertEqual(after["旧"], "- 端口是 8080（写入 2026-10-16）")
+        self.assertEqual(self._advice_of(entry_key(entry)), ("用新", "9090 是当前值。"))
+
+    def test_advising_a_row_someone_else_already_ruled_is_not_an_error(self):
+        # Not a failure: the answer arrived too late and is simply moot. Raising
+        # here would make a lost race look like a broken command.
+        self.queue.write_text(BLOCK, encoding="utf-8")
+        entry = read_conflicts(self.vault)[0]
+        remove_conflict(self.vault, entry)
+
+        self.assertFalse(record_advice(self.vault, entry, "并存", "晚了。"))
+
+
+class AdjudicationReasonTest(unittest.TestCase):
+    """A verdict without a reason is unreadable a month later.
+
+    The log is read by two audiences with incompatible needs: a parser that
+    wants the decided fact on one line, and a person asking "why". The reason
+    therefore goes underneath as free text — which means the parser has to be
+    able to tell a justification from another fact.
+    """
+
+    def setUp(self):
+        self.vault = make_scratch_vault()
+        self.queue = situation_dir(self.vault) / CONFLICT_FILE
+        self.log = situation_dir(self.vault) / ADJUDICATED_FILE
+
+    def tearDown(self):
+        destroy_scratch(self.vault)
+
+    def test_the_reason_is_written_below_the_verdict_line(self):
+        self.queue.write_text(BLOCK, encoding="utf-8")
+        entry = read_conflicts(self.vault)[0]
+
+        result = promoter.decide(self.vault, entry, "用新", why="9090 是当前值，8080 已停用。")
+
+        self.assertTrue(result["ok"])
+        text = read_maybe(self.log)
+        self.assertIn("｜裁决：用新｜", text)
+        self.assertIn("理由：9090 是当前值，8080 已停用。", text)
+        # The verdict line must stay one parseable line: the reason is a
+        # continuation, not a second fact.
+        verdict = next(line for line in text.splitlines() if "｜裁决：" in line)
+        self.assertNotIn("理由", verdict)
+
+    def test_a_reason_that_quotes_the_log_format_is_not_read_back_as_a_fact(self):
+        # Free text written by an agent, into a file whose other reader parses
+        # `｜新：`. A reason mentioning the format is not far-fetched — an agent
+        # explaining the ruling it just made is exactly the kind of text that
+        # would quote it.
+        self.log.write_text(
+            "# 事实冲突已裁决\n\n"
+            "- 2026-10-20 14:55｜裁决：用新｜新：端口是 9090｜旧：端口是 8080\n"
+            "  理由：旧的记录写的是｜新：端口是 8080｜，那条已经作废。\n",
+            encoding="utf-8",
+        )
+
+        facts = promoter._adjudicated_facts(self.vault)
+
+        self.assertEqual(facts, {"端口是 9090"})
+
+    def test_no_reason_means_no_reason_line(self):
+        self.queue.write_text(BLOCK, encoding="utf-8")
+        entry = read_conflicts(self.vault)[0]
+
+        promoter.decide(self.vault, entry, "用新")
+
+        self.assertNotIn("理由：", read_maybe(self.log))
 
 
 class ConflictReadabilityTest(unittest.TestCase):

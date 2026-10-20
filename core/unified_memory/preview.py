@@ -28,7 +28,14 @@ from .common import (
     canonical_dir,
     redact,
 )
-from .conflict import describe, entry_key, read_conflicts, split_change
+from .conflict import (
+    ADVICE_CHOICE,
+    ADVICE_WHY,
+    describe,
+    entry_key,
+    read_conflicts,
+    split_change,
+)
 
 VIEWS = ("pending", "conflicts", "forgetting", "recent")
 
@@ -125,10 +132,25 @@ def _conflicts(vault: Path, limit: int) -> list[dict]:
                     "new": new_side,
                     "old": old_side,
                     "change": split_change(new_side["text"], old_side["text"]),
+                    "advice": _advice(entry),
                 },
             }
         )
     return rows
+
+
+def _advice(entry: dict) -> dict | None:
+    """The recommendation an agent attached, if it attached one.
+
+    Null rather than an empty object: the panel draws the advice block only when
+    it has something to say, and `{choice: "", why: ""}` would make every row
+    claim an agent had looked at it.
+    """
+    choice = redact(str(entry.get(ADVICE_CHOICE, ""))).strip()
+    why = redact(str(entry.get(ADVICE_WHY, ""))).strip()
+    if not choice and not why:
+        return None
+    return {"choice": choice, "why": why}
 
 
 def _note_name(raw: str) -> str:

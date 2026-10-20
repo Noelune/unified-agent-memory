@@ -256,6 +256,13 @@ def _adjudicated_facts(vault: Path) -> set[str]:
     facts: set[str] = set()
     for raw in read_maybe(path).splitlines():
         line = raw.strip()
+        # Both shapes are bullets. Requiring the bullet matters because the
+        # reason for a verdict is now appended underneath it as free text, and
+        # `record_adjudication` only guarantees the verdict line is parseable —
+        # a reason that happens to quote `｜新：` would otherwise be read back as
+        # a fact that was never ruled on, and re-queued as new.
+        if not line.startswith("-"):
+            continue
         new = ""
         if "｜新：" in line:
             new = line.split("｜新：", 1)[1].split("｜旧：", 1)[0].strip()
@@ -658,6 +665,11 @@ def _resolve_target(vault: Path, entry: dict) -> Path:
 # The four decisions, and what each one does to memory.
 DECISIONS = ("用新", "保留旧", "并存", "跳过")
 
+# The three that mean something as a RECOMMENDATION. `跳过` is a way to defer a
+# row, not a claim about which side is true, so an agent advising it would be
+# saying nothing — `advise` refuses it.
+ADVISABLE = ("用新", "保留旧", "并存")
+
 # The label a person reads. The panel offers the first three as buttons;
 # `跳过` has no button, because a queue you can defer row by row never empties
 # — the entry simply stays and comes back on the next read.
@@ -690,7 +702,7 @@ def _comparable(text: str) -> str:
         out = trimmed
 
 
-def decide(vault: Path, entry: dict, choice: str) -> dict:
+def decide(vault: Path, entry: dict, choice: str, why: str = "") -> dict:
     """Resolve ONE pending conflict.
 
     The single-decision API behind both the interactive CLI and the panel's
@@ -699,6 +711,12 @@ def decide(vault: Path, entry: dict, choice: str) -> dict:
     write and the dequeue happen under ONE lock, so another process never
     observes the conflict as half-resolved (recorded but still queued, or
     dequeued but not applied).
+
+    `why` is the reason, in the decider's own words. It lands in the
+    adjudication log beside the verdict, because a log of bare verdicts cannot
+    be reviewed: six months later `并存` with no reason is indistinguishable
+    from `并存` by accident, and the next reader has to redo the analysis to
+    find out whether it was ever right.
 
     Refuses an unknown choice rather than defaulting to 跳过. The CLI's
     `input()` treats a typo as "skip", which is recoverable when a person is
@@ -737,7 +755,7 @@ def decide(vault: Path, entry: dict, choice: str) -> dict:
                     [f"- {new}{write_stamp(entry.get('来源', 'inbox'))}"],
                 )
             atomic_write(target, existing)
-            record_adjudication(vault, entry, choice, locked=True)
+            record_adjudication(vault, entry, choice, why=why, locked=True)
             remove_conflict(vault, entry, locked=True)
         return {
             "ok": True, "reason": None, "choice": choice, "applied": True,
@@ -747,7 +765,7 @@ def decide(vault: Path, entry: dict, choice: str) -> dict:
     # 保留旧 and 跳过: do not touch canonical; record and dequeue together so
     # another process cannot observe a half-resolved conflict.
     with file_lock(vault):
-        record_adjudication(vault, entry, choice, locked=True)
+        record_adjudication(vault, entry, choice, why=why, locked=True)
         remove_conflict(vault, entry, locked=True)
     return {"ok": True, "reason": None, "choice": choice, "applied": False,
             "target": None}
