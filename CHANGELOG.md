@@ -4,6 +4,68 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.8.2] — 2026-10-20
+
+这一版没有新功能，全部来自一次外部审计：对方拿真实会话把插件跑了一遍，逐条列出
+「看起来没生效」的地方。逐条在隔离 vault 里复现之后，一条不成立（测试方用了不存在的
+旧语法，见文末），其余属实或已在此前版本修好；下面 6 类是本轮修掉的真缺陷。
+
+### Fixed — 工具失败时，Agent 看到的是一块空白
+
+`runCore()` 失败时返回 `{ok:false, output:'', error:'…'}`，而 `renderText()` 只读
+`output`。于是核心崩了、Python 找不到、vault 没初始化——**所有**失败在会话里都显示成
+一个空的文本块：工具看起来「没什么可说」，实际是「说不出来」。现在 `output` 为空时回落
+到 `error`，两者都有时仍以 `output` 为准（doctor 路由靠 `keepOutputOnFailure` 保留
+stdout，不能被错误信息盖掉）。
+
+### Fixed — 读路由没有 `Host` 围栏，DNS rebinding 能读走整个记忆库
+
+`guard()` 只校验 `remoteAddress` 是 loopback，`Host` 围栏只写在 `guardWrite()` 里。
+`curl -H "Host: evil.com" http://127.0.0.1:12608/api/…/status` 返回 200 —— 与正常请求
+唯一的区别是 `Host`，而读路由回传的是**本机绝对路径与笔记正文**。exact 路由在宿主
+`match()` 里先于 `/api` 前缀命中，因此宿主那层鉴权根本轮不到。
+
+围栏下沉到 `guard()`，`guardWrite()` 删掉自己那份拷贝（两份各写一次，正是它们会漂移的
+原因）；顺序固定为 loopback → method → Host，错动词仍拿到准确的 405。本地 `curl` 发的是
+`Host: 127.0.0.1:3081`，围栏对本机工具零成本——旧注释担心的「影响本机读取」从未存在。
+
+### Fixed — 文本形态的拒绝退出了 0，脚本据此以为写入成功了
+
+`dismiss` / `accept` / `advise` / `decide` 拒绝时把原因写到 stderr，然后**正常返回**：
+`memory dismiss nope.md` 打印 `dismiss: not-found` 并 `EXIT=0`，而同样情形的 `note`
+早已 `EXIT=1`。四个适配器补上同一句 `if not text and not args.json: sys.exit(1)`。
+`--json` 形态**刻意不动**：`runCore` 会丢弃失败子进程的 stdout，面板只能从正常信封的
+`data.reason` 读到原因。
+
+### Fixed — `show` 拒收 vault 自己就在用的写法
+
+`上下文索引.md` 按 Obsidian 的方式链接 `[[我的偏好摘要]]`，而 `memory show 我的偏好摘要`
+返回 `invalid document name`。vault 只写这一种拼法，用户照抄必然失败。现在 `note_named()`
+在解析前补 `.md`（补，从不剥），TS 侧 `validateDocId` 同步接受无后缀单段名；判定拒绝
+原因时也改用归一化后的名字，否则一个「存在性」问题会被报成「格式」问题。
+
+### Fixed — 「用新」把旧事实删了，而不是搬进 `## 已取代`
+
+`promote` 一直把被取代的行挪进 `## 已取代`，`decide` 的 `用新` 分支却整行删掉 —— 同一件
+事两个写入者两种语义，于是笔记宣称旧值从未存在过，唯一痕迹只剩裁决日志。现在两个工作区
+共用一个 `move_to_superseded(text, matches)`：`decide` 退休而非删除。
+
+### Fixed — 裁决完的提交永远留在收件箱，`doctor` 一直把它算成待办
+
+`decide` 只出队、不归档；`archive_sources` 原本只在 `apply_pending` / `accept` /
+`auto_promote` 里调用。冲突已经判完，`Agent提交区/` 里那份提交还在，`doctor` 继续计入
+`inboxPending` —— 面板说队列清了，计数说没清。
+
+新增 `archive_settled_source()`，只在**这份提交的每一条事实都已进裁决日志**时才归档：
+一次裁决只判一条冲突，文件里若还有没人判的事实，归档就等于静默丢弃。判据之外一律原样
+留着，最坏情况退回旧行为，而不是吞掉提交。
+
+### 审计里不成立的 1 条
+
+`preview --view conflicts` 报 `unrecognized arguments`：全仓库（源码、文档、历史
+CHANGELOG）搜 `--view` 零命中，视图一直是位置参数 `preview conflicts`。测试方用的是
+不存在的旧语法，不改。
+
 ## [0.8.1] — 2026-10-20
 
 ### Added — 判不了就写清理由，别把问题原样扔回来
