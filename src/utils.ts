@@ -27,8 +27,27 @@ export const TIMEOUT_MS = 25000
 /** Defined built-in document short-ids for memory_show. */
 const BUILTIN_DOCS = /^(index|prefs|env|rules|tools|ui|coord)$/
 
-/** Pattern for valid *.md note filenames (no path separators). */
-const NOTE_FILE = /^[^/\\]+\.md$/i
+/**
+ * A single path segment with no suffix requirement.
+ *
+ * `*.md` is still the canonical spelling, but the vault links its own notes the
+ * way Obsidian does — `[[我的偏好摘要]]`, no suffix — so a name copied out of
+ * `上下文索引.md` has none. Refusing it here rejected the one spelling the vault
+ * itself uses, before the core (which now adds the suffix) ever saw it. Path
+ * separators and `..` are still refused: that is the traversal gate, not a
+ * formatting preference.
+ */
+const NOTE_SEGMENT = /^[^/\\]+$/
+
+/** True for a name the core may resolve as a note under 50-Agent-Context. */
+function isNoteName(doc: string): boolean {
+  if (!NOTE_SEGMENT.test(doc) || doc.includes('..')) return false
+  const dot = doc.lastIndexOf('.')
+  // No extension at all: the `[[名字]]` spelling the vault links with. A name
+  // that does carry one must be `.md` — `notes.txt` is a different kind of
+  // mistake and still deserves the local refusal.
+  return dot < 0 || doc.toLowerCase().endsWith('.md')
+}
 
 /**
  * Coerce a config/env value to a boolean.
@@ -240,18 +259,18 @@ export function checkVaultHealth(cfg: PluginConfig): string | null {
 /**
  * Validate a memory_show document identifier.
  *
- * Accepts built-in short ids (index, prefs, env, rules, tools, ui, coord)
- * or a simple "*.md" filename (no path separators allowed).
+ * Accepts built-in short ids (index, prefs, env, rules, tools, ui, coord) or a
+ * single note name (no path separators), with or without the `.md` suffix.
  */
 export function validateDocId(doc: string): { valid: true } | { valid: false; error: string } {
-  if (BUILTIN_DOCS.test(doc) || NOTE_FILE.test(doc)) {
+  if (BUILTIN_DOCS.test(doc) || isNoteName(doc)) {
     return { valid: true }
   }
   return {
     valid: false,
     error:
       `unknown document "${doc}" — choose from index, prefs, env, rules, ` +
-      'tools, ui, coord, or a *.md note under 50-Agent-Context',
+      'tools, ui, coord, or a note name under 50-Agent-Context',
   }
 }
 
@@ -444,12 +463,32 @@ export function runCore(
 
 /**
  * Render a tool result as DSH text content block.
+ *
+ * `error` is the fallback, and it is the whole reason this function is not a
+ * one-liner. `runCore` answers a failed subprocess with `output: ''` plus the
+ * diagnostics in `error`; reading `output` alone rendered that as an empty text
+ * block, so every core failure reached the model as *nothing at all* — "no such
+ * memory" and "the Python core crashed" looked identical. The fallback fires
+ * only when `output` carries nothing: a result that has both (the doctor route
+ * keeps stdout on failure) must still render the payload, because the panel
+ * parses it as JSON.
  */
 export function renderText(
   _args: unknown,
-  value: { output?: string } | string,
+  value: { output?: string; error?: string } | string,
 ): Array<{ type: 'text'; text: string }> {
-  return [{ type: 'text', text: String(typeof value === 'object' ? value.output ?? value : value) }]
+  if (typeof value !== 'object' || value === null) {
+    return [{ type: 'text', text: String(value) }]
+  }
+  const output = typeof value.output === 'string' ? value.output : undefined
+  if (output !== undefined && output.trim() !== '') {
+    return [{ type: 'text', text: output }]
+  }
+  const error = typeof value.error === 'string' ? value.error : undefined
+  if (error !== undefined && error.trim() !== '') {
+    return [{ type: 'text', text: error }]
+  }
+  return [{ type: 'text', text: output ?? String(value) }]
 }
 
 // ── Degraded mode ───────────────────────────────────────────────────

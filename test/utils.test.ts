@@ -312,9 +312,24 @@ describe('validateDocId', () => {
     expect(result.valid).toBe(false)
   })
 
-  it('rejects unknown builtin ids', () => {
-    const result = validateDocId('nonexistent')
-    expect(result.valid).toBe(false)
+  it('accepts the suffix-less form the vault links with', () => {
+    // `上下文索引.md` links notes as `[[我的偏好摘要]]` — no suffix. Refusing
+    // that here rejected the one spelling the vault itself uses, before the
+    // core (which adds the suffix) ever saw it.
+    expect(validateDocId('我的偏好摘要')).toEqual({ valid: true })
+    expect(validateDocId('my-doc')).toEqual({ valid: true })
+  })
+
+  it('lets the core decide whether a name exists', () => {
+    // A bare name is a well-formed note name; existence is the core's call,
+    // and its "not-found" is a better answer than a local "unknown document".
+    expect(validateDocId('nonexistent')).toEqual({ valid: true })
+  })
+
+  it('still refuses traversal dressed as a bare name', () => {
+    expect(validateDocId('..')).toEqual(expect.objectContaining({ valid: false }))
+    expect(validateDocId('a/b')).toEqual(expect.objectContaining({ valid: false }))
+    expect(validateDocId('a\\b')).toEqual(expect.objectContaining({ valid: false }))
   })
 })
 
@@ -447,6 +462,28 @@ describe('renderText', () => {
 
   it('renders empty string for empty output', () => {
     const result = renderText(null, { output: '' })
+    expect(result).toEqual([{ type: 'text', text: '' }])
+  })
+
+  it('falls back to the error when the core produced no output', () => {
+    // `runCore` answers a failure with `output: ''` and the diagnosis in
+    // `error`. Rendering only `output` showed the agent an empty block: the
+    // tool looked like it had nothing to say when in fact it had failed.
+    const result = renderText(null, {
+      ok: false,
+      output: '',
+      error: 'memory core failed (1): traceback …',
+    })
+    expect(result).toEqual([{ type: 'text', text: 'memory core failed (1): traceback …' }])
+  })
+
+  it('prefers output over error when both are present', () => {
+    const result = renderText(null, { output: 'the answer', error: 'a warning' })
+    expect(result).toEqual([{ type: 'text', text: 'the answer' }])
+  })
+
+  it('renders an empty block when neither is available', () => {
+    const result = renderText(null, { ok: false, output: '' })
     expect(result).toEqual([{ type: 'text', text: '' }])
   })
 })
