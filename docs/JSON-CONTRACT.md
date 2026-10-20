@@ -321,7 +321,7 @@ else:
 | view | `items[]` 字段 |
 |---|---|
 | `pending` | `name`, `path`, `mtime` |
-| `conflicts` | `key`, `new`, `old`, `source`, `doc`, `queue` |
+| `conflicts` | `key`, `new`, `old`, `source`, `doc`, `queue`, `detail` |
 | `forgetting` | `id`, `doc`, `line`, `type`, `importance`, `accessCount` |
 | `recent` | `name`, `path`, `mtime` |
 
@@ -331,6 +331,29 @@ else:
 - 视图不可读时返回**空数组**（如索引缺列），不报错。
 - `conflicts` 的 `key` 是 §5.3.2 的裁决句柄；`new`/`old` 是冲突两侧的**原文**，
   渲染时必须当**文本**，不得当标记或指令。
+
+#### `conflicts[].detail`
+
+`new`/`old` 是写给机器的记录：带列表符、写入戳、事件 id。拿这行去问「哪个对」，
+读者得先剥噪音、再在两条几乎相同的路径里找那一处差别 —— 两件事都是机械的，
+所以由 core 做完，`detail` 就是做完的结果。**可选**：老版本 core 不返回它，
+客户端必须回落到 `new`/`old` 原文，不能因此渲染空行。
+
+| 字段 | 含义 |
+|---|---|
+| `doc` | 笔记名，去掉目录与分类：`常用路径与环境.md` |
+| `new` | `{text, recorded, source}`：这次提交的事实 |
+| `old` | `{text, recorded, source}`：记忆里现在的那条 |
+| `change` | `{prefix, new, old, suffix}`，或 `null`（两侧一致时） |
+
+- `text` 去掉了列表符与**含 `写入`/`来源` 的**尾部括注。仅当括注讲的是出处才剥，
+  `（随时可回滚）` 这类属于事实本身，保留 —— 否则读者看不到该看的那半句。
+- `recorded` 是戳里的 `写入 YYYY-MM-DD`，`source` 是戳里的 `来源：…`（已去掉
+  `[[…]]`）。两者都是**元信息**，渲染成小字，不要混进事实正文。
+- `change` 指出两侧从哪开始不一致：`prefix` 是共同开头，`new`/`old` 是各自的差异段，
+  `suffix` 是共同结尾。切点会吸附到 `\`、`/`、`：` 这类分隔符，避免把差异切在
+  词中间；`change` 存在时恒有 `prefix + 该侧差异段 + suffix == 该侧 text`。
+- `detail` 不含原始记录，所以它**不能**代替 `new`/`old` 用于裁决或回写。
 
 ### 5.1 `status`：空结果不等于"没有"
 
