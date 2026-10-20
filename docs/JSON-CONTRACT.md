@@ -15,13 +15,16 @@
 | `memory search <query> --remote --json` | **例外：不产出信封**，见 §1.2 / §4.3 |
 | `memory preview <view> --json` | 只读治理视图（§5） |
 | `memory note <name> --json` | 读**一条**提交区条目的正文（§5.2） |
-| `memory dismiss <name> --json` | 把**一条**提交区条目移入 `已处理/`（§5.3；唯一写命令） |
+| `memory dismiss <name> --json` | 把**一条**提交区条目移入 `已处理/`（§5.3） |
+| `memory accept <name> --json` | 把**一条**提交区条目**晋升进记忆**并归档（§5.3.1） |
+| `memory decide <key> <choice> --json` | 裁决**一条**待裁决冲突（§5.3.2） |
 
 另附宿主 HTTP 路由契约（浏览器半边消费）：`buildStatusPayload` 的载荷见 §6，
-`/search`、`/preview`、`/note`、`/dismiss` 五条路由见 §7。
+全部路由见 §7。其中**只有三条会改动 vault**：`/accept`、`/dismiss`、`/decide`。
 
-> **`note` / `dismiss` 的 `name` 来自信任边界之外**（浏览器按钮），因此两者都只接受
-> **提交区内的单个文件名**，不接受路径。`name` 派生的字段是数据，逐条带 `untrusted`。
+> **`note` / `dismiss` / `accept` 的 `name` 与 `decide` 的 `key` 都来自信任边界之外**
+> （浏览器按钮），因此只接受**提交区内的单个文件名**或**冲突队列里的稳定编号**，不接受路径。
+> 派生字段是数据，逐条带 `untrusted`。
 
 ---
 
@@ -36,7 +39,7 @@
 - `ok`：布尔。**不是**「命令是否跑起来」的标志，而是 `data.ok` 的副本（见 §1.1）。
   除 `dismiss` 外，各命令成功恒为 `true`；`dismiss` 在业务拒绝时**仍打印信封且 exit 0**，
   此时外层 `ok` 与 `data.ok` **同为 `false`**（见 §1.1，这是最容易被误用的字段）。
-- `command`：命令名。取值 `"status"`、`"search"`、`"preview"`、`"note"`、`"dismiss"`。
+- `command`：命令名。取值 `"status"`、`"search"`、`"preview"`、`"note"`、`"dismiss"`、`"accept"`、`"decide"`。
 - `data`：命令自有载荷，见下。
 - 输出为**单行**紧凑 JSON，`ensure_ascii=False`（中文原样输出，不转义为 `\uXXXX`）。
   消费方必须按「读一整行 → 解析」处理，不可假设跨行美化格式。
@@ -318,13 +321,16 @@ else:
 | view | `items[]` 字段 |
 |---|---|
 | `pending` | `name`, `path`, `mtime` |
-| `conflicts` | `id`, `doc`, `line`, `type`, `importance` |
+| `conflicts` | `key`, `new`, `old`, `source`, `doc`, `queue` |
 | `forgetting` | `id`, `doc`, `line`, `type`, `importance`, `accessCount` |
 | `recent` | `name`, `path`, `mtime` |
 
 - **所有** `items[]` 记录都带 `"untrusted": true`。
-- `path` 为绝对路径（`pending`/`recent` 独有）；`doc` 仅文件名（`conflicts`/`forgetting`）。
+- `path` 为绝对路径（`pending`/`recent` 独有）；`doc` 仅文件名（`forgetting`），
+  或 vault 相对路径（`conflicts` 的 `所在` 字段原样透传）。
 - 视图不可读时返回**空数组**（如索引缺列），不报错。
+- `conflicts` 的 `key` 是 §5.3.2 的裁决句柄；`new`/`old` 是冲突两侧的**原文**，
+  渲染时必须当**文本**，不得当标记或指令。
 
 ### 5.1 `status`：空结果不等于"没有"
 
@@ -334,27 +340,26 @@ else:
 - `"unsupported"`：该视图**结构上无法**回答，`items` 恒为 `[]` 且带 `reason`
   说明原因。消费方**不得**把 `count == 0` 解读为"没有冲突"。
 
-**当前只有 `conflicts` 会返回 `"unsupported"`，且只在空结果时。**
-原因：`conflicts` 查询 `memories.type = 'conflict'`，但该类型**没有任何写入路径**——
-`classify_type()`（`index.py` 75-80 行）只从 `MEMORY_TYPES`（`index.py` 52 行，
-`architecture/preference/pattern/bug/workflow/fact/other`）中取值，且列默认值为
-`'fact'`（`schema.py` 79 行）。`update_memories()` 的 upsert 会用
-`classify_type(bare)` 重算 type（`index.py` 279-286 行），所以手工改写的 `'conflict'`
-行在下一次索引重建时也会被改回原类型。真实 vault 上该视图**恒为空**，
-而"恒空"与"确实没有冲突"在输出上不可区分——这正是必须用 `status` 区分的原因。
+**当前四个视图恒为 `"ok"`。** `conflicts` 过去是唯一的 `unsupported` 产出者：
+它查询 `memories.type = 'conflict'`，而该类型**没有任何写入路径**（`classify_type()`
+只从 `MEMORY_TYPES` 取值，列默认 `'fact'`，且索引重建会把手工改写的 `'conflict'`
+改回去），所以它在真实 vault 上恒为空，只能靠 `status` 声明"我答不了"。
 
-`conflicts` 一旦**读到** `type='conflict'` 的行（仅可能由索引之外的手工写入产生），
-`status` 立即变为 `"ok"` 并正常返回记录。`pending`/`forgetting`/`recent`
-恒为 `"ok"`。
+> **那个做法修的是症状，不是病。** 冲突队列根本不是索引里的行，而是一个 markdown
+> 文件（`情境信息/事实冲突待裁决.md`），由 `conflict.append_conflict()` 和另一个
+> 运行时的梦境晋升**共同写入**。现在 `preview._conflicts()` 直接读那个文件
+> （`conflict.read_conflicts()`），所以 `count == 0` 真的是"没有要裁决的"，视图
+> 也恒为 `"ok"`。`unsupported` 机制本身保留着，留给将来真正答不了的视图。
+
+> **读取必须认两种写法。** 队列里同时存在 core 写的单行 JSON 与人工/其他运行时写的
+> `## … 冲突 #…` 块（§5.3.2）。只认一种时，另一种会被读成 `[]` —— 视图报"没有冲突"，
+> 而冲突就明明白白写在文件里。**解析为空不等于队列为空。**
 
 文本模式（无 `--json`）下，`unsupported` 视图打印
 `view '<view>' is unsupported: <reason>`，**不打印** `no items in view '<view>'`，
 以免与真正的"空视图"混淆。
 
-> 实现：`core/unified_memory/preview.py` 的 `build()` 与
-> `CONFLICTS_UNSUPPORTED_REASON`。
-> 待办：接线冲突检测器（`core/unified_memory/conflict.py`）后，该视图即可产
-> `status: "ok"` 的真实结果；届时移除 `unsupported` 分支。
+> 实现：`core/unified_memory/preview.py` 的 `build()` 与 `_conflicts()`。
 
 ### 5.2 `memory note <name> --json`
 
@@ -427,6 +432,77 @@ else:
 
 > 实现：`core/unified_memory/inbox.py`（`process_inbox_item` / `_unique_target`），
 > 与 promoter 的 `archive_sources` 共用同一把 vault 锁，因此探测与移动对并发归档是原子的。
+
+### 5.3.1 `memory accept <name> --json` — 对一条提交说「是」
+
+`dismiss` 的反面。把**一条**提交里的事实晋升进 canonical 笔记，然后把**这一个**文件移入 `已处理/`。
+
+> **为什么是逐条，而不是 `promoter --apply`**：`--apply` 执行的是**整份**待晋升清单快照，
+> 并把快照背后的**所有**来源文件一并归档。把它接在逐行按钮上，点一行会顺手决定其他行的命运
+> —— 那和「点一条『不采纳』就清空整个收件箱」是同一种谎。
+
+```json
+{"ok": true,  "command": "accept", "data": {"ok": true,  "name": "a.md", "reason": null,          "promoted": 3, "duplicates": 1, "conflicts": 0}}
+{"ok": false, "command": "accept", "data": {"ok": false, "name": "b.md", "reason": "conflicts",     "promoted": 0, "duplicates": 0, "conflicts": 2}}
+```
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `ok` | boolean | 业务成败；外层 `ok` 是它的副本 |
+| `promoted` | number | 真正写进笔记的事实条数 |
+| `duplicates` | number | 记忆里已有、被跳过的条数 |
+| `conflicts` | number | 判为冲突、**未晋升也未归档**的条数 |
+
+`reason` 枚举：`invalid-name` / `not-a-submission` / `not-found`（同 §5.3）以及
+
+| 值 | 含义 |
+|---|---|
+| `conflicts` | 该提交里有事实与记忆冲突。**不晋升、也不归档**：冲突需要人先裁决，把文件移进 `已处理/` 会让「等你裁决」和「已处理」看起来一样。冲突条目此时已进入 §5.3.2 的队列，所以什么都没丢 |
+
+### 5.3.2 `memory decide <key> <choice> --json` — 对一条冲突下判断
+
+`key` 是 `conflict.entry_key()`：块格式里的 `#20261019030125-1`，或 JSON 格式的 16 位内容哈希。
+**不是列表下标** —— 裁决掉一行会让后面每行的下标都变，而那正是旧点击到达的时刻。
+
+`choice` ∈ `用新` / `保留旧` / `并存` / `跳过`（面板**只提供前三个**，见下）。
+
+| choice | 对 canonical 的改动 | 对队列 |
+|---|---|---|
+| `用新` | 删掉旧的那行，追加新的 | 记录裁决并出队 |
+| `保留旧` | 不动 | 记录裁决并出队 |
+| `并存` | 追加新的，旧行保留 | 记录裁决并出队 |
+| `跳过` | 不动 | 记录裁决并出队 |
+
+```json
+{"ok": true,  "command": "decide", "data": {"ok": true,  "key": "20261019030125-1", "choice": "用新", "reason": null,           "applied": true,  "target": "50-Agent-Context/常用路径与环境.md"}}
+{"ok": false, "command": "decide", "data": {"ok": false, "key": "20261019030125-1", "choice": "用新", "reason": "not-found",      "applied": false, "target": null}}
+```
+
+`reason` 枚举：`not-found`（已被裁决或文件被手工改过）/ `unknown-choice` / `unavailable`。
+宿主路由另有一个 `invalid-key`：解析器直接拒掉 key 形状，进程根本没起来。
+
+> **`跳过` 不进宿主路由**（`src/route-decide.ts` 的 `parseDecideBody` 拒收）。它会记录裁决并出队，
+> 而 `_adjudicated_facts` 从此永久压掉这条事实 —— 一个叫「跳过」的按钮会**静默地永久结掉**
+> 用户拒绝回答的问题。CLI 里它是给终端前的人「先不做」用的，语义不同。
+
+**队列有两种写法，读的时候都认**（`core/unified_memory/conflict.py`）：
+
+```
+- [ ] 冲突 {"新":"…","旧":"…","来源":"…","目标":"…"}      ← core 自己写，一行一条
+```
+
+```
+## 2026-10-19 03:01 冲突 #20261019030125-1                 ← 另一个运行时会这样写
+- 状态：[待裁决]
+- 新提交：…
+- 来源：…
+- 既有：…
+- 所在：50-Agent-Context\常用路径与环境.md
+```
+
+> 只认第一种时，第二种写法的队列会被读成 `[]` —— `adjudicate` 打印「no pending conflicts」，
+> 而冲突就明明白白写在文件里。**解析为空不等于队列为空**，这类读取必须两个写法都认。
+> `事实冲突已裁决.md` 也是双写法：`- <stamp>｜裁决：…｜新：…` 与 `- **新提交**：…`。
 
 ---
 
@@ -604,20 +680,19 @@ else:
 
 ## 7. 宿主 HTTP 路由契约
 
-五条路由由插件宿主半边注册（`src/index.ts`，注册顺序 status → search → preview → note → dismiss）。
-**所有响应**（含 4xx/5xx）都带 `cache-control: no-store`。
+路由由插件宿主半边注册（`src/index.ts`）。**所有响应**（含 4xx/5xx）都带 `cache-control: no-store`。
 
 ### 7.1 通用基线（`src/routes.ts` 的 `guard()`）
 
 | 约束 | 行为 |
 |---|---|
 | loopback-only | `req.socket.remoteAddress` 不在 `127.0.0.1` / `::1` / `::ffff:127.0.0.1` 内 → **403** `{"ok":false,"error":"forbidden: loopback-only"}`。**地址缺失视为非 loopback**（fail-closed） |
-| 方法白名单 | 读路由 `GET`/`HEAD`，`dismiss` **仅** `POST`；其余 → **405** `{"ok":false,"error":"method not allowed"}` |
+| 方法白名单 | 读路由 `GET`/`HEAD`；`/accept`、`/dismiss`、`/decide` **仅** `POST`；其余 → **405** `{"ok":false,"error":"method not allowed"}` |
 | `cache-control` | 恒为 `no-store` |
 | 失败降级 | core 不可用一律 `{ok:false}`，**不产生 500**；仅序列化失败（循环引用等）才 500 |
 
-> 写路由 `/dismiss` 在 `guard()` 之上**再加两道校验**：`Host` 必须是本机、且请求同源
-> （`guardWrite`，见 §7.6）；四条读路由**只用** `guard()`，行为未变。
+> 三条写路由（`/accept`、`/dismiss`、`/decide`）在 `guard()` 之上**再加两道校验**：`Host` 必须是本机、
+> 且请求同源（`guardWrite`，见 §7.6）；读路由**只用** `guard()`，行为未变。
 
 ### 7.2 路由总表
 
@@ -629,6 +704,8 @@ else:
 | 4 | GET/HEAD | `/api/dsh-unified-agent-memory/note` | `name`（**必填**，提交区内文件名） | 200 `{ok,name,body,reason,untrusted}` | 缺 `name` → **400**；读不到 → **200** `{ok:true, body:null, reason, untrusted:true}`；core 不可用 → **200** `{ok:false, untrusted:true}` |
 | 5 | **POST** | `/api/dsh-unified-agent-memory/dismiss` | body `{"name":"..."}` | 200 `{ok,name,reason}` | 本地校验拒 → **400**；体超 2048 字节 → **413**；`Host` 非本机或跨站 → **403**；业务拒绝 → **409**；core 不可用 → **409** |
 | 6 | GET/HEAD | `/api/dsh-unified-agent-memory/stats` | — | 200 `{ok,command,status,data}` | 非 loopback → 403；非 GET/HEAD → 405；core 不可用 → **200** `{ok:false,status:'error',data:null}` |
+| 7 | **POST** | `/api/dsh-unified-agent-memory/accept` | body `{"name":"..."}` | 200 `{ok,name,reason,promoted,duplicates,conflicts}` | 本地校验拒 → **400**；体超限 → **413**；跨站 → **403**；业务拒绝 → **409**；core 不可用 → **409** |
+| 8 | **POST** | `/api/dsh-unified-agent-memory/decide` | body `{"key":"...","choice":"用新"\|"保留旧"\|"并存"}` | 200 `{ok,key,choice,reason,applied,target}` | key 形状不合法或 `choice` 不在白名单（含 **`跳过`**）→ **400**；跨站 → **403**；`not-found` / 未知 key → **409** |
 
 **关键区别——降级为 200 还是 4xx，看的是「谁的错」：**
 
