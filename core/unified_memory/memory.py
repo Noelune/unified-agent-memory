@@ -586,7 +586,12 @@ def cmd_note_cli(args: argparse.Namespace) -> None:
 
 
 def cmd_dismiss(vault: str, name: str, as_json: bool = False) -> str:
-    """Retire one inbox item. The only mutating command in the CLI."""
+    """Retire one inbox item without promoting it.
+
+    One of four mutating commands (`dismiss`, `accept`, `decide`, and the
+    promoter's own `--apply`); `dismiss` used to be the only one, which is why
+    the panel treated "no" as the whole vocabulary of the queue.
+    """
     result = inbox_mod.process_inbox_item(vault, name)
     if as_json:
         # Envelope shape and exit-0-on-rejection are contractual: §1.1. The
@@ -607,6 +612,84 @@ def cmd_dismiss_cli(args: argparse.Namespace) -> None:
     vault = resolve_vault()
     ensure_vault(vault)
     text = cmd_dismiss(vault=str(vault), name=args.name, as_json=args.json)
+    if text:
+        print(text)
+
+
+def cmd_accept(vault: str, name: str, as_json: bool = False) -> str:
+    """Promote ONE submission out of the inbox into the canonical notes.
+
+    The positive half of the panel's 待确认 queue. Kept per-file for the same
+    reason `dismiss` is: the queue is a list of independent decisions, and the
+    vault-wide `promoter --apply` would decide the other rows too.
+    """
+    from . import promoter as promoter_mod  # lazy: keeps `import memory` cheap
+
+    result = promoter_mod.accept(Path(vault), name)
+    if as_json:
+        # Same contract as dismiss: exit 0 even on a business refusal, because
+        # runCore discards stdout from a failed subprocess and the panel needs
+        # `data.reason` to say WHY the accept did not happen.
+        return json.dumps(
+            {"ok": result["ok"], "command": "accept", "data": result},
+            ensure_ascii=False,
+        )
+    if result["ok"]:
+        return f"accepted {result['promoted']} fact(s) from {name}"
+    print(f"accept: {result['reason']}", file=sys.stderr)
+    return ""
+
+
+def cmd_accept_cli(args: argparse.Namespace) -> None:
+    """CLI adapter for cmd_accept: resolves the vault and prints the result."""
+    vault = resolve_vault()
+    ensure_vault(vault)
+    text = cmd_accept(vault=str(vault), name=args.name, as_json=args.json)
+    if text:
+        print(text)
+
+
+def cmd_decide(vault: str, key: str, choice: str, as_json: bool = False) -> str:
+    """Resolve ONE pending conflict: 用新 / 保留旧 / 并存 / 跳过.
+
+    `key` is `conflict.entry_key` — the stamp the human block format carries, or
+    a content hash for the JSON shape — never a list index: resolving one row
+    shifts every later one, which is exactly when a stale click arrives.
+
+    Both refusals are business answers rather than faults, so they travel as
+    `reason` in a normal envelope: `not-found` means someone else already ruled
+    (or the file was edited by hand), `unknown-choice` means the client sent a
+    word this build does not implement.
+    """
+    from . import conflict as conflict_mod
+    from . import promoter as promoter_mod  # lazy: keeps `import memory` cheap
+
+    entry = conflict_mod.find_conflict(Path(vault), key)
+    if entry is None:
+        result = {"ok": False, "reason": "not-found", "key": key, "choice": choice,
+                  "applied": False, "target": None}
+    elif choice not in promoter_mod.DECISIONS:
+        result = {"ok": False, "reason": "unknown-choice", "key": key, "choice": choice,
+                  "applied": False, "target": None}
+    else:
+        result = promoter_mod.decide(Path(vault), entry, choice)
+        result["key"] = key
+
+    if as_json:
+        return json.dumps({"ok": result["ok"], "command": "decide", "data": result},
+                          ensure_ascii=False)
+    if result["ok"]:
+        tail = f" -> {result['target']}" if result.get("target") else ""
+        return f"{key}: {choice}{tail}"
+    print(f"decide: {result['reason']}", file=sys.stderr)
+    return ""
+
+
+def cmd_decide_cli(args: argparse.Namespace) -> None:
+    """CLI adapter for cmd_decide: resolves the vault and prints the result."""
+    vault = resolve_vault()
+    ensure_vault(vault)
+    text = cmd_decide(vault=str(vault), key=args.key, choice=args.choice, as_json=args.json)
     if text:
         print(text)
 
@@ -923,6 +1006,22 @@ def build_parser() -> argparse.ArgumentParser:
     p_dismiss.add_argument("name")
     p_dismiss.add_argument("--json", action="store_true", help="emit a machine-readable JSON envelope")
     p_dismiss.set_defaults(fn=cmd_dismiss_cli)
+
+    # The positive counterpart of `dismiss`: promote ONE submission. Separate
+    # from `promoter --apply`, which executes the whole pending list.
+    p_accept = sub.add_parser("accept", help="promote one inbox submission into canonical notes")
+    p_accept.add_argument("name")
+    p_accept.add_argument("--json", action="store_true", help="emit a machine-readable JSON envelope")
+    p_accept.set_defaults(fn=cmd_accept_cli)
+
+    # One conflict, one ruling. The panel's 待确认 page asks 取代 / 保留旧 / 共存
+    # per conflicting fact; `promoter --adjudicate` asks the same questions but
+    # reads from a terminal, so it can never be the surface a button calls.
+    p_decide = sub.add_parser("decide", help="resolve one pending conflict (用新/保留旧/并存/跳过)")
+    p_decide.add_argument("key")
+    p_decide.add_argument("choice")
+    p_decide.add_argument("--json", action="store_true", help="emit a machine-readable JSON envelope")
+    p_decide.set_defaults(fn=cmd_decide_cli)
 
     p_stats = sub.add_parser("stats", help="read-only aggregates for the memory console")
     p_stats.add_argument("--json", action="store_true", help="emit the JSON envelope")

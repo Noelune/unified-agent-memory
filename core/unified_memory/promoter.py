@@ -33,6 +33,7 @@ from .common import (
     CONFLICT_FILE,
     NON_SUBMISSION_FILES,
     PENDING_FILE,
+    SUBMISSION_DIR,
     UNCLASSIFIED_FACT_REL,
     atomic_write,
     canonical_dir,
@@ -120,7 +121,14 @@ def _best_overlap(fact: str, existing: list[str], min_sim: float) -> str | None:
     return best_line if best_sim >= min_sim else None
 
 
-def review(vault: Path, verbose: bool = True) -> dict:
+def review(vault: Path, verbose: bool = True, only: set[str] | None = None) -> dict:
+    """Build the pending list.
+
+    ``only`` restricts the pass to a set of inbox file names. It exists so the
+    panel can accept ONE submission: the queue is a list of independent
+    decisions, and a per-row 收录 that quietly promoted every other row would be
+    the same lie as a per-row 不采纳 that emptied the whole inbox.
+    """
     ensure_vault(vault)
     inbox = canonical_dir(vault) / "Agent提交区"
     if not inbox.is_dir():
@@ -148,6 +156,8 @@ def review(vault: Path, verbose: bool = True) -> dict:
     existing_cache: dict[Path, list[str]] = {}
     for src in sorted(inbox.glob("*.md")):
         if src.name in NON_SUBMISSION_FILES:
+            continue
+        if only is not None and src.name not in only:
             continue
         source_files.add(src.name)
         for fact in fact_lines(src.read_text(encoding="utf-8", errors="replace")):
@@ -229,19 +239,34 @@ def review(vault: Path, verbose: bool = True) -> dict:
 def _adjudicated_facts(vault: Path) -> set[str]:
     """Bare text of every new fact a human has already ruled on.
 
-    Read straight from ``情境信息/事实冲突已裁决.md`` — one line per decision,
-    ``- <stamp>｜裁决：<choice>｜新：<fact>｜旧：<old>``. Unparseable lines are
-    skipped rather than fatal: the file is user-visible and hand-editable.
+    Read straight from ``情境信息/事实冲突已裁决.md``, which is written in two
+    shapes for the same reason the pending queue is (see `conflict.py`):
+
+      core     ``- <stamp>｜裁决：<choice>｜新：<fact>｜旧：<old>``
+      Hermes   ``## <stamp> 裁决 #<n>（…）`` + ``- **新提交**：<fact>``
+
+    Only the first was recognised, so on a vault whose log was written by the
+    other runtime every past decision was invisible — and a conflict the human
+    had already settled came back on the next pass, forever. Unparseable lines
+    are skipped rather than fatal: the file is user-visible and hand-editable.
     """
     path = situation_dir(vault) / ADJUDICATED_FILE
     if not path.is_file():
         return set()
     facts: set[str] = set()
-    for line in read_maybe(path).splitlines():
-        if "｜新：" not in line:
+    for raw in read_maybe(path).splitlines():
+        line = raw.strip()
+        new = ""
+        if "｜新：" in line:
+            new = line.split("｜新：", 1)[1].split("｜旧：", 1)[0].strip()
+        else:
+            # `- 新提交：…` / `- **新提交**：…`
+            match = re.match(r"^-\s*\**\s*新提交\s*\**\s*[：:]\s*(.*)$", line)
+            if match:
+                new = match.group(1).strip()
+        if not new:
             continue
-        new = line.split("｜新：", 1)[1].split("｜旧：", 1)[0].strip()
-        bare = bare_fact_line(f"- {new}") if new else ""
+        bare = bare_fact_line(f"- {new}")
         if bare:
             facts.add(bare)
     return facts
@@ -542,6 +567,48 @@ def apply_pending(vault: Path, verbose: bool = True) -> int:
     return len(promoted)
 
 
+def accept(vault: Path, name: str) -> dict:
+    """Promote ONE submission, and retire only that file.
+
+    The panel's 待确认 queue asks a yes/no question per row, so it needs a yes.
+    `apply_pending` cannot be it: it executes the whole pending-list snapshot and
+    archives every source that produced it, so a per-row button wired to `--apply`
+    would accept the other rows too while looking like it accepted one.
+
+    A submission whose facts conflict with memory is NOT promoted and NOT
+    archived: the conflict needs a human ruling first (adjudicate), and moving
+    the file into 已处理/ would make "waiting for your ruling" indistinguishable
+    from "handled". The conflict entries are still queued, so nothing is lost.
+
+    Returns a result dict rather than raising: every refusal here is a business
+    answer the panel has to render (which file, why), not a crash.
+    """
+    submission = canonical_dir(vault) / SUBMISSION_DIR / name
+    if Path(name).name != name or not name.lower().endswith(".md"):
+        return {"ok": False, "name": name, "reason": "invalid-name",
+                "promoted": 0, "duplicates": 0, "conflicts": 0}
+    if name in NON_SUBMISSION_FILES:
+        return {"ok": False, "name": name, "reason": "not-a-submission",
+                "promoted": 0, "duplicates": 0, "conflicts": 0}
+    if not submission.is_file():
+        return {"ok": False, "name": name, "reason": "not-found",
+                "promoted": 0, "duplicates": 0, "conflicts": 0}
+
+    result = review(vault, verbose=False, only={name})
+    if result["conflicts"]:
+        return {"ok": False, "name": name, "reason": "conflicts",
+                "promoted": 0, "duplicates": result["duplicates"],
+                "conflicts": result["conflicts"]}
+
+    with file_lock(vault):
+        promoted = promote(vault, result["pending"], locked=True)
+        archive_sources(vault, {name}, locked=True)
+    _refresh_index(vault)
+    return {"ok": True, "name": name, "reason": None,
+            "promoted": len(promoted), "duplicates": result["duplicates"],
+            "conflicts": 0}
+
+
 def auto_promote(vault: Path, verbose: bool = True) -> int:
     result = review(vault, verbose=False)
     if result["conflicts"]:
@@ -562,6 +629,130 @@ def auto_promote(vault: Path, verbose: bool = True) -> int:
 # --------------------------------------------------------------------------
 
 
+def _resolve_target(vault: Path, entry: dict) -> Path:
+    """Where a conflict's new fact belongs.
+
+    Three kinds of `目标` travel in these entries because two runtimes write
+    them: a doc id ("env", "tools"), a vault-relative path
+    ("50-Agent-Context\\常用路径与环境.md" — what the human block format
+    carries), or nothing at all. All three must land INSIDE the vault: a path
+    that resolves elsewhere is discarded in favour of classification, because a
+    conflict record is vault text and may be hand-edited. Without this the
+    path-shaped value fell through to 未归类事实.md, so 用新 removed the old
+    line from one note and wrote the new fact into another.
+    """
+    raw = str(entry.get("目标") or "").strip()
+    if raw:
+        if raw in CANONICAL_DOCS:
+            return canonical_path(vault, raw)
+        # The block format is written on Windows (`50-Agent-Context\常用路径
+        # 与环境.md`). Treat `\` as a separator everywhere so the same vault
+        # read on Linux resolves to the same note instead of to a file whose
+        # name contains a backslash.
+        candidate = (Path(vault) / raw.replace("\\", "/")).resolve()
+        if candidate.is_relative_to(Path(vault).resolve()) and candidate.suffix == ".md":
+            return candidate
+    return target_path(vault, classify(str(entry.get("新", ""))))
+
+
+# The four decisions, and what each one does to memory.
+DECISIONS = ("用新", "保留旧", "并存", "跳过")
+
+# The label a person reads. The panel offers the first three as buttons;
+# `跳过` has no button, because a queue you can defer row by row never empties
+# — the entry simply stays and comes back on the next read.
+DECISION_LABELS = {
+    "用新": "取代",
+    "保留旧": "保留旧",
+    "并存": "共存",
+    "跳过": "跳过",
+}
+
+
+_STAMP_TAIL = re.compile(r"（[^（）]*(?:写入|来源)[^（）]*）\s*$")
+
+
+def _comparable(text: str) -> str:
+    """Fact text normalized for identity, tolerating a truncated stamp.
+
+    `bare_fact_line` removes the canonical `（写入 …｜来源：…）` suffix, but a
+    conflict recorded by hand may carry only `（写入 2026-10-16）`, which it
+    leaves alone — so 用新 matched nothing and appended the new fact beside the
+    old one. Dropping a trailing provenance-flavoured parenthetical makes the
+    two sides comparable without eating a real `（备注）` that a fact happens to
+    end with, which would remove the wrong line.
+    """
+    out = bare_fact_line(text)
+    while True:
+        trimmed = _STAMP_TAIL.sub("", out).strip()
+        if trimmed == out or not trimmed:
+            return out
+        out = trimmed
+
+
+def decide(vault: Path, entry: dict, choice: str) -> dict:
+    """Resolve ONE pending conflict.
+
+    The single-decision API behind both the interactive CLI and the panel's
+    buttons, extracted from `adjudicate`'s loop body so the two surfaces cannot
+    drift: a decision means the same thing however it was reached. The canonical
+    write and the dequeue happen under ONE lock, so another process never
+    observes the conflict as half-resolved (recorded but still queued, or
+    dequeued but not applied).
+
+    Refuses an unknown choice rather than defaulting to 跳过. The CLI's
+    `input()` treats a typo as "skip", which is recoverable when a person is
+    watching the prompt; a panel button that silently did nothing would just
+    look broken.
+    """
+    if choice not in DECISIONS:
+        return {"ok": False, "reason": "unknown-choice", "choice": choice,
+                "applied": False, "target": None}
+
+    if choice in ("用新", "并存"):
+        target = _resolve_target(vault, entry)
+        with file_lock(vault):
+            existing = read_maybe(target)
+            # A JSON entry stores `旧` already bare; a hand-written block stores
+            # the whole markdown line, stamp and bullet included. Normalize both
+            # before comparing, or 用新 finds nothing to remove on the block
+            # shape and quietly appends the new fact beside the old one.
+            raw_old = str(entry.get("旧", "")).strip()
+            old = _comparable(raw_old) if raw_old else ""
+            if choice == "用新" and old:
+                lines = existing.splitlines(keepends=True)
+                removed = False
+                retained = []
+                for current in lines:
+                    if not removed and current.lstrip().startswith("-") and _comparable(current) == old:
+                        removed = True
+                        continue
+                    retained.append(current)
+                existing = "".join(retained)
+            new = entry.get("新", "").strip()
+            prior = active_fact_lines(existing)
+            if new and new not in prior:
+                existing = append_active_facts(
+                    existing,
+                    [f"- {new}{write_stamp(entry.get('来源', 'inbox'))}"],
+                )
+            atomic_write(target, existing)
+            record_adjudication(vault, entry, choice, locked=True)
+            remove_conflict(vault, entry, locked=True)
+        return {
+            "ok": True, "reason": None, "choice": choice, "applied": True,
+            "target": str(target.relative_to(vault)) if target.is_relative_to(vault) else str(target),
+        }
+
+    # 保留旧 and 跳过: do not touch canonical; record and dequeue together so
+    # another process cannot observe a half-resolved conflict.
+    with file_lock(vault):
+        record_adjudication(vault, entry, choice, locked=True)
+        remove_conflict(vault, entry, locked=True)
+    return {"ok": True, "reason": None, "choice": choice, "applied": False,
+            "target": None}
+
+
 def adjudicate(vault: Path) -> None:
     conflicts = read_conflicts(vault)
     if not conflicts:
@@ -573,42 +764,14 @@ def adjudicate(vault: Path) -> None:
         print(f"  new: {entry.get('新', '')}")
         print(f"  old: {entry.get('旧', '')}")
         print(f"  src: {entry.get('来源', '')}")
+        if entry.get("目标"):
+            print(f"  doc: {entry.get('目标')}")
         choice = input("decision [用新/保留旧/并存/跳过] (default 跳过): ").strip() or "跳过"
-        if choice not in ("用新", "保留旧", "并存", "跳过"):
-            print(f"  unknown choice {choice!r} — treated as 跳过")
-            choice = "跳过"
-        if choice in ("用新", "并存"):
-            doc_id = entry.get("目标") or classify(entry.get("新", ""))
-            target = canonical_path(vault, doc_id) if doc_id in CANONICAL_DOCS else target_path(vault, doc_id)
-            with file_lock(vault):
-                existing = read_maybe(target)
-                old = entry.get("旧", "").strip()
-                if choice == "用新" and old:
-                    lines = existing.splitlines(keepends=True)
-                    removed = False
-                    retained = []
-                    for current in lines:
-                        if not removed and current.lstrip().startswith("-") and bare_fact_line(current) == old:
-                            removed = True
-                            continue
-                        retained.append(current)
-                    existing = "".join(retained)
-                new = entry.get("新", "").strip()
-                prior = active_fact_lines(existing)
-                if new and new not in prior:
-                    existing = append_active_facts(
-                        existing,
-                        [f"- {new}{write_stamp(entry.get('来源', 'inbox'))}"],
-                    )
-                atomic_write(target, existing)
-                record_adjudication(vault, entry, choice, locked=True)
-                remove_conflict(vault, entry, locked=True)
+        result = decide(vault, entry, choice)
+        if result["ok"]:
             continue
-        # 保留旧 and 跳过: do not touch canonical; record and dequeue together
-        # so another process cannot observe a half-resolved conflict.
-        with file_lock(vault):
-            record_adjudication(vault, entry, choice, locked=True)
-            remove_conflict(vault, entry, locked=True)
+        print(f"  unknown choice {choice!r} — treated as 跳过")
+        decide(vault, entry, "跳过")
     print("\nadjudication recorded in " + str(situation_dir(vault) / ADJUDICATED_FILE))
 
 
