@@ -527,12 +527,12 @@ describe('the pane asks one question', () => {
     expect(CONFLICT_ADVICE_LABEL).toBe('Agent 的判断')
     expect(body).toContain('sides.advice')
     expect(body).toContain('dsh-memory-advicebody')
-    expect(body).toContain(' · Agent 建议')
+    expect(body).toContain('（Agent 建议）')
     // The class has to be CHOSEN by the comparison, not merely computed next to
     // it — a `suggested` that nothing consumes is a highlight that never
     // appears, and the assertion above would still pass (verified by mutation).
     expect(body).toMatch(/className: suggested \? 'dsh-memory-action dsh-memory-action-suggested'/)
-    expect(body).toMatch(/suggested \? c\.label \+ ' · Agent 建议'/)
+    expect(body).toMatch(/suggested \? c\.label \+ '（Agent 建议）'/)
     // Order is the argument: sides first, then the judgement, then the buttons.
     // Advice above the facts would be a verdict before the evidence.
     const adviceAt = body.indexOf('CONFLICT_ADVICE_LABEL')

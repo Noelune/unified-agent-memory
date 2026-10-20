@@ -243,7 +243,7 @@ function Hit(props: {
                   props.path
                     ? h('span', { className: 'dsh-memory-docpath' }, props.path)
                     : null,
-                  props.body || '空文档',
+                  props.body || '（空文档）',
                 ))
       : null,
   )
@@ -390,7 +390,7 @@ function InboxTab(props: { conflicts: ConflictsFeed }): Child {
                       disabled: busy,
                       title: c.hint,
                       onClick: function () { rule(it.key, c.value) },
-                    }, busy ? '处理中…' : (suggested ? c.label + ' · Agent 建议' : c.label))
+                    }, busy ? '处理中…' : (suggested ? c.label + '（Agent 建议）' : c.label))
                   }),
                 ),
                 h('div', { className: 'dsh-memory-rulenote' }, CONFLICT_RULES_NOTE),
@@ -684,7 +684,7 @@ function FindingCard(props: { finding: HealthFinding; repair: RepairApi }): Chil
         : confirming
           ? h('div', { className: 'dsh-memory-confirm' },
               h('p', { className: 'dsh-memory-confirm-target' },
-                '将发送到：一个新会话，不动你正在聊的这个',
+                '将发送到：一个新会话',
               ),
               h('p', { className: 'dsh-memory-confirm-note' },
                 f.agent.mode === 'analyze'
