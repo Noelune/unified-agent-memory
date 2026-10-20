@@ -250,6 +250,109 @@ def find_conflict(vault: Path, key: str) -> dict | None:
     return None
 
 
+# --------------------------------------------------------------------------
+# Making a conflict readable: what each side SAYS, and where it came from
+# --------------------------------------------------------------------------
+#
+# A queued entry is written by an agent, for an agent: a bullet, a stamp and an
+# event id, all in one line. Handing that line to a person and asking "which is
+# right?" is not a question they can answer — the first thing they have to do
+# is strip the noise, and the second is find the one substring that differs in
+# two nearly identical paths. Both are mechanical, so both belong here.
+
+_BULLET = re.compile(r"^\s*[-*+]\s+")
+# A parenthetical is provenance only when it mentions 写入 or 来源. `（随时可回滚）`
+# is part of the fact and must survive: dropping every trailing parenthetical
+# would delete the very clause that tells the reader what the backup is for.
+_PROVENANCE_TAIL = re.compile(r"（[^（）]*(?:写入|来源)[^（）]*）\s*$")
+_RECORDED_AT = re.compile(r"写入\s*([0-9]{4}-[0-9]{2}-[0-9]{2})")
+_SOURCE_IN_STAMP = re.compile(r"来源：\s*([^，）]+)")
+_WIKILINK = re.compile(r"^\[\[(.+?)\]\]$")
+
+
+def describe(text: str) -> dict:
+    """Split one side of a conflict into the fact, when, and from where.
+
+    Returns ``{"text", "recorded", "source"}``. ``text`` never loses a clause
+    that carries meaning: only a trailing parenthetical about 写入/来源 is
+    removed, so `（随时可回滚）` stays attached to the fact it qualifies. When
+    stripping would leave nothing (the line is nothing but a stamp), the
+    original text is returned rather than an empty string.
+    """
+    raw = str(text or "").strip()
+    body = _BULLET.sub("", raw)
+    recorded = ""
+    source = ""
+    while True:
+        match = _PROVENANCE_TAIL.search(body)
+        if not match:
+            break
+        stamp = match.group(0)
+        if not recorded:
+            found = _RECORDED_AT.search(stamp)
+            if found:
+                recorded = found.group(1)
+        if not source:
+            found = _SOURCE_IN_STAMP.search(stamp)
+            if found:
+                source = found.group(1).strip()
+        body = body[: match.start()].rstrip()
+    link = _WIKILINK.match(source)
+    if link:
+        source = link.group(1)
+    return {"text": body or raw, "recorded": recorded, "source": source}
+
+
+# Where a difference may start. Cutting inside a path segment produces a
+# difference nobody can read ("character 61 changed"), so the split snaps back
+# to one of these.
+_BOUNDARY = ("\\", "/", "｜", "|", "：", ":", "，", ",", " ", "`", "、")
+
+# How far back the snap may look for a boundary. Enough to reach the previous
+# path segment, short enough that the shared context the reader needs to compare
+# the two values is never swallowed.
+_SNAP_LIMIT = 40
+
+
+def split_change(new: str, old: str) -> dict | None:
+    """Where two versions of one fact stop agreeing.
+
+    Returns ``{"prefix", "new", "old", "suffix"}`` — everything before the
+    difference, the two differing middles, and the shared tail — or None when
+    the two are identical.
+
+    The split snaps to a separator so the difference starts at something a
+    reader can point at: ``…\\backups\\`` shared, then ``soul\\SOUL.md.bak-…``
+    against ``adjudicate-…\\``. Without the snap, two values differing only in
+    their last digits are reported as "they diverge mid-word", which is true and
+    useless.
+    """
+    if not new or not old or new == old:
+        return None
+    limit = min(len(new), len(old))
+    i = 0
+    while i < limit and new[i] == old[i]:
+        i += 1
+    floor = max(0, i - _SNAP_LIMIT)
+    for k in range(i, floor, -1):
+        if new[k - 1] in _BOUNDARY and old[k - 1] in _BOUNDARY:
+            i = k
+            break
+    j = 0
+    while j < min(len(new), len(old)) - i and new[-1 - j] == old[-1 - j]:
+        j += 1
+    # A one-character suffix is a coincidence, not a shared ending.
+    if j < 2:
+        j = 0
+    return {
+        "prefix": new[:i],
+        "new": new[i: len(new) - j],
+        "old": old[i: len(old) - j],
+        "suffix": new[len(new) - j:] if j else "",
+    }
+
+
+
 def _drop_block(lines: list[str], heading: str) -> list[str]:
     """Remove one `## … 冲突 #…` block, and the `---` rule that set it apart."""
     if not heading:

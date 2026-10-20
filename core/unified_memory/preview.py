@@ -17,11 +17,18 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from . import index as index_mod
-from .common import AGENT_CONTEXT, NON_SUBMISSION_FILES, SUBMISSION_DIR, canonical_dir, redact
-from .conflict import entry_key, read_conflicts
+from .common import (
+    AGENT_CONTEXT,
+    CANONICAL_DOCS,
+    NON_SUBMISSION_FILES,
+    SUBMISSION_DIR,
+    canonical_dir,
+    redact,
+)
+from .conflict import describe, entry_key, read_conflicts, split_change
 
 VIEWS = ("pending", "conflicts", "forgetting", "recent")
 
@@ -91,19 +98,47 @@ def _conflicts(vault: Path, limit: int) -> list[dict]:
 
     Each row carries `key`: a stable handle for the decision route. An index
     would not do, because resolving an earlier row shifts every later one.
+
+    Each row also carries `detail` — the same two sides, stripped of bullets and
+    provenance stamps, with the point where they diverge. `new`/`old` stay as
+    the raw text so nothing is lost, but a reader deciding between them needs
+    the version that does not include an event id and a write date in the middle
+    of the sentence.
     """
-    return [
-        {
-            "key": entry_key(entry),
-            "new": redact(str(entry.get("新", ""))),
-            "old": redact(str(entry.get("旧", ""))),
-            "source": redact(str(entry.get("来源", ""))),
-            "doc": redact(str(entry.get("目标", ""))),
-            "queue": "conflicts",
-            "untrusted": True,
-        }
-        for entry in read_conflicts(vault)[:limit]
-    ]
+    rows = []
+    for entry in read_conflicts(vault)[:limit]:
+        new_raw = redact(str(entry.get("新", "")))
+        old_raw = redact(str(entry.get("旧", "")))
+        new_side = describe(new_raw)
+        old_side = describe(old_raw)
+        rows.append(
+            {
+                "key": entry_key(entry),
+                "new": new_raw,
+                "old": old_raw,
+                "source": redact(str(entry.get("来源", ""))),
+                "doc": redact(str(entry.get("目标", ""))),
+                "queue": "conflicts",
+                "untrusted": True,
+                "detail": {
+                    "doc": _note_name(redact(str(entry.get("目标", "")))),
+                    "new": new_side,
+                    "old": old_side,
+                    "change": split_change(new_side["text"], old_side["text"]),
+                },
+            }
+        )
+    return rows
+
+
+def _note_name(raw: str) -> str:
+    """A note as a person names it: `常用路径与环境.md`, not the doc id or path."""
+    value = str(raw or "").strip()
+    if not value:
+        return ""
+    if value in CANONICAL_DOCS:
+        return CANONICAL_DOCS[value]
+    return PurePosixPath(value.replace("\\", "/")).name
 
 
 def _forgetting(vault: Path, limit: int) -> list[dict]:

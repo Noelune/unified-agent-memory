@@ -30,10 +30,12 @@ from unified_memory.common import (
 )
 from unified_memory.conflict import (
     append_conflict,
+    describe,
     entry_key,
     find_conflict,
     read_conflicts,
     remove_conflict,
+    split_change,
 )
 
 BLOCK = (
@@ -265,6 +267,100 @@ class ConflictFormatTest(unittest.TestCase):
         )
 
         self.assertIn("端口是 8080", promoter._adjudicated_facts(self.vault))
+
+
+class ConflictReadabilityTest(unittest.TestCase):
+    """A queued entry is written for a machine; a person still has to rule on it.
+
+    The raw line carries a bullet, a write stamp and an event id. Handing that
+    to someone and asking "which is right?" makes them strip the noise first and
+    hunt for the one differing substring second — both mechanical, both done
+    here so the panel can show the two facts instead of the two records.
+    """
+
+    NEW_RAW = (
+        "备份：`C:\\hermes\\backups\\adjudicate-20261018-20261018_115737\\`"
+        "（三个文件完整副本）"
+    )
+    OLD_RAW = (
+        "- 备份：`C:\\hermes\\backups\\soul\\SOUL.md.bak-20261015-230432`（随时可回滚）"
+        "（写入 2026-10-16｜来源：[[Hermes会话自动归档/2026-10-15]]，事件 `86022e98ae62ebed4d8eb4a7`）"
+    )
+
+    def test_the_fact_is_shown_without_the_bullet_or_the_write_stamp(self):
+        side = describe(self.OLD_RAW)
+
+        self.assertEqual(
+            side["text"],
+            "备份：`C:\\hermes\\backups\\soul\\SOUL.md.bak-20261015-230432`（随时可回滚）",
+        )
+        self.assertNotIn("写入", side["text"])
+        self.assertNotIn("86022e98", side["text"])
+
+    def test_the_stamp_is_kept_as_answerable_metadata(self):
+        side = describe(self.OLD_RAW)
+
+        self.assertEqual(side["recorded"], "2026-10-16")
+        self.assertEqual(side["source"], "Hermes会话自动归档/2026-10-15")
+
+    def test_a_parenthetical_that_means_something_survives(self):
+        # `（随时可回滚）` is why this backup matters. Treating every trailing
+        # parenthetical as provenance would delete the clause the reader needs
+        # to judge the line.
+        self.assertIn("（随时可回滚）", describe(self.OLD_RAW)["text"])
+
+    def test_a_line_that_is_only_a_stamp_stays_readable(self):
+        side = describe("（写入 2026-10-16）")
+
+        self.assertEqual(side["text"], "（写入 2026-10-16）")
+        self.assertEqual(side["recorded"], "2026-10-16")
+
+    def test_the_difference_starts_at_a_path_boundary(self):
+        change = split_change(describe(self.NEW_RAW)["text"], describe(self.OLD_RAW)["text"])
+
+        self.assertIsNotNone(change)
+        self.assertTrue(
+            change["prefix"].endswith("backups\\"),
+            f"difference starts mid-segment at {change['prefix'][-20:]!r}",
+        )
+        self.assertTrue(change["new"].startswith("adjudicate-"))
+        self.assertTrue(change["old"].startswith("soul\\"))
+
+    def test_the_three_pieces_rebuild_each_side_exactly(self):
+        new_side = describe(self.NEW_RAW)["text"]
+        old_side = describe(self.OLD_RAW)["text"]
+        change = split_change(new_side, old_side)
+
+        self.assertEqual(change["prefix"] + change["new"] + change["suffix"], new_side)
+        self.assertEqual(change["prefix"] + change["old"] + change["suffix"], old_side)
+
+    def test_two_identical_sides_have_no_difference_to_mark(self):
+        self.assertIsNone(split_change("端口是 8080", "端口是 8080"))
+
+    def test_a_missing_side_is_not_a_difference(self):
+        self.assertIsNone(split_change("", "端口是 8080"))
+        self.assertIsNone(split_change("端口是 8080", ""))
+
+    def test_the_split_snaps_out_of_the_middle_of_a_word(self):
+        # Two values that differ only in trailing digits: character-level, the
+        # difference starts inside `backups-2026`. Snapping back to the last
+        # separator makes the marked segment `backups-2026`, which is the unit a
+        # person actually compares.
+        change = split_change("备份：C:\\data\\backups-2026", "备份：C:\\data\\backups-2025")
+
+        self.assertTrue(change["prefix"].endswith("\\"), change)
+        self.assertEqual(change["new"], "backups-2026")
+        self.assertEqual(change["old"], "backups-2025")
+
+    def test_the_split_never_swallows_the_whole_prefix(self):
+        # A long shared path must keep enough context that the two middles are
+        # still comparable; collapsing everything into `…` would hide the fact
+        # that both live under the same backups directory.
+        shared = "备份：" + "\\".join(["C:", "a", "b", "c", "d", "e", "f", "g", "h"])
+        change = split_change(shared + "\\one.md", shared + "\\two.md")
+
+        self.assertTrue(change["prefix"].endswith("\\"))
+        self.assertGreater(len(change["prefix"]), 10)
 
 
 if __name__ == "__main__":
