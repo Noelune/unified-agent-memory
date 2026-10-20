@@ -33,8 +33,10 @@ export interface DoctorIssue {
 /**
  * Counts the pane can quote without a second read.
  *
- * Absent queues are 0 rather than null: this payload only exists when the core
- * answered, and "the inbox is empty" is then a fact, not a missing reading.
+ * `null` (not a zeroed struct) is the correct answer when the report carried no
+ * measurements — a vault the core could not open. Within a report that DOES
+ * carry measurements, an absent queue is 0: the doctor looked, and the inbox
+ * really is empty.
  */
 export interface DoctorCounts {
   memories: number
@@ -68,8 +70,21 @@ function str(v: unknown): string {
   return typeof v === 'string' ? v : ''
 }
 
+/**
+ * A JSON object that is NOT an array.
+ *
+ * The `Array.isArray` guard is load-bearing, not defensive. `typeof [] ===
+ * 'object'`, so a bare `typeof v === 'object'` accepts an array — and every
+ * caller below reads NAMED fields off the result, which an array does not
+ * carry. `{data: []}` therefore sailed through the "is this a doctor report"
+ * gate with every field `undefined`, and the pane rendered a complete set of
+ * ZERO counts: a malformed payload shown as "0 记忆 / 0 向量 / 0 冲突". An
+ * array is never a doctor envelope, so it is rejected once, here, for all
+ * callers.
+ */
 function obj(v: unknown): Record<string, unknown> | null {
-  return typeof v === 'object' && v !== null ? (v as Record<string, unknown>) : null
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return null
+  return v as Record<string, unknown>
 }
 
 /**
@@ -100,9 +115,13 @@ function shapeIssue(raw: unknown): DoctorIssue | null {
  * `data.ok:false` is NOT "unavailable". That is the core reporting a broken
  * vault (`vault-missing`, `doctor-failed`) with an issue attached, and those
  * are the findings the user needs most. Only a body that fails to parse, or
- * arrives without a `data` object, is unavailable — because "the doctor found
- * nothing" and "the doctor never ran" must not look alike when the pane prints
- * one of them as reassurance.
+ * arrives without a `data` OBJECT (an array and a non-object both fail this),
+ * is unavailable — because "the doctor found nothing" and "the doctor never
+ * ran" must not look alike when the pane prints one of them as reassurance.
+ *
+ * What `data.ok:false` DOES change is `counts`: that report carries no
+ * measurements, so `counts` is null there while the issues still travel. See
+ * the sentinel note below.
  */
 export function shapeDoctorResult(raw: string): DoctorPayload {
   let parsed: unknown
@@ -122,7 +141,7 @@ export function shapeDoctorResult(raw: string): DoctorPayload {
     }
   }
 
-  const index = obj(data.index) ?? {}
+  const index = obj(data.index)
   const canonical = obj(data.canonical) ?? {}
   const inbox = obj(data.inbox) ?? {}
   // `duplicateLines` is a list of offending lines; its LENGTH is the count. The
@@ -130,11 +149,20 @@ export function shapeDoctorResult(raw: string): DoctorPayload {
   // pane has no business rendering corpus content it did not ask for.
   const duplicates = Array.isArray(canonical.duplicateLines) ? canonical.duplicateLines.length : 0
 
+  // `index` is the sentinel for "the doctor actually measured something".
+  // `health_mod.doctor()` assigns it inside its one `try` block, and any failure
+  // there propagates to the CLI's fallback report — `{ok:false, vault, issues}`
+  // with NO `index`, NO `inbox`, NO `canonical`. That fallback is a real and
+  // useful answer (it carries `vault-missing`), but it contains no measurements,
+  // and counting its absent fields as 0 renders "0 记忆 / 0 向量 / 0 冲突" for a
+  // vault the core could not even open. `counts` is `null` there instead, which
+  // the pane already prints as "—" — the same distinction `src/client/types.ts`
+  // documents for absent counts.
   return {
     ok: true,
     status: 'ok',
     issues,
-    counts: {
+    counts: index === null ? null : {
       memories: num(index.memories),
       vectors: num(index.vectors),
       conflicts: num(obj(data.conflicts)?.count),

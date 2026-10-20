@@ -148,6 +148,39 @@ describe('GET /doctor', () => {
     expect(body.issues).toEqual([])
   })
 
+  it('keeps the core vault-missing report but sends counts:null, not zeroes', async () => {
+    // The core's CLI fallback for an unopenable vault is
+    // `{ok:false, vault, issues}` with no `index`. The HTTP layer must not
+    // invent a zeroed measurement for it — the finding is the answer, and
+    // "0 记忆 / 0 向量" would contradict it on screen.
+    vi.mocked(runCore).mockResolvedValue({ ok: true, output: JSON.stringify({
+      ok: true, command: 'doctor',
+      data: { ok: false, vault: 'C:/gone', issues: [
+        { severity: 'error', code: 'vault-missing', message: 'vault missing', hint: 'memory init' },
+      ] },
+    }) })
+
+    const out = await get()
+
+    expect(out.code).toBe(200)
+    const body = JSON.parse(out.body)
+    expect(body.status).toBe('ok')
+    expect(body.issues[0].code).toBe('vault-missing')
+    expect(body.counts).toBeNull()
+  })
+
+  it('refuses an array body as unavailable — the HTTP layer inherited the gate', async () => {
+    // `typeof [] === 'object'` must not pass through here either. An array that
+    // reached the pane would render as a complete set of zero counts.
+    vi.mocked(runCore).mockResolvedValue({ ok: true, output: '{"ok":true,"command":"doctor","data":[]}' })
+
+    const out = await get()
+
+    const body = JSON.parse(out.body)
+    expect(body.status).toBe('unavailable')
+    expect(body.counts).toBeNull()
+  })
+
   it('refuses a write method without touching the core', async () => {
     const out = await get('POST')
 

@@ -154,20 +154,41 @@ describe('runSearch', () => {
     expect(calls[0].url).toContain('&hybrid=1')
   })
 
-  it('treats a 200 with ok:false as no results, not as an error', async () => {
+  it('REJECTS a 200 with ok:false rather than reporting an empty result', async () => {
     // The core half reports an unavailable vault this way. A transport-level
-    // success is not a business success.
+    // success is not a business success, and — the point this test exists for —
+    // a search that could not run must not RESOLVE, because `useSearchRun` sets
+    // `error` in its `.catch`. Resolving here would make that catch dead code
+    // and a dead core would render as "没有匹配的记忆".
     //
     // The payload MUST carry a non-empty `results`: with `results: []` the
     // assertion holds even after the `body.ok` gate is deleted, so it proves
     // nothing. A populated payload is what makes the gate observable — drop the
-    // gate and `leaked.md` surfaces.
+    // gate and `leaked.md` surfaces instead of the rejection.
     stubFetch({ status: 200, body: { ok: false, count: 1, results: [hit('leaked.md')] } })
-    await expect(runSearch('x', false)).resolves.toEqual([])
+    await expect(runSearch('x', false)).rejects.toThrow(/core unavailable/)
   })
 
-  it('returns [] when the route is unreachable', async () => {
+  it('REJECTS when the route is unreachable, so failure is distinguishable from empty', async () => {
+    // The whole reason `runSearch` rejects: "the search never ran" and "the
+    // search found nothing" are different facts and the panel words them
+    // differently ("检查没跑起来" vs "没有匹配的记忆"). Resolving `[]` here is the
+    // lie this signature exists to prevent.
     stubFetch({ throws: true })
+    await expect(runSearch('x', false)).rejects.toThrow()
+  })
+
+  it('REJECTS a 200 whose body is missing the results array', async () => {
+    // A truncated body is not an empty vault. Without this the `!Array.isArray`
+    // half of the body gate is untested.
+    stubFetch({ status: 200, body: { ok: true } })
+    await expect(runSearch('x', false)).rejects.toThrow(/core unavailable/)
+  })
+
+  it('delivers a REAL empty result when the host answers ok with no hits', async () => {
+    // The other half of the distinction: this one must resolve, or the panel
+    // can never say "没有匹配的记忆".
+    stubFetch({ status: 200, body: { ok: true, count: 0, results: [] } })
     await expect(runSearch('x', false)).resolves.toEqual([])
   })
 })
@@ -835,5 +856,16 @@ describe('loadDoctor', () => {
     const got = await loadDoctor()
     expect(got.issues).toHaveLength(1)
     expect(got.issues[0].code).toBe('ok-one')
+  })
+
+  it('treats an ARRAY counts as absent, never as six zeroes', async () => {
+    // `typeof [] === 'object'`, so a counts field that arrived as `[]` used to
+    // be accepted and read through `Number([].memories) || 0` — a missing
+    // reading presented as a measured 0. `null` renders as "—" in the pane; the
+    // zeroes render as facts about the vault.
+    stubFetch({ body: { ok: true, status: 'ok', issues: [], counts: [] } })
+    const got = await loadDoctor()
+    expect(got.status).toBe('ok')
+    expect(got.counts).toBeNull()
   })
 })

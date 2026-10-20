@@ -84,11 +84,43 @@ describe('shapeDoctorResult', () => {
     expect(shapeDoctorResult(JSON.stringify({ ok: true })).status).toBe('unavailable')
   })
 
-  it('reports zero counts when the envelope carries no measurements', () => {
-    const p = shapeDoctorResult(envelope({ issues: [] }))
+  it('rejects an ARRAY as data: `typeof [] === "object"` must not pass the gate', () => {
+    // An array carries none of the named fields a doctor report has, so every
+    // read below it is `undefined` and the pane renders a full set of zeroes —
+    // a malformed payload shown as "0 记忆 / 0 向量". An array is never an
+    // envelope.
+    expect(shapeDoctorResult(envelope([])).status).toBe('unavailable')
+    expect(shapeDoctorResult(envelope([])).counts).toBeNull()
+    expect(shapeDoctorResult(JSON.stringify({ ok: true, data: 'not an object' })).status).toBe('unavailable')
+  })
+
+  it('reports zero counts only when the doctor really measured an empty vault', () => {
+    // `index` is the sentinel: the core assigns it inside the one `try` block in
+    // `health.doctor()`. Its presence means the counts are a reading, and a
+    // reading of 0 is legitimate — the vault is genuinely empty.
+    const p = shapeDoctorResult(envelope({ index: { memories: 0, vectors: 0 }, issues: [] }))
+    expect(p.status).toBe('ok')
     expect(p.counts).toEqual({
       memories: 0, vectors: 0, conflicts: 0, inbox: 0, duplicates: 0, orphans: 0,
     })
+  })
+
+  it('reports counts:null — not zeroes — when the report carries no measurements', () => {
+    // The core's CLI fallback for a vault it could not open is
+    // `{ok:false, vault, issues}` with no `index`/`inbox`/`canonical`. That is a
+    // real answer worth printing (it carries `vault-missing`), but it is not a
+    // measurement: counting its absent fields as 0 claims the vault HAS zero
+    // memories, which is the opposite of what the finding says. `null` is the
+    // honest value, and the pane already renders it as "—".
+    const p = shapeDoctorResult(JSON.stringify({
+      ok: true, command: 'doctor',
+      data: { ok: false, vault: 'C:/gone', issues: [
+        { severity: 'error', code: 'vault-missing', message: 'vault missing', hint: 'memory init' },
+      ] },
+    }))
+    expect(p.status).toBe('ok')
+    expect(p.issues).toHaveLength(1)
+    expect(p.counts).toBeNull()
   })
 })
 

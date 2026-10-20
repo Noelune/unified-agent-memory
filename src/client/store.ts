@@ -149,21 +149,28 @@ export function useMemoryOpen(): boolean {
 // ── Search ─────────────────────────────────────────────────────────
 
 /**
- * Run a search. Resolves to [] on any failure — the panel shows "none".
+ * Run a search.
+ *
+ * **Rejects on failure; resolves only with a real answer.** This is the whole
+ * point of the function: a search that could not run and a search that found
+ * nothing are different facts, and the panel renders them as different things
+ * ("检查没跑起来" vs "没有匹配的记忆"). The earlier version resolved to `[]` on
+ * every failure, which made the caller's `.catch` dead code — `useSearchRun`
+ * sets `error` there, so `error` could never become true and a dead core was
+ * indistinguishable from an empty vault. That is a lie the user cannot detect.
  *
  * A transport success is NOT a business success: the host answers 200 with
- * `{ok:false}` when the core is unavailable, so the body gate runs too.
+ * `{ok:false}` when the core is unavailable, so the body gate rejects too.
  */
 export async function runSearch(query: string, hybrid: boolean): Promise<SearchHit[]> {
-  try {
-    const url = `${SEARCH_URL}?q=${encodeURIComponent(query)}${hybrid ? '&hybrid=1' : ''}`
-    const r = await fetch(url, { cache: 'no-store' })
-    if (!r.ok) return []
-    const body = (await r.json()) as { ok?: boolean; results?: SearchHit[] }
-    return body.ok === true && Array.isArray(body.results) ? body.results : []
-  } catch {
-    return []
+  const url = `${SEARCH_URL}?q=${encodeURIComponent(query)}${hybrid ? '&hybrid=1' : ''}`
+  const r = await fetch(url, { cache: 'no-store' })
+  if (!r.ok) throw new Error(`search: HTTP ${r.status}`)
+  const body = (await r.json()) as { ok?: boolean; results?: SearchHit[] }
+  if (body.ok !== true || !Array.isArray(body.results)) {
+    throw new Error('search: core unavailable')
   }
+  return body.results
 }
 
 /** A monotonic request counter; the newest token wins. */
@@ -198,6 +205,7 @@ export function isCurrentSearch(seq: SearchSeq, mine: number): boolean {
 export function runSearchSequence(
   queries: readonly (readonly [string, boolean])[],
   apply: (hits: SearchHit[]) => void = () => {},
+  fail: (error: unknown) => void = () => {},
 ): {
   settled: SearchHit[][]
   newest: () => SearchHit[]
@@ -209,7 +217,17 @@ export function runSearchSequence(
   let live: SearchHit[] = []
   const pending = queries.map(async function (q, i) {
     const mine = nextSeq(seq)
-    const hits = await runSearch(q[0], q[1])
+    // `runSearch` rejects on failure precisely so this branch exists: a failed
+    // run must reach `fail` (the hook's `setError(true)`), not be mistaken for
+    // "found nothing". The seq guard applies here too — a stale failure must
+    // not flip the error flag for a newer run that is about to succeed.
+    let hits: SearchHit[]
+    try {
+      hits = await runSearch(q[0], q[1])
+    } catch (error) {
+      if (isCurrentSearch(seq, mine)) fail(error)
+      return
+    }
     if (!isCurrentSearch(seq, mine)) return
     live = hits
     settled[i] = hits
@@ -251,7 +269,15 @@ export function useSearchRun(
         if (!isCurrentSearch(seq, mine)) return
         setResults(hits)
       })
-      .catch(function () { if (isCurrentSearch(seq, mine)) setError(true) })
+      .catch(function () {
+        if (!isCurrentSearch(seq, mine)) return
+        // Clear the previous run's hits. The pane renders `error` ahead of the
+        // results, so they are not drawn either way — but leaving them in state
+        // makes them reappear the instant anything else flips `error` off, as
+        // stale hits under a new query. A failed search has no results.
+        setResults([])
+        setError(true)
+      })
       .finally(function () { if (isCurrentSearch(seq, mine)) setBusy(false) })
   }
 }
@@ -498,10 +524,16 @@ function asArray(v: unknown): unknown[] {
   return Array.isArray(v) ? v : []
 }
 
-/** Keep only object entries, so a stray null cannot reach the geometry. */
+/**
+ * Keep only object entries, so a stray null cannot reach the geometry.
+ *
+ * Arrays are excluded too: `typeof [] === 'object'` would let a nested array in
+ * as a row, where every named field reads as `undefined` and normalizes to
+ * `''`/`0` — a malformed series rendered as a legitimate zero row.
+ */
 function rows(v: unknown): Record<string, unknown>[] {
   return asArray(v).filter(function (r): r is Record<string, unknown> {
-    return typeof r === 'object' && r !== null
+    return typeof r === 'object' && r !== null && !Array.isArray(r)
   })
 }
 
@@ -540,8 +572,12 @@ const STATS_KEYS = ['daily', 'access', 'types', 'importance', 'top', 'span', 'to
  * array, every number a number, every label a string.
  */
 function shapeStats(d: Record<string, unknown>): StatsData {
-  const span = (typeof d.span === 'object' && d.span !== null ? d.span : {}) as Record<string, unknown>
-  const totals = (typeof d.totals === 'object' && d.totals !== null ? d.totals : {}) as Record<string, unknown>
+  // `span` and `totals` are objects, never arrays. Excluding arrays matters
+  // because these two are read field-by-field: an array would yield `undefined`
+  // for every field and normalize into `{start:null,end:null}` and four zeroes —
+  // an absent measurement drawn as a real, empty one.
+  const span = (typeof d.span === 'object' && d.span !== null && !Array.isArray(d.span) ? d.span : {}) as Record<string, unknown>
+  const totals = (typeof d.totals === 'object' && d.totals !== null && !Array.isArray(d.totals) ? d.totals : {}) as Record<string, unknown>
   return {
     daily: rows(d.daily).map(function (r) { return { date: str(r.date), count: num(r.count) } }),
     access: rows(d.access).map(function (r) { return { date: str(r.date), count: num(r.count) } }),
@@ -709,7 +745,11 @@ export async function loadDoctor(): Promise<DoctorPayload> {
         hint: typeof o.hint === 'string' ? o.hint : '',
       })
     }
-    const c = body.counts
+    // `Array.isArray` is required, not belt-and-braces: `typeof [] === 'object'`
+    // is true, so a counts field that arrived as `[]` would be accepted and then
+    // read through `Number([].memories) || 0` — six zeroes, i.e. a missing
+    // reading rendered as a measured one. Arrays carry nothing to read.
+    const c = Array.isArray(body.counts) ? null : body.counts
     const counts = c && typeof c === 'object'
       ? {
           memories: Number((c as Record<string, unknown>).memories) || 0,
