@@ -185,9 +185,16 @@ class PromoterTest(unittest.TestCase):
         promoter.review(self.vault, verbose=False)
         with patch("builtins.input", return_value="用新"):
             promoter.adjudicate(self.vault)
-        facts = [line for line in read_maybe(canonical_path(self.vault, "ui")).splitlines() if line.startswith("- ")]
-        self.assertTrue(any("prefers light theme in the UI" in line for line in facts))
-        self.assertFalse(any("prefers dark theme in the UI" in line for line in facts))
+        text = read_maybe(canonical_path(self.vault, "ui"))
+        # "Replaces" means it leaves the active region — not that the line is
+        # erased. `promote` has always retired a superseded value into 已取代;
+        # this path used to delete it, so the note claimed the old value had
+        # never existed and the only trace was the adjudication log.
+        active, _, history = text.partition("## 已取代")
+        active_facts = [line for line in active.splitlines() if line.startswith("- ")]
+        self.assertTrue(any("prefers light theme in the UI" in line for line in active_facts))
+        self.assertFalse(any("prefers dark theme in the UI" in line for line in active_facts))
+        self.assertIn("prefers dark theme in the UI", history)
 
     def test_adjudicate_keep_both_retains_the_conflicting_old_fact(self):
         from unittest.mock import patch
@@ -369,6 +376,70 @@ class HistorySectionTest(unittest.TestCase):
         facts = promoter.active_fact_lines(read_maybe(path))
         self.assertIn("active line", facts)
         self.assertNotIn("retired line", facts)
+
+
+class SettledSourceArchiveTest(unittest.TestCase):
+    """A ruled-on submission must leave the inbox — but only when it is spent.
+
+    `decide` dequeued the conflict and wrote the note, yet left the submission
+    in ``Agent提交区`` forever. `doctor` kept counting it as pending work, so the
+    panel said the queue was clear while the counts said otherwise.
+    """
+
+    def setUp(self):
+        self.vault = make_scratch_vault()
+
+    def tearDown(self):
+        destroy_scratch(self.vault)
+
+    def inbox(self):
+        return canonical_dir(self.vault) / "Agent提交区"
+
+    def write_inbox(self, name, facts):
+        path = self.inbox() / name
+        path.write_text("\n".join(f"- {f}" for f in facts) + "\n", encoding="utf-8")
+        return path
+
+    def seed_canonical(self, doc, fact):
+        path = canonical_path(self.vault, doc)
+        path.write_text(
+            path.read_text(encoding="utf-8") + f"\n- {fact}（写入 2026-08-01｜来源：Agent提交区/x.md）\n",
+            encoding="utf-8",
+        )
+
+    def test_a_fully_ruled_submission_is_archived(self):
+        self.seed_canonical("ui", "prefers dark theme in the UI")
+        self.write_inbox("dsh-20260814-120000-01.md", ["prefers light theme in the UI"])
+        promoter.review(self.vault, verbose=False)
+        entry = read_conflicts(self.vault)[0]
+
+        result = promoter.decide(self.vault, entry, "用新")
+        self.assertTrue(result["ok"])
+        self.assertEqual(read_conflicts(self.vault), [])
+        # Gone from the inbox: nothing in it is undecided any more.
+        self.assertFalse((self.inbox() / "dsh-20260814-120000-01.md").exists())
+        self.assertTrue(
+            (self.inbox() / "已处理" / "dsh-20260814-120000-01.md").exists(),
+            "the submission must be archived, not deleted",
+        )
+
+    def test_a_half_ruled_submission_stays_in_the_inbox(self):
+        # One ruling is not the whole file. Archiving it here would silently
+        # drop the fact nobody has decided on yet, so it must stay put and be
+        # picked up by the next `review --apply`.
+        self.seed_canonical("ui", "prefers dark theme in the UI")
+        self.write_inbox(
+            "dsh-20260814-120000-02.md",
+            ["prefers light theme in the UI", "the release branch is called stable"],
+        )
+        promoter.review(self.vault, verbose=False)
+        entry = read_conflicts(self.vault)[0]
+
+        promoter.decide(self.vault, entry, "用新")
+
+        staying = self.inbox() / "dsh-20260814-120000-02.md"
+        self.assertTrue(staying.exists(), "an undecided fact was archived away")
+        self.assertIn("release branch is called stable", read_maybe(staying))
 
 
 if __name__ == "__main__":

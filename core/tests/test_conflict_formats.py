@@ -197,7 +197,12 @@ class ConflictFormatTest(unittest.TestCase):
         )
         text = read_maybe(note)
         self.assertIn("备份目录已迁移到 D:/backups", text)
-        self.assertNotIn("备份目录是 C:/backups", text)
+        # 用新 retires the losing line instead of deleting it: it leaves the
+        # active region (which is what search reads) and lands under 已取代,
+        # exactly as `promote` has always done for a supersession.
+        active, _, history = text.partition("## 已取代")
+        self.assertNotIn("备份目录是 C:/backups", active)
+        self.assertIn("备份目录是 C:/backups", history)
         # The classified note must stay untouched: the decision belongs to the
         # note that recorded the contradiction, not to whichever note happens to
         # match a keyword.

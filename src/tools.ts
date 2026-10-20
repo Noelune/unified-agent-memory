@@ -135,7 +135,8 @@ function defineShowTool(cfg: PluginConfig) {
     name: 'memory_show',
     description:
       'Show one canonical memory document (index/prefs/env/rules/tools/ui/coord, ' +
-      'or a *.md note under 50-Agent-Context). Use before answering from ' +
+      'or a note under 50-Agent-Context — `名字.md` or the suffix-less ' +
+      '`[[名字]]` form the vault links with). Use before answering from ' +
       'memory so the source of truth is the vault itself.',
     parameters: {
       doc: {
@@ -143,7 +144,7 @@ function defineShowTool(cfg: PluginConfig) {
         required: true,
         description:
           'Document id (index, prefs, env, rules, tools, ui, coord) ' +
-          'or a *.md note under 50-Agent-Context.',
+          'or a note name under 50-Agent-Context, with or without .md.',
       },
     },
     output: { schema: TOOL_OUTPUT_SCHEMA, render: renderText },
@@ -155,7 +156,7 @@ function defineShowTool(cfg: PluginConfig) {
           ok: false,
           output:
             'doc is required — choose from index, prefs, env, rules, ' +
-            'tools, ui, coord, or a *.md note under 50-Agent-Context',
+            'tools, ui, coord, or a note name under 50-Agent-Context',
         }
       }
       const validation = validateDocId(doc)

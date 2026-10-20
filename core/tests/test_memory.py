@@ -243,6 +243,58 @@ class DriftSubcommandTest(unittest.TestCase):
         self.assertTrue((pkg.parent / "driftrc.yaml").is_file())
 
 
+class CliRefusalExitTest(unittest.TestCase):
+    """A refused ruling must be visible in the exit status, not only on stderr.
+
+    `dismiss`/`accept`/`advise`/`decide` printed the reason to stderr and then
+    returned normally, so a shell reported success for a write that never
+    happened. `note` already exited 1 on the same path — the four adopters just
+    never got the rule. `--json` deliberately stays exit 0: runCore discards
+    stdout from a failed subprocess, so the panel needs `data.reason` in a
+    normal envelope (§1.1).
+    """
+
+    def setUp(self):
+        self.vault = make_scratch_vault()
+
+    def tearDown(self):
+        destroy_scratch(self.vault)
+
+    def run_main(self, argv):
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = 0
+            try:
+                mem_mod.main(argv)
+            except SystemExit as exc:
+                code = exc.code if exc.code is not None else 0
+        return code, out.getvalue()
+
+    def test_a_refused_write_exits_nonzero(self):
+        for argv in (
+            ["dismiss", "no-such-submission.md"],
+            ["accept", "no-such-submission.md"],
+            ["decide", "no-such-key", "并存"],
+            ["advise", "no-such-key", "并存", "--why", "because"],
+        ):
+            code, _ = self.run_main(argv)
+            self.assertEqual(code, 1, argv)
+
+    def test_the_json_path_still_exits_zero_and_carries_the_reason(self):
+        for argv, command in (
+            (["dismiss", "no-such-submission.md", "--json"], "dismiss"),
+            (["accept", "no-such-submission.md", "--json"], "accept"),
+            (["decide", "no-such-key", "并存", "--json"], "decide"),
+            (["advise", "no-such-key", "并存", "--why", "because", "--json"], "advise"),
+        ):
+            code, out = self.run_main(argv)
+            self.assertEqual(code, 0, argv)
+            payload = json.loads(out)
+            self.assertEqual(payload["command"], command)
+            self.assertFalse(payload["ok"], argv)
+            self.assertTrue(payload["data"]["reason"], argv)
+
+
 class VaultMissingCliTest(unittest.TestCase):
     """One uninitialized vault, one clean answer — for every verb.
 

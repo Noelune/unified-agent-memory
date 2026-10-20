@@ -248,8 +248,36 @@ def is_bare_note_name(name: str) -> bool:
     return name.lower().endswith(".md")
 
 
+def note_named(name: str) -> str:
+    """A note name as one ``*.md`` segment, adding the suffix Obsidian omits.
+
+    The vault refers to its own notes by wikilink — ``[[我的偏好摘要]]``, never
+    ``[[我的偏好摘要.md]]`` — so the name a person or an agent copies out of the
+    context index has no suffix. Refusing it made the one spelling the vault
+    itself uses unreachable from `memory show`.
+
+    A suffix is *added*, never stripped: a name that already ends in ``.md`` is
+    returned unchanged, so nothing that resolved before resolves differently.
+    The traversal gate still runs afterwards (``is_bare_note_name``), and this
+    function does not sanitise anything — ``"../x"`` stays ``"../x.md"`` and is
+    still refused there.
+    """
+    base = (name or "").strip()
+    if not base:
+        return ""
+    if base.lower().endswith(".md"):
+        return base
+    # A name that already carries some *other* extension is not a note name
+    # missing its suffix — `notes.txt` stays `notes.txt` and is refused by
+    # ``is_bare_note_name``, which is a clearer answer than resolving it to
+    # `notes.txt.md` and reporting "no such note".
+    if Path(base).suffix:
+        return base
+    return base + ".md"
+
+
 def resolve_canonical_note(vault: Path, name: str) -> Path | None:
-    """Resolve a bare *.md file name to a real note under 50-Agent-Context.
+    """Resolve a note name to a real note under 50-Agent-Context.
 
     Top-level notes are the normal case. ``情境信息/未归类事实.md`` is also
     indexed (see ``index.indexed_files``), so the exact file name a search hit
@@ -257,9 +285,10 @@ def resolve_canonical_note(vault: Path, name: str) -> Path | None:
     row the console can show but cannot open.
 
     Returns None for a refused or missing name. The input is a single segment
-    (``is_bare_note_name``), so nothing outside the canonical directory can be
-    reached.
+    after ``note_named`` (``is_bare_note_name``), so nothing outside the
+    canonical directory can be reached.
     """
+    name = note_named(name)
     if not is_bare_note_name(name):
         return None
     ctx = canonical_dir(vault)

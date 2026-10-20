@@ -106,7 +106,12 @@ describe('POST /decide against the real Python core', () => {
 
       const text = readFileSync(note, 'utf8')
       expect(text).toContain('备份目录已迁移到 D:/backups')
-      expect(text).not.toContain('备份目录是 C:/backups')
+      // The retired value leaves the active area but is not deleted: a ruling
+      // must be able to be revisited, and silently disappearing history is
+      // exactly what made the first reading of the note wrong.
+      const [active, history] = text.split('## 已取代')
+      expect(active).not.toContain('备份目录是 C:/backups')
+      expect(history).toContain('备份目录是 C:/backups')
 
       // The queue entry is gone, so the question does not come back.
       expect(readFileSync(queue, 'utf8')).not.toContain('20261019030125-1')

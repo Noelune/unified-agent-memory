@@ -44,6 +44,7 @@ from .common import (
     ensure_vault,
     is_bare_note_name,
     looks_like_credential,
+    note_named,
     parse_config,
     read_maybe,
     redact,
@@ -396,9 +397,14 @@ def cmd_show(args: argparse.Namespace) -> None:
         # Any canonical note directly under 50-Agent-Context (a structured-facts
         # note the user added), plus the one nested note the index also covers.
         # No path traversal: the name must be a single segment.
+        #
+        # `note_named` first, so the wikilink spelling the vault itself uses
+        # (`[[我的偏好摘要]]`) resolves: the suffix is added when it is missing,
+        # never stripped. The refusal reason is computed on the *normalised*
+        # name, or a bare `我的偏好摘要` would report `invalid-name`.
         path = resolve_canonical_note(vault, doc)
         reason = None if path is not None else (
-            "invalid-name" if not is_bare_note_name(doc) else "not-found"
+            "invalid-name" if not is_bare_note_name(note_named(doc)) else "not-found"
         )
     if path is None:
         # `--json` keeps ok:true and carries the miss in `data.reason`, exactly
@@ -616,6 +622,13 @@ def cmd_dismiss_cli(args: argparse.Namespace) -> None:
     text = cmd_dismiss(vault=str(vault), name=args.name, as_json=args.json)
     if text:
         print(text)
+    # Same rule as `note` (see cmd_note_cli): the text path has only the exit
+    # status to carry a refusal, and printing the reason to stderr while exiting
+    # 0 told a script the dismiss had happened. The `--json` path keeps exit 0
+    # on purpose — the panel reads `data.reason` and runCore discards stdout
+    # from a failed subprocess (§1.1).
+    if not text and not args.json:
+        sys.exit(1)
 
 
 def cmd_accept(vault: str, name: str, as_json: bool = False) -> str:
@@ -649,6 +662,9 @@ def cmd_accept_cli(args: argparse.Namespace) -> None:
     text = cmd_accept(vault=str(vault), name=args.name, as_json=args.json)
     if text:
         print(text)
+    # A refused accept must be visible to a script; see cmd_dismiss_cli.
+    if not text and not args.json:
+        sys.exit(1)
 
 
 def plain_reason(value: str) -> str:
@@ -732,6 +748,9 @@ def cmd_advise_cli(args: argparse.Namespace) -> None:
     )
     if text:
         print(text)
+    # A refused advise must be visible to a script; see cmd_dismiss_cli.
+    if not text and not args.json:
+        sys.exit(1)
 
 
 def cmd_decide(vault: str, key: str, choice: str, as_json: bool = False, why: str = "") -> str:
@@ -784,6 +803,9 @@ def cmd_decide_cli(args: argparse.Namespace) -> None:
     )
     if text:
         print(text)
+    # A refused decide must be visible to a script; see cmd_dismiss_cli.
+    if not text and not args.json:
+        sys.exit(1)
 
 
 def cmd_stats_cli(args: argparse.Namespace) -> None:

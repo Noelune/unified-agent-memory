@@ -26,6 +26,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Callable
 
 from .common import (
     ADJUDICATED_FILE,
@@ -416,17 +417,24 @@ def append_active_facts(text: str, new_lines: list[str]) -> str:
     return "\n".join(head) + "\n"
 
 
-def _move_to_superseded(text: str, old_bare: str) -> str:
-    """Move an old fact line under the note's history section (create if absent).
+def move_to_superseded(text: str, matches: Callable[[str], bool]) -> str:
+    """Move the first fact line ``matches`` accepts under the history section.
 
     The index rebuild marks lines under a history heading as ``superseded``, so
     this keeps the record while removing the old value from active recall.
+
+    Parameterised by a predicate because the two callers recognise the same old
+    fact from different spellings: ``promote`` holds the bare text the pending
+    list recorded, while ``decide`` holds whatever the conflict entry carried
+    (a block entry stores the whole markdown line, stamp and bullet included)
+    and has to compare through ``_comparable``. Matching by one fixed rule there
+    silently removed nothing, which is why the two paths disagreed.
     """
     lines = text.splitlines()
     removed: str | None = None
     kept: list[str] = []
     for ln in lines:
-        if removed is None and ln.lstrip().startswith("-") and bare_fact_line(ln) == old_bare:
+        if removed is None and ln.lstrip().startswith("-") and matches(ln):
             removed = ln
             continue
         kept.append(ln)
@@ -447,6 +455,11 @@ def _move_to_superseded(text: str, old_bare: str) -> str:
             break
     kept.insert(insert_at, removed_stripped)
     return "\n".join(kept) + ("\n" if kept else "")
+
+
+def _move_to_superseded(text: str, old_bare: str) -> str:
+    """``move_to_superseded`` for the bare-text spelling the pending list uses."""
+    return move_to_superseded(text, lambda ln: bare_fact_line(ln) == old_bare)
 
 
 def promote(vault: Path, entries: list[dict], *, locked: bool = False) -> list[str]:
@@ -702,6 +715,46 @@ def _comparable(text: str) -> str:
         out = trimmed
 
 
+def archive_settled_source(vault: Path, entry: dict, *, locked: bool = False) -> None:
+    """Move a submission out of the inbox once every fact in it has been ruled on.
+
+    `decide` used to leave the source file in ``Agent提交区`` forever. The
+    conflict left the queue, so nothing was pending — but the submission stayed,
+    `doctor` kept counting it as inbox work, and the panel's queue looked quiet
+    while the counts disagreed. Archiving only ever happened inside the
+    vault-wide passes (`apply_pending`, `accept`, `auto_promote`), which handle
+    a whole file and can therefore archive it without losing anything.
+
+    One ruling is not the whole file: a submission may carry facts nobody has
+    decided yet, and archiving it here would drop them silently. So the file is
+    archived ONLY when every fact line in it now appears in the adjudication log
+    — the removal then loses nothing. Anything else stays exactly where it is,
+    and the next ``review --apply`` still picks it up, so the worst case is the
+    old behaviour rather than a lost submission.
+    """
+    source = str(entry.get("来源", "") or "").strip()
+    if not source:
+        return
+    # `来源` is a bare file name (review() records `src.name`); anything that
+    # carries a path is not one of ours and is left alone.
+    if Path(source).name != source:
+        return
+    src = canonical_dir(vault) / "Agent提交区" / source
+    if not src.is_file():
+        return
+    facts = {
+        bare_fact_line(f"- {redact(fact)}")
+        for fact in fact_lines(read_maybe(src))
+    }
+    facts.discard("")
+    if not facts:
+        # Nothing parseable to have decided — not ours to clear.
+        return
+    if not facts <= _adjudicated_facts(vault):
+        return
+    archive_sources(vault, {source}, locked=locked)
+
+
 def decide(vault: Path, entry: dict, choice: str, why: str = "") -> dict:
     """Resolve ONE pending conflict.
 
@@ -717,6 +770,11 @@ def decide(vault: Path, entry: dict, choice: str, why: str = "") -> dict:
     be reviewed: six months later `并存` with no reason is indistinguishable
     from `并存` by accident, and the next reader has to redo the analysis to
     find out whether it was ever right.
+
+    `用新` retires the losing line into the note's 已取代 section rather than
+    deleting it — see `move_to_superseded`. And a submission whose every fact
+    has now been ruled on is archived out of the inbox by
+    `archive_settled_source`.
 
     Refuses an unknown choice rather than defaulting to 跳过. The CLI's
     `input()` treats a typo as "skip", which is recoverable when a person is
@@ -738,15 +796,12 @@ def decide(vault: Path, entry: dict, choice: str, why: str = "") -> dict:
             raw_old = str(entry.get("旧", "")).strip()
             old = _comparable(raw_old) if raw_old else ""
             if choice == "用新" and old:
-                lines = existing.splitlines(keepends=True)
-                removed = False
-                retained = []
-                for current in lines:
-                    if not removed and current.lstrip().startswith("-") and _comparable(current) == old:
-                        removed = True
-                        continue
-                    retained.append(current)
-                existing = "".join(retained)
+                # Retire, do not delete: `promote` has always moved the old line
+                # under 已取代 (via _move_to_superseded), and this path deleted
+                # it outright — so the note claimed the old value had never
+                # existed and the only record of it was the adjudication log.
+                # Two writers of the same fact, two different meanings.
+                existing = move_to_superseded(existing, lambda ln: _comparable(ln) == old)
             new = entry.get("新", "").strip()
             prior = active_fact_lines(existing)
             if new and new not in prior:
@@ -757,6 +812,7 @@ def decide(vault: Path, entry: dict, choice: str, why: str = "") -> dict:
             atomic_write(target, existing)
             record_adjudication(vault, entry, choice, why=why, locked=True)
             remove_conflict(vault, entry, locked=True)
+            archive_settled_source(vault, entry, locked=True)
         return {
             "ok": True, "reason": None, "choice": choice, "applied": True,
             "target": str(target.relative_to(vault)) if target.is_relative_to(vault) else str(target),
@@ -767,6 +823,7 @@ def decide(vault: Path, entry: dict, choice: str, why: str = "") -> dict:
     with file_lock(vault):
         record_adjudication(vault, entry, choice, why=why, locked=True)
         remove_conflict(vault, entry, locked=True)
+        archive_settled_source(vault, entry, locked=True)
     return {"ok": True, "reason": None, "choice": choice, "applied": False,
             "target": None}
 
