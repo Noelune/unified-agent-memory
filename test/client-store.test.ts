@@ -29,10 +29,8 @@ const TYPES = readFileSync(new URL('../src/client/types.ts', import.meta.url), '
 // Imported statically: touching window.location at module scope would make this
 // URL invalid, and store.ts must therefore not depend on a window.
 import {
-  acceptItem,
   canApplyPreview,
   decideConflict,
-  dismissItem,
   isCurrentSearch,
   loadConflicts,
   loadDoc,
@@ -110,9 +108,15 @@ afterEach(() => {
 })
 
 describe('client store surface', () => {
-  it('exports the three new async entry points', () => {
-    for (const fn of ['runSearch', 'loadPreview', 'dismissItem']) {
+  it('exports the async entry points the panes call', () => {
+    // `dismissItem` / `acceptItem` used to be listed here. They are gone: the
+    // console no longer promotes or retires a submission, so the only writers
+    // left are the reader (`loadDoc`) and the ruling (`decideConflict`).
+    for (const fn of ['runSearch', 'loadPreview', 'decideConflict', 'loadDoc']) {
       expect(SRC, `missing ${fn}`).toContain(`export async function ${fn}`)
+    }
+    for (const gone of ['dismissItem', 'acceptItem']) {
+      expect(SRC, `${gone} should be gone`).not.toContain(`export async function ${gone}`)
     }
   })
 
@@ -122,8 +126,10 @@ describe('client store surface', () => {
     }
   })
 
-  it('posts to the dismiss route with JSON', () => {
-    expect(SRC).toContain('DISMISS_URL')
+  it('posts to the ruling route with JSON', () => {
+    // Same three facts the dismiss test pinned, moved to the write that is left:
+    // the URL constant, the method, and the body content type.
+    expect(SRC).toContain('DECIDE_URL')
     expect(SRC).toContain("method: 'POST'")
     expect(SRC).toContain("'content-type': 'application/json'")
   })
@@ -298,87 +304,6 @@ describe('loadDoc', () => {
     const got = await loadDoc('a.md')
     expect(got.ok).toBe(true)
     expect(got.path).toBeNull()
-  })
-})
-
-describe('dismissItem', () => {
-  const post = () =>
-    calls.length > 0 ? calls[calls.length - 1] : ({} as { url: string; init?: RequestInit })
-
-  it('is ok ONLY when the body says ok, and carries the reason', async () => {
-    stubFetch({ status: 200, body: { ok: true, name: 'a.md', reason: null } })
-    await expect(dismissItem('a.md')).resolves.toEqual({ ok: true, reason: null })
-    expect(post().url).toBe('/api/dsh-unified-agent-memory/dismiss')
-    expect(post().init?.method).toBe('POST')
-    expect(JSON.stringify(post().init?.headers)).toContain('application/json')
-    expect(post().init?.body).toBe('{"name":"a.md"}')
-  })
-
-  it('is not ok for a 200 that still says ok:false, and keeps the reason', async () => {
-    // HTTP status is not the verdict — only body.ok is. The reason is what lets
-    // the inbox say "该条目不在提交区" instead of "失败了".
-    stubFetch({ status: 200, body: { ok: false, name: 'a.md', reason: 'outside-inbox' } })
-    await expect(dismissItem('a.md')).resolves.toEqual({ ok: false, reason: 'outside-inbox' })
-  })
-
-  it('is not ok for a 409 refusal and carries its reason too', async () => {
-    // A 409 body is still JSON; the old implementation bailed on `!r.ok` before
-    // reading it, so every refusal arrived as a bare `false`.
-    stubFetch({ status: 409, body: { ok: false, name: 'a.md', reason: 'not-found' } })
-    await expect(dismissItem('a.md')).resolves.toEqual({ ok: false, reason: 'not-found' })
-  })
-
-  it('reports a transport failure as unavailable, never as a refusal', async () => {
-    stubFetch({ throws: true })
-    await expect(dismissItem('a.md')).resolves.toEqual({ ok: false, reason: 'unavailable' })
-  })
-})
-
-describe('acceptItem', () => {
-  const post = () =>
-    calls.length > 0 ? calls[calls.length - 1] : ({} as { url: string; init?: RequestInit })
-
-  it('promotes one named submission and reports the counts', async () => {
-    stubFetch({
-      status: 200,
-      body: { ok: true, name: 'a.md', reason: null, promoted: 3, duplicates: 1, conflicts: 0 },
-    })
-
-    await expect(acceptItem('a.md')).resolves.toEqual({
-      ok: true, reason: null, promoted: 3, duplicates: 1, conflicts: 0,
-    })
-    expect(post().url).toBe('/api/dsh-unified-agent-memory/accept')
-    expect(post().init?.body).toBe('{"name":"a.md"}')
-  })
-
-  it('carries the refusal reason, because "conflicts" is not a retry', async () => {
-    // A conflicting submission is neither promoted nor retired: the next step
-    // is a ruling, and the pane can only say that if the reason survives.
-    stubFetch({
-      status: 409,
-      body: { ok: false, name: 'a.md', reason: 'conflicts', promoted: 0, duplicates: 0, conflicts: 2 },
-    })
-
-    await expect(acceptItem('a.md')).resolves.toEqual({
-      ok: false, reason: 'conflicts', promoted: 0, duplicates: 0, conflicts: 2,
-    })
-  })
-
-  it('never reports a negative or nan count as a number', async () => {
-    stubFetch({ status: 200, body: { ok: true, promoted: -1, duplicates: 'x', conflicts: null } })
-
-    const got = await acceptItem('a.md')
-
-    expect(got.promoted).toBe(0)
-    expect(got.duplicates).toBe(0)
-    expect(got.conflicts).toBe(0)
-  })
-
-  it('reports a transport failure as unavailable', async () => {
-    stubFetch({ throws: true })
-    await expect(acceptItem('a.md')).resolves.toEqual({
-      ok: false, reason: 'unavailable', promoted: 0, duplicates: 0, conflicts: 0,
-    })
   })
 })
 
@@ -711,7 +636,7 @@ describe('usePreview effect decision (pure, no renderer)', () => {
   it('pins the effect dependency array to exactly [view, nonce]', () => {
     // The decision above only matters if the effect is actually keyed on both.
     const start = SRC.indexOf('export function usePreview(')
-    const body = SRC.slice(start, SRC.indexOf('export async function dismissItem('))
+    const body = SRC.slice(start, SRC.indexOf('// ── Conflicts: the questions that actually need a person'))
     expect(body).toMatch(/\[\s*view\s*,\s*nonce\s*\]/)
   })
 
@@ -726,7 +651,7 @@ describe('usePreview effect decision (pure, no renderer)', () => {
     // "does the hook consult the guard?" — NOT "does React's scheduling deliver
     // the response at the wrong time?". See the report for that ceiling.
     const start = SRC.indexOf('export function usePreview(')
-    const body = SRC.slice(start, SRC.indexOf('export async function dismissItem('))
+    const body = SRC.slice(start, SRC.indexOf('// ── Conflicts: the questions that actually need a person'))
 
     // One gate per effect run.
     expect(body).toMatch(/newPreviewGate\s*\(\)/)
@@ -742,7 +667,7 @@ describe('usePreview effect decision (pure, no renderer)', () => {
 // ── loadStats: the console's aggregate feed ────────────────────────
 //
 // The route answers HTTP 200 in BOTH cases — the verdict is `body.ok`, exactly
-// like `dismissItem`. The distinction the console cannot afford to lose is
+// like `loadDoc`. The distinction the console cannot afford to lose is
 // "degraded" (core unavailable, `data:null`) versus "empty" (core answered, and
 // the vault genuinely has nothing): both used to collapse into a zeroed chart.
 

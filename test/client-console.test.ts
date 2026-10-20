@@ -31,33 +31,24 @@ import { dirname, join } from 'node:path'
 import { execSync } from 'node:child_process'
 
 import {
+  BADGE_TAB,
   CONFLICT_ADVICE_LABEL,
   CONFLICT_CHOICES,
+  CONFLICT_EMPTY,
   CONFLICT_INCOMING_LABEL,
   CONFLICT_LEAD,
   CONFLICT_NOW_LABEL,
   CONFLICT_RULES_NOTE,
   CONSOLE_TABS,
-  INBOX_ACCEPT_NOTE,
-  INBOX_LEAD,
-  PENDING_BADGE_TAB,
   TAB_LABEL,
-  acceptOutcomeText,
-  acceptReasonText,
   compactCount,
   conflictSides,
   decideOutcomeText,
   decideReasonText,
-  dismissReasonText,
   healthRows,
   healthSummary,
   highlightParts,
-  inboxSummary,
-  noteDigest,
-  oldestFirst,
   openFailureText,
-  previewEmptyText,
-  relativeAge,
   searchFailureText,
   splitHealth,
   statKpis,
@@ -151,7 +142,7 @@ describe('console structure', () => {
     // while the pending count rode a tab you could not act from. A dashboard
     // that opens on a heatmap is not a tool, so the queue has to lead.
     expect(CONSOLE_TABS[0]).toBe('inbox')
-    expect(PENDING_BADGE_TAB).toBe('inbox')
+    expect(BADGE_TAB).toBe('inbox')
   })
 
   it('labels every tab, with no stale copy from the deleted ones', () => {
@@ -183,15 +174,19 @@ describe('console structure', () => {
     expect(CONSOLE_CODE).not.toMatch(/fetch\(/)
   })
 
-  it('wires the inbox to the queue, the reader and the one write', () => {
-    // Three call sites, and each one was the difference between a panel and a
-    // decoration: without `usePreview('pending')` there is no queue, without
-    // `loadNote` you cannot judge an entry, without `dismissItem` you cannot
-    // clear one. A bare mention in the import list must not satisfy this, so
-    // every assertion names the call form.
-    expect(CONSOLE_CODE).toMatch(/usePreview\(\s*'pending'\s*\)/)
-    expect(CONSOLE_CODE).toMatch(/\bloadNote\(/)
-    expect(CONSOLE_CODE).toMatch(/\bdismissItem\(/)
+  it('wires the pane to the conflict queue and nothing else', () => {
+    // One call site is the whole pane now: `useConflicts()` is read at the
+    // console root (the badge needs the same number) and handed down. The
+    // submission queue, its reader and its two buttons are deliberately gone —
+    // their owner is the promotion job, and the backlog is a health fact.
+    expect(CONSOLE_CODE).toMatch(/useConflicts\(\)/)
+    expect(CONSOLE_CODE).toMatch(/\bdecideConflict\(/)
+    expect(CONSOLE_CODE).toMatch(/conflicts:\s*props\.conflicts|\{\s*conflicts\s*\}/)
+    // None of the retired wiring may come back: a `usePreview('pending')` here
+    // would put somebody else's queue on the page that answers "what needs me".
+    expect(CONSOLE_CODE).not.toMatch(/usePreview\(\s*'pending'\s*\)/)
+    expect(CONSOLE_CODE).not.toMatch(/\bdismissItem\(/)
+    expect(CONSOLE_CODE).not.toMatch(/\bacceptItem\(/)
     // The health pane's conflict count is its own read; the figures' feed stays
     // the single `useStats()` call (asserted below).
     expect(CONSOLE_CODE).toMatch(/usePreview\(\s*'conflicts'\s*\)/)
@@ -385,224 +380,90 @@ describe('wiring: the pending count rides the queue it counts', () => {
     // styled-but-never-rendered. The badge's home tab is display policy, so it
     // travels as a view.ts constant: a second tab-id literal in the component is
     // banned by the test above ("the tab ids should be declared once, in view.ts").
-    expect(CONSOLE_TABS).toContain(PENDING_BADGE_TAB)
-    expect(CONSOLE_CODE).toMatch(/t\s*===\s*PENDING_BADGE_TAB[\s\S]{0,160}dsh-memory-pill/)
+    expect(CONSOLE_TABS).toContain(BADGE_TAB)
+    expect(CONSOLE_CODE).toMatch(/t\s*===\s*BADGE_TAB[\s\S]{0,160}dsh-memory-pill/)
   })
 
   it('spells out the subject for a reader who arrives at the badge cold', () => {
-    // The badge sits on 待处理 now, so the digit is arguably self-explaining —
-    // but the strip is also read by screen readers and by anyone who lands on
-    // the tab stripped of its label. `title` is the only carrier of that
-    // meaning, so it needs an assertion of its own; without one it can be
-    // deleted and every other test in this file stays green.
-    expect(CONSOLE_CODE).toMatch(/title:\s*[^\n]*条待晋升的提交/)
+    // 「需要你裁决」 says who decides, not what the number counts — and the strip
+    // is also read by screen readers and by anyone who lands on the tab stripped
+    // of its label. `title` is the only carrier of that meaning, so it needs an
+    // assertion of its own; without one it can be deleted and every other test
+    // in this file stays green.
+    expect(CONSOLE_CODE).toMatch(/title:\s*[^\n]*条需要你裁决/)
   })
 
-  it('feeds the strip from the status payload', () => {
-    // ...and the number the badge shows must still come from the poll payload,
-    // not from a hardcoded 0 that quiets the badge forever.
-    expect(CONSOLE_CODE).toMatch(/const\s+pending\s*=[^\n]*stats[^\n]*pending/)
-    expect(CONSOLE_CODE).toMatch(/h\(TabBar,\s*\{[^}]*\bpending\b[^}]*\}\)/)
-  })
-})
-
-// ── previewEmptyText: unsupported vs empty vs populated ─────────────
-
-describe('previewEmptyText', () => {
-  it('distinguishes an unsupported view from an empty one', () => {
-    const unsupported = previewEmptyText(preview({ status: 'unsupported', items: [] }))
-    const empty = previewEmptyText(preview({ status: 'ok', items: [] }))
-
-    expect(unsupported).not.toBeNull()
-    expect(empty).not.toBeNull()
-    // The whole point: these must not read the same. "Not implemented yet" is
-    // a different fact from "implemented, and there is nothing in it".
-    expect(unsupported!.title).not.toBe(empty!.title)
-    expect(unsupported!.hint).not.toBe(empty!.hint)
-  })
-
-  it('says the view is unsupported, not that the list is empty', () => {
-    const t = previewEmptyText(preview({ status: 'unsupported' }))!
-    expect(t.title).toContain('暂不支持')
-  })
-
-  it('says there is no content for a supported, empty view', () => {
-    const t = previewEmptyText(preview({ view: 'recent', status: 'ok', items: [] }))!
-    expect(t.title).toBe('暂无内容')
-    expect(t.title).not.toContain('暂不支持')
-  })
-
-  it('tells an empty inbox apart from an empty generic view', () => {
-    // "暂无内容" reads like a failed lookup. An empty 待晋升 queue is a healthy
-    // state, and the reader's actual question is whether anything waits on
-    // them — so the inbox gets its own words, not the generic ones.
-    const t = previewEmptyText(preview({ view: 'pending', status: 'ok', items: [] }))!
-    expect(t.title).toBe('没有待晋升的提交')
-    expect(t.hint).toContain('Agent')
-    expect(t.hint).toContain('晋升')
-    expect(t.title).not.toBe('暂无内容')
-  })
-
-  it('returns null when there are items to show', () => {
-    const t = previewEmptyText(preview({
-      status: 'ok',
-      count: 1,
-      items: [{ name: 'a.md', path: '/tmp/a.md', mtime: 0 }],
-    }))
-    expect(t).toBeNull()
-  })
-
-  it('returns null for a null payload only via the caller', () => {
-    // A null payload is "still loading / transport failed", which the console
-    // renders as an error state — not as an empty view.
-    expect(previewEmptyText(null)).toBeNull()
+  it('counts the queue this tab shows, not the inbox', () => {
+    // Two failure modes, one assertion. A badge fed from `stats.pending` counts
+    // the submission queue — work whose owner is the promotion job — so it lights
+    // up with things nobody has to do and teaches the reader to ignore it. And a
+    // badge counted separately from the list it labels can disagree with that
+    // list. Both are ruled out by requiring the number to come from the same
+    // `useConflicts()` read the pane renders.
+    expect(CONSOLE_CODE).toMatch(/const\s+waiting\s*=[^\n]*conflicts\.items/)
+    expect(CONSOLE_CODE).toMatch(/h\(TabBar,\s*\{[^}]*\bwaiting\b[^}]*\}\)/)
+    expect(CONSOLE_CODE).not.toMatch(/stats\?\.pending/)
   })
 })
 
-// ── Inbox: age, order, summary, body digest ────────────────────────
+// ── The pane asks one question ─────────────────────────────────────
 
-describe('relativeAge', () => {
-  // A fixed epoch in SECONDS, exactly like `Path.stat().st_mtime`.
-  const T = 1_790_000_000
-  const at = (deltaSec: number) => (T + deltaSec) * 1000
-
-  it('reads st_mtime as seconds, not milliseconds', () => {
-    // The trap this exists for: feeding the core's seconds to a millisecond
-    // helper dates every submission to 1970 and reports the whole queue as
-    // decades old. One hour after the write must say 1 小时前.
-    expect(relativeAge(T, at(3600))).toBe('1 小时前')
-  })
-
-  it('picks the coarsest unit that still says something useful', () => {
-    expect(relativeAge(T, at(30))).toBe('刚刚')
-    expect(relativeAge(T, at(60 * 5))).toBe('5 分钟前')
-    expect(relativeAge(T, at(3600 * 5))).toBe('5 小时前')
-    expect(relativeAge(T, at(86_400 * 5))).toBe('5 天前')
-    expect(relativeAge(T, at(86_400 * 45))).toBe('1 个月前')
-    expect(relativeAge(T, at(86_400 * 400))).toBe('1 年前')
-  })
-
-  it('does not report a future timestamp as a negative age', () => {
-    // Clock skew between the vault and this machine is real; "-3 分钟前" is not.
-    expect(relativeAge(T, at(-600))).toBe('刚刚')
-  })
-
-  it('says so when there is no timestamp to read', () => {
-    expect(relativeAge(0, at(0))).toBe('时间未知')
-    expect(relativeAge(Number.NaN, at(0))).toBe('时间未知')
-  })
-})
-
-describe('inboxSummary', () => {
-  const DAY = 86_400
-  const now = 1_790_000_000_000
-
-  it('says the queue is empty instead of "0 条待晋升"', () => {
-    // "0 条待晋升" is a count; "提交区是空的" is a state. The second is what
-    // tells a user they do not need to open this tab at all.
-    const s = inboxSummary([], now)
-    expect(s.count).toBe(0)
-    expect(s.oldestDays).toBeNull()
-    expect(s.text).not.toContain('0 条')
-  })
-
-  it('promotes staleness only once it crosses a week', () => {
-    expect(inboxSummary([{ mtime: now / 1000 - 60 }], now).text).toBe('1 条待晋升')
-    const stale = inboxSummary([{ mtime: now / 1000 - DAY * 21 }], now)
-    expect(stale.oldestDays).toBe(21)
-    expect(stale.text).toContain('21 天')
-  })
-
-  it('reports the OLDEST item, not the newest', () => {
-    // "Oldest" is the SMALLEST mtime — an absolute timestamp, so the item
-    // written longest ago has the lowest number. Taking the max would report
-    // the freshest submission and make a month-old queue look new.
-    const s = inboxSummary(
-      [{ mtime: now / 1000 - DAY * 10 }, { mtime: now / 1000 - DAY * 2 }],
-      now,
-    )
-    expect(s.oldestDays).toBe(10)
-  })
-})
-
-describe('the inbox says what confirming means', () => {
+describe('the pane asks one question', () => {
   function inboxBody(): string {
     const at = CONSOLE_CODE.indexOf('function InboxTab(')
     const end = CONSOLE_CODE.indexOf('// ── Search', at)
     return at < 0 ? '' : CONSOLE_CODE.slice(at, end < 0 ? CONSOLE_CODE.length : end)
   }
 
-  it('names both exits, and no longer tells the reader to go run a command', () => {
-    expect(INBOX_LEAD).toContain('还没进记忆')
-    expect(INBOX_LEAD).toContain('Agent')
-    // The pane can now BOTH accept and refuse one row, so the sentence must
-    // describe the two buttons. The previous revision said "this pane can only
-    // refuse; run `promoter --review` then `--apply` to accept", which was true
-    // while promotion was vault-wide and is now a lie: the command would decide
-    // the other rows too.
-    expect(INBOX_ACCEPT_NOTE).toContain('收录')
-    expect(INBOX_ACCEPT_NOTE).toContain('不采纳')
-    expect(INBOX_ACCEPT_NOTE).toContain('已处理/')
-    expect(INBOX_ACCEPT_NOTE).not.toContain('只能')
-    expect(INBOX_ACCEPT_NOTE).not.toContain('--apply')
+  it('labels the tab with the question it actually asks', () => {
+    // 待确认 and 待处理 both promised a page of things to confirm. The page only
+    // ever held one queue that waits on a person; naming it after that queue is
+    // the difference between a page with a subject and a page with two.
+    expect(TAB_LABEL.inbox).toBe('需要你裁决')
+    for (const gone of ['待确认', '待处理', '待晋升的提交']) {
+      expect(Object.values(TAB_LABEL)).not.toContain(gone)
+    }
   })
 
-  it('labels the pane’s only write as a refusal, never as filing it away', () => {
-    // 归档 reads as "file it into memory" — the exact opposite of what the core
-    // does (move to 已处理/, promote nothing). A wrong verb on the one control
-    // that changes state is worse than no verb at all: the reader believes the
-    // facts were kept. CONSOLE_CODE has comments stripped, so this asserts the
-    // visible label, not the prose around it.
-    expect(CONSOLE_CODE).toContain('不采纳')
-    expect(CONSOLE_CODE).not.toContain('归档')
+  it('says there is nothing to rule on, instead of rendering a bare page', () => {
+    // Good news has to read as good news, and it has to be distinguishable from
+    // "this panel has nothing to say" — an empty pane with no sentence is what
+    // the old two-block layout looked like whenever both queues were clear.
+    expect(CONFLICT_EMPTY.title).toContain('没有')
+    expect(CONFLICT_EMPTY.title).not.toContain('暂无')
+    expect(CONFLICT_EMPTY.hint).toContain('Agent')
+    expect(inboxBody()).toMatch(/CONFLICT_EMPTY/)
   })
 
-  it('says who clears the queue, and that the buttons are an option', () => {
-    // The question this exists for: a reader opens the pane BEFORE the daily
-    // promotion and asks "why is anything here — promotion runs at 3". The
-    // answer has to be on the page, because the queue is fed by `memory_submit`
-    // the moment an agent writes, not by the promotion run. Without these three
-    // parts the pane reads as a confirmation nobody asked for.
-    expect(INBOX_LEAD).toContain('晋升')
-    // ...the conflicts it cannot settle go where the user will look for them
-    expect(INBOX_LEAD).toContain('需要你裁决')
-    // ...and acting now is explicitly an alternative to waiting, not the only exit
-    expect(INBOX_LEAD).toContain('收录')
-    expect(INBOX_LEAD).not.toContain('03:00')
-  })
-
-  it('does not label the whole tab after the queue that waits on the user', () => {
-    // 待确认 was wrong for the same reason: the tab holds two queues with two
-    // owners, and only one of them is waiting for a confirmation.
-    expect(TAB_LABEL.inbox).toBe('待处理')
-    expect(Object.values(TAB_LABEL)).not.toContain('待确认')
-    expect(CONSOLE_CODE).toContain('待晋升的提交')
-  })
-
-  it('prints both sentences in the pane, not only in the model', () => {
+  it('never lists a submission or offers to promote one', () => {
+    // The submission queue belongs to the promotion job. Both halves of that
+    // decision — showing it and offering to act on it — have to stay gone: a
+    // read-only row would still put "facts nobody has promoted yet" in front of
+    // a reader who does not own them.
     const body = inboxBody()
-    expect(body).toMatch(/INBOX_LEAD/)
-    expect(body).toMatch(/INBOX_ACCEPT_NOTE/)
+    expect(body).not.toContain('收录')
+    expect(body).not.toContain('不采纳')
+    expect(body).not.toMatch(/usePreview\(\s*'pending'\s*\)/)
+    expect(body).not.toMatch(/\bacceptItem\(|\bdismissItem\(/)
+    // Backlog is a health number and 健康 already reports it; a copy here would
+    // split one signal across two pages and make neither the obvious place.
+    expect(body).not.toMatch(/inboxSummary|收件箱/)
   })
 
-  it('says the file survives the refusal, in the tooltip', () => {
-    // "不采纳" alone could still be read as "delete it". The tooltip is the one
-    // place with room for the three-part truth: where it goes, what happens to
-    // memory, and that nothing is destroyed.
+  it('tells "could not read" apart from "nothing to rule on"', () => {
+    // The two states sit one branch apart and arrive as the same `null`.
+    // Collapsing them tells the reader the queue is clear at the exact moment
+    // the core is down — the one moment that silence becomes a lie. The slice
+    // is the failure branch specifically, so a regression that renders the
+    // empty state from it is caught rather than merely "mentioned somewhere".
     const body = inboxBody()
-    expect(body).toContain('已处理/')
-    expect(body).toContain('不进记忆')
-    expect(body).toContain('不删')
-  })
-
-  it('offers the yes as well as the no, per row', () => {
-    // The queue used to have one button and it was the refusal — so "confirm"
-    // could only ever mean "no". Both actions must be wired to the per-row
-    // handler; a button with no onClick is the same dead end in a nicer font.
-    const body = inboxBody()
-    expect(body).toContain('收录')
-    expect(body).toMatch(/accept\(it\.name\)/)
-    expect(body).toMatch(/retire\(it\.name\)/)
+    const at = body.indexOf('conflicts.items === null')
+    expect(at).toBeGreaterThan(-1)
+    const failedBranch = body.slice(at, body.indexOf('rows.length === 0'))
+    expect(failedBranch).toContain('裁决队列读不到')
+    expect(failedBranch).toMatch(/conflicts\.reload/)
+    expect(failedBranch).toMatch(/Skeleton/)
+    expect(failedBranch).not.toMatch(/CONFLICT_EMPTY|Empty\(/)
   })
 
   it('asks the three rulings on a conflicting fact, not a yes/no', () => {
@@ -786,25 +647,9 @@ describe('make a conflict readable', () => {
 })
 
 describe('turn a refusal into a sentence', () => {
-  it('sends a conflicting accept to the ruling block, not back to the button', () => {
-    // `conflicts` is not a failure: retrying can never work, and the next step
-    // is a decision. A "失败，请重试" toast would send the reader in a circle.
-    const text = acceptReasonText('conflicts')
-    expect(text).toContain('裁决')
-    expect(text).not.toContain('重试')
-  })
-
   it('says a re-read is needed when the conflict is already gone', () => {
     expect(decideReasonText('not-found')).toContain('刷新')
     expect(decideReasonText('not-found')).not.toBe(decideReasonText('unavailable'))
-  })
-
-  it('does not call zero promoted a success or a failure', () => {
-    // A click that found only duplicates worked correctly; saying "已收录 0 条"
-    // would look like a broken button.
-    expect(acceptOutcomeText({ promoted: 3, duplicates: 1 })).toContain('3')
-    expect(acceptOutcomeText({ promoted: 0, duplicates: 2 })).toContain('已有的')
-    expect(acceptOutcomeText({ promoted: 0, duplicates: 0 })).toContain('没有可收录')
   })
 
   it('names the note a ruling wrote to', () => {
@@ -812,49 +657,6 @@ describe('turn a refusal into a sentence', () => {
     expect(text).toContain('取代')
     expect(text).toContain('50-Agent-Context/环境.md')
     expect(decideOutcomeText({ applied: false, target: null, choice: '保留旧' })).toContain('保留旧')
-  })
-})
-
-describe('oldestFirst', () => {
-  it('puts the forgotten item at the top', () => {
-    // The core returns newest-first, which is right for "what did I just
-    // submit" and backwards for a queue: the item most likely to be abandoned
-    // is the one nobody scrolls to.
-    const items = [{ name: 'new', mtime: 30 }, { name: 'old', mtime: 10 }]
-    expect(oldestFirst(items).map(function (i) { return i.name })).toEqual(['old', 'new'])
-  })
-
-  it('does not reorder the caller’s array in place', () => {
-    const items = [{ mtime: 30 }, { mtime: 10 }]
-    oldestFirst(items)
-    expect(items[0].mtime).toBe(30)
-  })
-})
-
-describe('noteDigest', () => {
-  it('drops the trailing write stamp a reader does not need', () => {
-    const body = '# 事实\n服务监听 19121\n\n（写入 2026-10-19｜来源：Agent提交区/a.md）'
-    const out = noteDigest(body)
-    expect(out).toContain('19121')
-    expect(out).not.toContain('来源')
-  })
-
-  it('keeps a stamp that is not the last line', () => {
-    // Only the tail is provenance noise; a stamp quoted mid-note is content.
-    const body = '（来源：a.md）\n然后是别的正文'
-    expect(noteDigest(body)).toContain('来源')
-  })
-
-  it('clips by code point, never through a surrogate pair', () => {
-    const body = '𠀋'.repeat(40) // astral: 2 UTF-16 units, 1 code point
-    const out = noteDigest(body, 10)
-    expect(Array.from(out)).toHaveLength(11) // 10 + the ellipsis
-    expect(out).not.toContain('\uFFFD')
-  })
-
-  it('returns an empty string for an unreadable body', () => {
-    expect(noteDigest(null)).toBe('')
-    expect(noteDigest('   ')).toBe('')
   })
 })
 
@@ -1081,66 +883,6 @@ describe('openFailureText', () => {
 })
 
 // ── dismissReasonText: machine reason → human sentence ──────────────
-
-describe('dismissReasonText', () => {
-  it('explains the invalid-name refusal', () => {
-    expect(dismissReasonText('invalid-name')).toContain('文件名')
-  })
-
-  it('explains the not-found refusal', () => {
-    expect(dismissReasonText('not-found')).toContain('不存在')
-  })
-
-  it('explains the outside-inbox refusal', () => {
-    expect(dismissReasonText('outside-inbox')).toContain('提交区')
-  })
-
-  it('explains that the readme / registry is not a submission', () => {
-    // The core refuses to retire these (inbox.process_inbox_item); the panel
-    // has to say why, or the button looks broken instead of protective.
-    const t = dismissReasonText('not-a-submission')
-    expect(t).toContain('登记')
-    expect(t).not.toBe('not-a-submission')
-  })
-
-  it('explains an io-error with its detail, and one without', () => {
-    expect(dismissReasonText('io-error:EPERM')).toContain('EPERM')
-    expect(dismissReasonText('io-error')).not.toContain(':')
-  })
-
-  it('explains an unavailable core', () => {
-    expect(dismissReasonText('unavailable')).toContain('不可用')
-  })
-
-  it('gives every reason a distinct, non-empty sentence', () => {
-    const reasons = [
-      'invalid-name', 'not-a-submission', 'not-found', 'outside-inbox',
-      'io-error', 'unavailable',
-    ]
-    const texts = reasons.map(dismissReasonText)
-    for (const t of texts) expect(t.length).toBeGreaterThan(0)
-    expect(new Set(texts).size).toBe(reasons.length)
-  })
-
-  it('never leaks a raw machine token to the user', () => {
-    for (const r of ['invalid-name', 'not-a-submission', 'not-found', 'outside-inbox', 'unavailable']) {
-      expect(dismissReasonText(r)).not.toBe(r)
-    }
-  })
-
-  it('falls back to readable text for an unknown reason', () => {
-    const t = dismissReasonText('something-new')
-    expect(t.length).toBeGreaterThan(0)
-    expect(t).not.toContain('undefined')
-  })
-
-  it('handles a missing reason without saying "undefined"', () => {
-    expect(dismissReasonText(null)).not.toContain('undefined')
-    expect(dismissReasonText(undefined)).not.toContain('undefined')
-  })
-})
-
-// ── highlightParts: snippet → marked fragments ──────────────────────
 
 describe('highlightParts', () => {
   it('marks the matched term and keeps the surrounding text', () => {
@@ -1773,10 +1515,12 @@ describe('mutation: colour-token guard', () => {
 
 describe('searchFailureText', () => {
   it('does not say the same thing as an empty result set', () => {
-    // A failed search and an empty search look identical to the user unless
-    // the copy differs — and only one of them deserves a retry.
-    const empty = previewEmptyText({ view: 'x', status: 'ok', count: 0, items: [] })!
-    expect(searchFailureText()).not.toBe(empty.title)
+    // A failed search and an empty search look identical to the user unless the
+    // copy differs — and only one of them deserves a retry. The empty state's
+    // words live in the pane, so the comparison is made against that literal:
+    // the failure sentence must not even borrow its phrasing.
+    expect(CONSOLE_CODE).toContain('没有匹配的记忆')
+    expect(searchFailureText()).not.toContain('没有匹配')
   })
 
   it('tells the user to retry, since a transport failure is transient', () => {
@@ -1875,50 +1619,6 @@ describe('mutation: conflictSides advice', () => {
   })
 })
 
-describe('mutation: previewEmptyText', () => {
-  it('goes red when both statuses collapse to one message', () => {
-    // A plausible "simplification": treat every empty list the same, ignore
-    // status. This is the exact bug the unsupported/empty split exists for.
-    const mutant = function (d: PreviewData | null) {
-      if (d && (d.items?.length ?? 0) === 0) return { title: '暂无内容', hint: '这里还没有条目' }
-      return null
-    }
-    const assert = function (f: typeof previewEmptyText) {
-      const unsupported = f(preview({ status: 'unsupported' }))!
-      const empty = f(preview({ status: 'ok', items: [] }))!
-      expect(unsupported.title).not.toBe(empty.title)
-    }
-    assert(previewEmptyText)                        // real: passes
-    expect(function () { assert(mutant) }).toThrow() // mutant: caught
-  })
-
-  it('goes red when the unsupported branch is dropped', () => {
-    const mutant = function (d: PreviewData | null) {
-      if (d && d.status === 'unsupported') return null
-      return d && d.items.length === 0 ? { title: '暂无内容', hint: 'h' } : null
-    }
-    const assert = function (f: typeof previewEmptyText) {
-      expect(f(preview({ status: 'unsupported' }))).not.toBeNull()
-    }
-    assert(previewEmptyText)
-    expect(function () { assert(mutant) }).toThrow()
-  })
-})
-
-describe('mutation: dismissReasonText', () => {
-  it('goes red when reasons are passed through raw', () => {
-    const mutant = function (r: string | null | undefined) { return String(r) }
-    const assert = function (f: typeof dismissReasonText) {
-      // The user must not be shown the machine's own vocabulary.
-      expect(f('not-found')).not.toBe('not-found')
-      expect(f('invalid-name')).not.toBe('invalid-name')
-      expect(f('outside-inbox')).not.toBe('outside-inbox')
-    }
-    assert(dismissReasonText)
-    expect(function () { assert(mutant) }).toThrow()
-  })
-})
-
 describe('mutation: updateNotice', () => {
   it('goes red when the notice ignores the availability flag', () => {
     // Plausible simplification: "there is a version string, so print it".
@@ -1947,22 +1647,6 @@ describe('mutation: updateNotice', () => {
       expect(f('0.8.0', true).text).toContain('重新安装')
     }
     assert(updateNotice)
-    expect(function () { assert(mutant) }).toThrow()
-  })
-})
-
-describe('mutation: relativeAge', () => {
-  it('goes red when the timestamp is treated as milliseconds', () => {
-    // The plausible mistake, in full: `Date.now() - mtime` with the core's
-    // seconds. Every submission then looks ~56 years old and the age column
-    // becomes noise the user learns to ignore.
-    const mutant = function (mtime: number, nowMs: number) {
-      return Math.floor((nowMs - mtime) / 60_000) + ' 分钟前'
-    }
-    const assert = function (f: typeof relativeAge) {
-      expect(f(1_790_000_000, 1_790_003_600_000)).toBe('1 小时前')
-    }
-    assert(relativeAge)
     expect(function () { assert(mutant) }).toThrow()
   })
 })

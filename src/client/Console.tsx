@@ -1,9 +1,9 @@
 /**
  * dsh-unified-agent-memory — the memory console.
  *
- * Four panes, ordered by how often a person needs them:
+ * Four panes, one question each:
  *
- *   inbox  — "is anything waiting for me?"   → the queue, with actions
+ *   inbox  — "is anything waiting on ME?"    → the conflict queue, three rulings
  *   search — "I want to look something up"   → useSearch
  *   health — "is the library working?"       → counts, index, conflicts, prefix
  *   stats  — "how do I actually use this?"   → the four figures, demoted
@@ -14,9 +14,14 @@
  * figures are still here — they answer a real question — but a side panel that
  * opens on a heatmap is a dashboard, not a tool.
  *
- * Display decisions (empty-vs-unsupported copy, refusal wording, age text,
- * health rows, which tab carries the badge) live in `./view.ts` so they can be
- * unit-tested without a DOM.
+ * The panes do not share subjects. The submission queue (facts an agent wrote
+ * that nobody has promoted yet) used to be listed here as a second block with
+ * its own buttons; that queue belongs to the promotion job, and its backlog is
+ * a health number, so it lives on 健康 and nowhere else. A page that shows two
+ * queues with two different owners cannot answer its own question.
+ *
+ * Display decisions (refusal wording, health rows, which tab carries the badge)
+ * live in `./view.ts` so they can be unit-tested without a DOM.
  *
  * The four figures share ONE `useStats()` read: four calls would be four
  * requests per mount, and four payload copies that can drift between panes.
@@ -27,7 +32,7 @@
 import { h, useState } from '../deps.ts'
 import type { SearchHit, StatsPayload } from './types.ts'
 import {
-  acceptItem, decideConflict, dismissItem, loadDoc, loadNote,
+  decideConflict, loadDoc,
   useConflicts, useDoctor, usePreview, useRepair, useSearch, useStats,
 } from './store.ts'
 import type { RepairApi, RepairEntry } from './store.ts'
@@ -35,13 +40,12 @@ import {
   BreakdownDonut, CalendarHeatmap, GrowthChart, TopBars,
 } from './Figures.tsx'
 import {
-  COMMAND_NOTE, CONFLICT_ADVICE_LABEL, CONFLICT_CHOICES, CONFLICT_INCOMING_LABEL, CONFLICT_LEAD,
-  CONFLICT_NOW_LABEL, CONFLICT_RULES_NOTE, CONSOLE_TABS,
-  INBOX_ACCEPT_NOTE, INBOX_LEAD, PENDING_BADGE_TAB, SEVERITY_LABEL, TAB_LABEL,
-  acceptOutcomeText, acceptReasonText, conflictSides, decideOutcomeText, decideReasonText,
-  dismissReasonText, healthFindings, healthRows, healthSummary, highlightParts,
-  inboxSummary, issueTitle, noteDigest, oldestFirst, openFailureText, previewEmptyText,
-  relativeAge, rowFindings, searchFailureText, splitHealth, statKpis,
+  BADGE_TAB, COMMAND_NOTE, CONFLICT_ADVICE_LABEL, CONFLICT_CHOICES, CONFLICT_EMPTY,
+  CONFLICT_INCOMING_LABEL, CONFLICT_LEAD, CONFLICT_NOW_LABEL, CONFLICT_RULES_NOTE,
+  CONSOLE_TABS, SEVERITY_LABEL, TAB_LABEL,
+  conflictSides, decideOutcomeText, decideReasonText,
+  healthFindings, healthRows, healthSummary, highlightParts,
+  issueTitle, openFailureText, rowFindings, searchFailureText, splitHealth, statKpis,
 } from './view.ts'
 import type { ConflictSide, HealthFinding, TabId } from './view.ts'
 
@@ -65,17 +69,30 @@ export type { TabId }
  */
 type StatsFeed = ReturnType<typeof useStats>
 
-type PaneOf = (props: { status: ConsoleStatus | null; stats: StatsFeed }) => Child
+/**
+ * The conflict queue, read once at the console root.
+ *
+ * It lives here rather than inside the pane because the BADGE needs the same
+ * number: the digit on the tab is "how many things are waiting on you", and a
+ * second read inside the pane could disagree with it. One hook, one answer.
+ */
+type ConflictsFeed = ReturnType<typeof useConflicts>
+
+type PaneOf = (props: {
+  status: ConsoleStatus | null
+  stats: StatsFeed
+  conflicts: ConflictsFeed
+}) => Child
 
 /**
- * Tab id → pane renderer, and the shared feed every figure pane reads.
+ * Tab id → pane renderer, and the shared feeds the panes read.
  *
- * The pane is handed the console's single `useStats()` result rather than
- * calling the hook itself: one request per mount, one payload, no chance of two
- * figures drawing from different reads of the same library.
+ * The pane is handed the console's single `useStats()` / `useConflicts()` read
+ * rather than calling the hook itself: one request per mount, one payload, no
+ * chance of two panes drawing from different reads of the same library.
  */
 const TAB_PANE: Record<TabId, PaneOf> = {
-  inbox: function InboxPane() { return h(InboxTab, null) },
+  inbox: function InboxPane(props) { return h(InboxTab, { conflicts: props.conflicts }) },
   search: function SearchPane() { return h(SearchTab, null) },
   health: function HealthPane(props) {
     return h(HealthTab, { status: props.status, stats: props.stats })
@@ -113,8 +130,8 @@ type Child = ReturnType<typeof h> | string | number | boolean | null | undefined
 
 // ── Primitives ──────────────────────────────────────────────────────
 
-/** Tab strip. The pending count rides on `PENDING_BADGE_TAB` only — see view.ts. */
-function TabBar(props: { active: TabId; onPick: (t: TabId) => void; pending: number }): Child {
+/** Tab strip. The open-question count rides on `BADGE_TAB` only — see view.ts. */
+function TabBar(props: { active: TabId; onPick: (t: TabId) => void; waiting: number }): Child {
   return h('div', { className: 'dsh-memory-tabs' },
     ...CONSOLE_TABS.map(function (t: TabId) {
       return h('button', {
@@ -128,13 +145,13 @@ function TabBar(props: { active: TabId; onPick: (t: TabId) => void; pending: num
       },
         h('i', { className: 'dsh-memory-tab-dot' }),
         TAB_LABEL[t],
-        // The count is the inbox queue, and the tab it rides on IS that queue
-        // — so the digit and the list it counts are one thing. `title` still
-        // spells the subject out for a reader who arrives at the badge cold,
-        // because the tab label (待处理) covers the conflict block too.
-        t === PENDING_BADGE_TAB && props.pending > 0
-          ? h('span', { className: 'dsh-memory-pill', title: String(props.pending) + ' 条待晋升的提交' },
-              String(props.pending))
+        // The count is the conflict queue, and the tab it rides on IS that
+        // queue — so the digit and the list it counts are one thing. `title`
+        // still spells the subject out for a reader who arrives at the badge
+        // cold, because 「需要你裁决」 says who decides but not what.
+        t === BADGE_TAB && props.waiting > 0
+          ? h('span', { className: 'dsh-memory-pill', title: String(props.waiting) + ' 条需要你裁决' },
+              String(props.waiting))
           : null,
       )
     }))
@@ -232,35 +249,30 @@ function Hit(props: {
   )
 }
 
-// ── Inbox ───────────────────────────────────────────────────────────
+// ── 需要你裁决 ──────────────────────────────────────────────────────
 
 /**
- * The queue: everything an agent submitted that a person still has to decide.
+ * The one queue this panel exists for: questions only a person can answer.
  *
- * TWO KINDS OF ROW, and that distinction is the whole design:
+ * A submitted fact that CONTRADICTS something already in memory cannot be
+ * settled with yes/no — the three rulings are 取代 (the new fact is true, drop
+ * the old line), 保留旧 (memory is right, void the submission) and 共存 (both
+ * hold). The core queues those in 情境信息/事实冲突待裁决.md instead of
+ * guessing, and this pane is the only surface that shows them.
  *
- *   - 需要你裁决 — a submitted fact CONTRADICTS something already in memory.
- *     Yes/no is not an answer here. The three rulings are 取代 (the new fact is
- *     true, drop the old line), 保留旧 (memory is right, void the submission)
- *     and 共存 (both hold). The core has queued these in
- *     `情境信息/事实冲突待裁决.md` for exactly this reason; before this pane
- *     read that queue, a conflict could exist for days with no surface that
- *     showed it, and `adjudicate` reported "nothing to adjudicate" because it
- *     only understood the JSON line shape while the human shape was in use.
+ * The submission queue used to sit below it, one row per file with 收录 /
+ * 不采纳 buttons. It is gone, and not because those buttons were wrong: the
+ * reader does not own that queue. Its owner is the promotion job — merge the
+ * duplicates, move the undecidable ones up here — so listing raw submissions
+ * asked a person to read facts nobody had promoted yet and rule on them by
+ * hand. Whether that queue is keeping up is a HEALTH fact, and 健康 already
+ * reports it; a second copy here split one signal across two pages and made
+ * neither the obvious place to look.
  *
- *   - 待晋升的提交 — a submission nothing contradicts. That one really is yes/no:
- *     收录 promotes it into memory, 不采纳 moves the file to `已处理/` (nothing
- *     is deleted, and no canonical note is touched).
- *
- * The refusal button used to be labelled 归档, which reads as "file it into
- * memory" — the exact opposite of what it does. A wrong verb on the control
- * that changes state is worse than no control, because the reader believes it
- * worked. It is 不采纳 now, with 收录 beside it so the pane has both answers
- * instead of only the negative one.
- *
- * Every refusal is shown, never swallowed: each action resolves a `reason`
- * (`conflicts`, `not-found`, `unavailable`, …), which says both what happened
- * and what to do next — a bare failure toast cannot.
+ * What is left is one question per row and three buttons under it. Every
+ * refusal is shown, never swallowed: `decideReasonText` turns each `reason`
+ * (not-found / invalid-key / unavailable) into what happened and what to do
+ * next — a bare failure toast cannot.
  */
 /**
  * One side of a conflict: the shared part plain, the differing part marked.
@@ -286,75 +298,18 @@ function factLine(side: ConflictSide): Child {
   )
 }
 
-function InboxTab(): Child {
-  const preview = usePreview('pending')
-  const conflicts = useConflicts()
-  const [openName, setOpenName] = useState<string | null>(null)
-  const [bodies, setBodies] = useState<Record<string, string>>({})
-  const [bodyError, setBodyError] = useState<string | null>(null)
+function InboxTab(props: { conflicts: ConflictsFeed }): Child {
+  const conflicts = props.conflicts
   const [refusal, setRefusal] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  const [working, setWorking] = useState<string | null>(null)
   const [ruling, setRuling] = useState<string | null>(null)
 
-  const items = oldestFirst(preview.data?.items ?? [])
-  const summary = inboxSummary(items, Date.now())
-  const empty = previewEmptyText(preview.data)
   const rows = conflicts.items ?? []
 
   /** One success line at a time; a stale notice beside a new refusal is noise. */
   function done(text: string): void {
     setNotice(text)
     setRefusal(null)
-  }
-
-  function toggle(name: string): void {
-    if (openName === name) { setOpenName(null); return }
-    setOpenName(name)
-    setBodyError(null)
-    if (bodies[name] !== undefined) return
-    loadNote(name).then(function (r) {
-      if (!r.ok) { setBodyError(dismissReasonText(r.reason)); return }
-      setBodies(function (prev) {
-        const next: Record<string, string> = {}
-        for (const k of Object.keys(prev)) next[k] = prev[k]
-        next[name] = r.body ?? ''
-        return next
-      })
-    })
-  }
-
-  function retire(name: string): void {
-    setWorking(name)
-    setRefusal(null)
-    setNotice(null)
-    dismissItem(name).then(function (r) {
-      setWorking(null)
-      if (!r.ok) { setRefusal(dismissReasonText(r.reason)); return }
-      setOpenName(null)
-      done(`已不采纳 ${name}，文件在 已处理/ 里`)
-      preview.reload()
-    })
-  }
-
-  function accept(name: string): void {
-    setWorking(name)
-    setRefusal(null)
-    setNotice(null)
-    acceptItem(name).then(function (r) {
-      setWorking(null)
-      if (!r.ok) {
-        setRefusal(acceptReasonText(r.reason))
-        // A `conflicts` refusal dequeued nothing and queued a ruling upstairs:
-        // re-read the conflict block so the reader sees the question it raised.
-        if (r.reason === 'conflicts') conflicts.reload()
-        return
-      }
-      setOpenName(null)
-      done(acceptOutcomeText(r))
-      preview.reload()
-      conflicts.reload()
-    })
   }
 
   function rule(key: string, choice: string): void {
@@ -370,24 +325,31 @@ function InboxTab(): Child {
       }
       done(decideOutcomeText({ applied: r.applied, target: r.target, choice }))
       conflicts.reload()
-      // A ruling can add a line to a canonical note, but it never touches the
-      // inbox — reload the submissions list only once, so the two reads cannot
-      // disagree about what is still waiting.
-      preview.reload()
     })
+  }
+
+  // Three states drawn from the same `null`, kept apart on purpose: still
+  // reading, could not read, and read-and-empty. Rendering the last one for the
+  // middle one would tell the reader the queue is clear at the exact moment the
+  // core is down — the one moment silence becomes a lie.
+  if (conflicts.items === null) {
+    return h('div', { className: 'dsh-memory-pane' },
+      conflicts.busy
+        ? h(Skeleton, null)
+        : h(Failure, { text: '裁决队列读不到，记忆核心暂不可用', onRetry: conflicts.reload }),
+    )
   }
 
   return h('div', { className: 'dsh-memory-pane' },
     refusal ? h(Failure, { text: refusal }) : null,
     notice ? h('div', { className: 'dsh-memory-note' }, notice) : null,
 
-    // ── The questions that need a judgement, not a yes/no ──
-    conflicts.busy || rows.length === 0
-      ? null
+    rows.length === 0
+      ? h(Empty, { title: CONFLICT_EMPTY.title, hint: CONFLICT_EMPTY.hint })
       : h('div', { className: 'dsh-memory-card dsh-memory-card-lead' },
           h('div', { className: 'dsh-memory-cardhead' },
-            '需要你裁决',
-            h('span', { className: 'dsh-memory-cardcount' }, `${rows.length} 条`)),
+            TAB_LABEL.inbox,
+            h('span', { className: 'dsh-memory-cardcount' }, rows.length + ' 条')),
           h('div', { className: 'dsh-memory-note' }, CONFLICT_LEAD),
           h('div', { className: 'dsh-memory-rows' },
             ...rows.map(function (it) {
@@ -435,61 +397,7 @@ function InboxTab(): Child {
               )
             })),
         ),
-
-    // ── The plain submissions: promote or retire, one row at a time ──
-    h('div', { className: 'dsh-memory-card dsh-memory-card-lead' },
-      h('div', { className: 'dsh-memory-cardhead' },
-        '待晋升的提交',
-        h('span', { className: 'dsh-memory-cardcount' }, summary.text)),
-      items.length > 0
-        ? h('div', { className: 'dsh-memory-note' }, INBOX_LEAD)
-        : null,
-      h('div', { className: 'dsh-memory-note' }, INBOX_ACCEPT_NOTE),
-      preview.busy
-        ? h(Skeleton, null)
-        : !preview.data
-          ? h(Failure, { text: '待晋升的提交读不到，记忆核心暂不可用', onRetry: preview.reload })
-          : empty
-            ? h(Empty, { title: empty.title, hint: empty.hint })
-            : h('div', { className: 'dsh-memory-rows' },
-              ...items.map(function (it) {
-                const expanded = openName === it.name
-                const known = bodies[it.name]
-                const busy = working === it.name
-                return h('div', { key: it.name, className: 'dsh-memory-item' },
-                  h('div', { className: 'dsh-memory-row' },
-                    h('i', { className: 'dsh-memory-bar dsh-memory-bar-doc' }),
-                    h('span', { className: 'dsh-memory-rowname' }, it.name),
-                    h('span', { className: 'dsh-memory-rowmeta' },
-                      relativeAge(it.mtime, Date.now())),
-                    h('button', {
-                      type: 'button',
-                      className: 'dsh-memory-action',
-                      'aria-expanded': expanded ? 'true' : 'false',
-                      onClick: function () { toggle(it.name) },
-                    }, expanded ? '收起' : '查看'),
-                    h('button', {
-                      type: 'button',
-                      className: 'dsh-memory-action',
-                      disabled: busy,
-                      title: '把这些事实写进记忆，然后把文件移到 已处理/',
-                      onClick: function () { accept(it.name) },
-                    }, busy ? '处理中…' : '收录'),
-                    h('button', {
-                      type: 'button',
-                      className: 'dsh-memory-action',
-                      disabled: busy,
-                      title: '移到 已处理/：不进记忆，也不删文件',
-                      onClick: function () { retire(it.name) },
-                    }, busy ? '处理中…' : '不采纳'),
-                  ),
-                  expanded
-                    ? h('div', { className: 'dsh-memory-body' },
-                        bodyError ?? (known === undefined ? '读取中…' : noteDigest(known) || '（空）'))
-                    : null,
-                )
-              })),
-    ))
+  )
 }
 
 // ── Search ──────────────────────────────────────────────────────────
@@ -954,13 +862,14 @@ function StatsTab(props: { stats: StatsFeed }): Child {
 /** The four-pane console. Every pane reads the payload the caller already holds. */
 export function Console(props: { status?: ConsoleStatus | null }): Child {
   const [active, setActive] = useState<TabId>(CONSOLE_TABS[0])
-  const pending = props.status?.stats?.pending ?? 0
   const status = props.status ?? null
   const stats = useStats()
+  const conflicts = useConflicts()
+  const waiting = (conflicts.items ?? []).length
   const Pane = TAB_PANE[active]
 
   return h('div', { className: 'dsh-memory-console' },
-    h(TabBar, { active, onPick: setActive, pending }),
-    h(Pane, { status, stats }),
+    h(TabBar, { active, onPick: setActive, waiting }),
+    h(Pane, { status, stats, conflicts }),
   )
 }

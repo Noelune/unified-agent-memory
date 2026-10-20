@@ -13,7 +13,7 @@
  * @module src/client/view
  */
 
-import type { DoctorCounts, DoctorIssue, PreviewData, StatsData } from './types.ts'
+import type { DoctorCounts, DoctorIssue, StatsData } from './types.ts'
 
 /** Tab ids, in display order. The console renders these left to right. */
 export const CONSOLE_TABS = ['inbox', 'search', 'health', 'stats'] as const
@@ -23,94 +23,38 @@ export type TabId = (typeof CONSOLE_TABS)[number]
 
 /** Chinese label per tab. */
 export const TAB_LABEL: Record<TabId, string> = {
-  // Not 待确认: this pane holds two queues with two different owners. Conflicts
-  // wait on the user (「需要你裁决」); submissions wait on the next promotion run
-  // (「待晋升的提交」), and the user may only OPT to act early. Labelling the tab
-  // after the first queue made the second look like it was asking for a
-  // confirmation it never asked for — the reader opens the tab before the daily
-  // promotion and reasonably asks why anything is there at all.
-  inbox: '待处理',
+  // One page, one question. This pane answers "is anything waiting for ME?",
+  // so it holds the conflict queue and nothing else.
+  //
+  // The submission queue used to live here too, under 「待确认」 — a queue whose
+  // owner is the daily promoter, not the reader. Showing it asked a person to
+  // read facts nobody had promoted yet and decide about them by hand, which is
+  // the promoter's job; whether that queue is keeping up is a HEALTH fact and
+  // 健康 already reports it. Two queues with two different owners on one page
+  // made the panel's own structure unreadable: the reader could not tell which
+  // numbers were addressed to them.
+  inbox: '需要你裁决',
   search: '搜索',
   health: '健康',
   stats: '统计',
 }
 
 /**
- * The tab that carries the pending-inbox count.
+ * The tab that carries the open-question count.
  *
- * It rides on 待处理 because that tab IS the queue: the number and the list it
- * counts are the same fact, and a user who sees "3" expects the tab to open on
- * those three. (It rode on 搜索 while the inbox pane did not exist — a count
- * you could not act on.)
+ * The number is the conflict queue — the questions actually addressed to the
+ * reader. It is deliberately NOT the inbox count: a badge that lights up with
+ * work nobody has to do teaches the reader to ignore the badge, and then it
+ * fails on the day it matters. (For the same reason the count lives here and
+ * nowhere else: 健康 owns numbers about the library, this tab owns "how many
+ * things are waiting on you".)
  */
-export const PENDING_BADGE_TAB: TabId = 'inbox'
+export const BADGE_TAB: TabId = 'inbox'
 
 /** One fragment of an annotated string. */
 export interface Part {
   text: string
   hit: boolean
-}
-
-/** The copy an empty preview shows. */
-export interface EmptyText {
-  title: string
-  hint: string
-}
-
-/**
- * What an empty preview pane should say, or null when there is content to show.
- *
- * A view the core has not implemented answers `status:"unsupported"` with no
- * items, which is NOT the same fact as an implemented view that happens to be
- * empty. Collapsing the two tells the user their library is empty when the
- * truth is that this console cannot read it — so they must return different
- * copy, and the tests assert that they do.
- *
- * A null payload is "still loading or the transport failed", which the console
- * renders as its error/loading state, so this returns null and leaves it alone.
- */
-export function previewEmptyText(data: PreviewData | null): EmptyText | null {
-  if (!data) return null
-  if (data.status === 'unsupported') {
-    return { title: '该视图暂不支持', hint: '核心尚未实现该治理视图' }
-  }
-  if ((data.items?.length ?? 0) > 0) return null
-  // The inbox gets its own sentence: "暂无内容" reads like the panel failed to
-  // find something, while an empty inbox is a healthy queue and the reader's
-  // question is whether anything is waiting on them.
-  if (data.view === 'pending') {
-    return {
-      title: '没有待晋升的提交',
-      hint: 'Agent 提交的事实会先落在这里，等每天的晋升任务处理',
-    }
-  }
-  // An empty conflict queue is good news, not an empty view: nothing an agent
-  // submitted contradicts what memory already holds.
-  if (data.view === 'conflicts') {
-    return { title: '没有要裁决的冲突', hint: '提交和已有记忆对不上时会出现在这里' }
-  }
-  return { title: '暂无内容', hint: '这里还没有条目' }
-}
-
-/**
- * Turn a `dismissItem` refusal reason into a sentence a user can act on.
- *
- * `dismissItem` resolves a reason ∈ `invalid-name` / `not-a-submission` /
- * `not-found` / `outside-inbox` / `io-error:*` / `unavailable`. Showing the raw
- * token makes the user read the machine's vocabulary; this maps it to theirs.
- */
-export function dismissReasonText(reason: string | null | undefined): string {
-  const r = String(reason ?? '')
-  if (r === 'invalid-name') return '文件名不合法，只能处理提交区里的条目'
-  if (r === 'not-a-submission') return '这个是提交区自带的说明/登记文件，不是待晋升的提交'
-  if (r === 'not-found') return '条目不存在，可能已被处理'
-  if (r === 'outside-inbox') return '该条目不在提交区，不能在这里处理'
-  if (r === 'unavailable') return '记忆核心暂不可用，请稍后再试'
-  if (r === 'io-error') return '处理失败，读写提交区出错'
-  if (r.startsWith('io-error:')) {
-    return '处理失败：' + r.slice('io-error:'.length)
-  }
-  return '处理失败，未能完成该操作'
 }
 
 /**
@@ -124,8 +68,7 @@ export function searchFailureText(): string {
 }
 
 /**
- * Turn a `loadDoc` refusal into a sentence, the same way `dismissReasonText`
- * does for the inbox.
+ * Turn a `loadDoc` refusal into a sentence.
  *
  * The three reasons are not interchangeable: a refused name means the request
  * was wrong, a missing note means the index and the vault disagree, and an
@@ -208,123 +151,6 @@ export function highlightParts(text: string, term: string): Part[] {
   if (from < src.length) parts.push({ text: src.slice(from), hit: false })
   if (parts.length === 0) parts.push({ text: src, hit: false })
   return parts
-}
-
-// ── Inbox: the queue the panel exists to clear ─────────────────────
-//
-// Everything below turns the governance views into the three things a person
-// opening a side panel actually wants: how much is waiting, how old it is, and
-// what is inside it. The figures were pretty and answered none of those.
-
-/**
- * How long ago, in the coarsest unit that still answers "how stale is this".
- *
- * `mtime` is the core's `Path.stat().st_mtime` — SECONDS since the epoch, not
- * milliseconds. Passing it through unchanged (a millisecond assumption) would
- * date every submission to January 1970 and label the whole queue as decades
- * old, which is why the unit is named here rather than left implicit.
- *
- * A timestamp in the future (clock skew between the vault and this machine) is
- * reported as 刚刚 rather than as a negative age.
- */
-export function relativeAge(mtimeSeconds: number, nowMs: number): string {
-  if (!Number.isFinite(mtimeSeconds) || mtimeSeconds <= 0) return '时间未知'
-  const secs = nowMs / 1000 - mtimeSeconds
-  if (!Number.isFinite(secs) || secs < 60) return '刚刚'
-  const mins = Math.floor(secs / 60)
-  if (mins < 60) return mins + ' 分钟前'
-  const hours = Math.floor(mins / 60)
-  if (hours < 24) return hours + ' 小时前'
-  const days = Math.floor(hours / 24)
-  if (days < 30) return days + ' 天前'
-  const months = Math.floor(days / 30)
-  if (months < 12) return months + ' 个月前'
-  return Math.floor(months / 12) + ' 年前'
-}
-
-/** The one line above the queue: how much is waiting, and how old the worst is. */
-export interface InboxSummary {
-  count: number
-  /** Whole days the oldest item has been waiting, or null when the queue is empty. */
-  oldestDays: number | null
-  text: string
-}
-
-/**
- * Summarize the queue.
- *
- * The count alone is not enough to decide whether to act: "3 条" reads the same
- * whether they arrived this morning or three weeks ago. Staleness is what makes
- * an inbox feel urgent, so it is promoted into the sentence once it crosses a
- * week — and only then, because a "最老 1 小时" line would train people to
- * ignore the line entirely.
- */
-export function inboxSummary(
-  items: readonly { mtime: number }[],
-  nowMs: number,
-): InboxSummary {
-  const count = items.length
-  if (count === 0) {
-    return { count: 0, oldestDays: null, text: '提交区是空的，没有等你确认的东西' }
-  }
-  // The oldest item is the SMALLEST mtime: `mtime` is an absolute timestamp,
-  // so "oldest" means "written longest ago". Taking the max here would report
-  // the freshest submission's age and make a month-old queue look new.
-  let oldest = 0
-  for (const it of items) {
-    if (!Number.isFinite(it.mtime) || it.mtime <= 0) continue
-    if (oldest === 0 || it.mtime < oldest) oldest = it.mtime
-  }
-  const oldestDays = oldest > 0
-    ? Math.max(0, Math.floor((nowMs / 1000 - oldest) / 86_400))
-    : null
-  if (oldestDays !== null && oldestDays >= 7) {
-    return {
-      count,
-      oldestDays,
-      text: count + ' 条待晋升，最老一条已经积压 ' + oldestDays + ' 天',
-    }
-  }
-  return { count, oldestDays, text: count + ' 条待晋升' }
-}
-
-/**
- * Oldest first, so the top of the list is the thing to deal with first.
- *
- * The core returns newest-first. That ordering is right for "what did I just
- * submit" and wrong for a work queue: the item most likely to have been
- * forgotten is the one at the bottom, i.e. the one nobody scrolls to.
- */
-export function oldestFirst<T extends { mtime: number }>(items: readonly T[]): T[] {
-  return items.slice().sort(function (a, b) { return a.mtime - b.mtime })
-}
-
-/**
- * The readable part of a submission body, clipped for a side panel.
- *
- * Clipping counts CODE POINTS, not UTF-16 units: submissions are written by
- * other agents in any script, and a `.slice()` can land between the halves of
- * an astral character and render a replacement box.
- *
- * The tail of the raw file carries the write stamp (`（写入 …｜来源：…）`), which
- * is provenance for the core and noise for a human reading a preview — it is
- * dropped when it is the last non-empty line, and left alone when the note
- * happens to end with something else.
- */
-export function noteDigest(body: string | null | undefined, maxChars = 280): string {
-  const raw = String(body ?? '').replace(/\r\n/g, '\n').trim()
-  if (!raw) return ''
-  const lines = raw.split('\n')
-  while (lines.length > 0) {
-    const last = lines[lines.length - 1].trim()
-    if (last === '') { lines.pop(); continue }
-    if (/^（(?:写入|来源)[：\s]/.test(last) || /^\((written|source)[:\s]/i.test(last)) lines.pop()
-    break
-  }
-  const text = lines.join('\n').replace(/\n{3,}/g, '\n\n').trim()
-  const chars = Array.from(text)
-  if (chars.length <= maxChars) return text
-  return chars.slice(0, maxChars).join('').trimEnd() + '…'
 }
 
 // ── Health: the numbers that decide whether the library is working ──
@@ -607,57 +433,30 @@ export const COMMAND_NOTE =
   '命令里的 `memory` 是核心自带的命令行；没装它时等价于 `python -m unified_memory.memory <子命令>`。'
 
 /**
- * What the submission list actually is — AND who clears it.
+ * Why a conflict cannot be answered with yes/no.
  *
- * The second half is the point. This sentence used to stop at 「还没进记忆的
- * 事实」, which is true but says nothing about the two things a reader standing
- * in front of a non-empty queue needs: that the next promotion run handles it
- * by itself, and that the two buttons are an OPTION rather than the only exit.
- * Without that, the pane looks like it is asking for a confirmation it never
- * asked for — someone who opens it before the daily promotion cannot tell
- * whether the queue is waiting on *them* or on the clock, and reasonably
- * concludes the page is broken.
- *
- * No time of day is printed on purpose: the schedule belongs to the user's own
- * promoter job, so a hardcoded 「03:00」 would be wrong for every install that
- * runs it at another hour.
- *
- * The rest of the history is why the buttons had to be renamed: the pane used
- * to open straight into file names and two buttons named 查看 and 归档, and
- * neither word said what was being confirmed. 归档 is a REFUSAL — the file
- * moves to 已处理/ and never reaches memory — so a reader who took it for "file
- * it into memory" would empty the queue while believing they had accepted
- * everything.
- */
-export const INBOX_LEAD =
-  '这些是 Agent 提交、还没进记忆的事实，等每天的晋升任务处理：重复的会合并，' +
-  '判不了矛盾的会移到上面的「需要你裁决」。现在就点「收录」或「不采纳」，' +
-  '等于提前替晋升任务处理掉这一条。'
-
-/**
- * The two exits from the submissions list, said plainly.
- *
- * An earlier revision could only say "this pane refuses; run the command to
- * accept". That was true while promotion was vault-wide, but it made the pane a
- * dead end: the one thing a reader wants to do with a submission is decide, and
- * the only button refused it. The core now promotes one named file, so both
- * answers exist and the sentence can describe them instead of apologising.
- */
-export const INBOX_ACCEPT_NOTE =
-  '「收录」把这条写进记忆；「不采纳」移到 已处理/，不进记忆也不删文件。'
-
-/**
- * Why the queue has two kinds of row.
- *
- * A plain submission is a yes/no. A conflicting one is not: the new fact and an
- * existing line describe the same thing differently, so "yes" and "no" are not
- * enough — someone has to say which reading is true. The core has queued these
- * separately for exactly that reason; this is the sentence that explains why
- * they get their own block and their own three buttons.
+ * The new fact and an existing line describe the same thing differently, so
+ * "yes" and "no" are not two answers — someone has to say which reading is
+ * true. The core queues these instead of guessing, and this sentence says what
+ * the reader is looking at: two sides of one fact, not two facts.
  */
 export const CONFLICT_LEAD =
   '同一个位置出现了两种说法。上面是记忆里现在的，下面是这次提交想换成的。' +
   '这类判断默认交给 Agent：它能定的已经定掉，才轮到这里的 — 有 Agent 的判断就直接照着点，没有就自己看哪个对。'
+
+/**
+ * What an empty conflict queue says.
+ *
+ * Good news, and it has to read as such: an empty queue here means every
+ * submission either agreed with memory or was settled by the agent on its own.
+ * The old pane made emptiness ambiguous — the submission list below it was
+ * almost never empty, so the page always had rows on it and the reader could
+ * not tell "nothing for me" from "the panel is showing me someone else's work".
+ */
+export const CONFLICT_EMPTY = {
+  title: '没有需要你裁决的事',
+  hint: 'Agent 能自己定的都定掉了；两种说法都成立时才会到这里来找你',
+}
 
 /**
  * The two sides, named by their role rather than by their age.
@@ -825,42 +624,6 @@ export function decideReasonText(reason: string | null | undefined): string {
   return '裁决没有完成，请稍后重试'
 }
 
-/**
- * Turn an `acceptItem` refusal into a sentence.
- *
- * `conflicts` is not a failure: it means the submission contradicts memory, so
- * the core neither promoted nor retired it. The next step is a ruling, not a
- * retry, and the sentence has to send the reader to the block above rather than
- * to the same button.
- */
-export function acceptReasonText(reason: string | null | undefined): string {
-  const r = String(reason ?? '')
-  if (r === 'conflicts') return '这条和已有记忆冲突，先在「需要你裁决」里定一下'
-  if (r === 'not-a-submission') return '这个是提交区自带的说明/登记文件，不是待晋升的提交'
-  if (r === 'not-found') return '条目不存在，可能已被处理'
-  if (r === 'invalid-name') return '文件名不合法，只能处理提交区里的条目'
-  if (r === 'unavailable') return '记忆核心暂不可用，请稍后再试'
-  return '收录没有完成，请稍后重试'
-}
-
-/**
- * What one accept actually did.
- *
- * Zero promoted is not a failure and must not read like one: the submission may
- * have carried only facts memory already holds ("都是重复的") or no fact lines at
- * all. Both are legitimate outcomes of a correct click, and saying "已收录 0 条"
- * would look like the button is broken.
- */
-export function acceptOutcomeText(
-  result: { promoted: number; duplicates: number },
-): string {
-  if (result.promoted > 0) {
-    const dup = result.duplicates > 0 ? `，另跳过 ${result.duplicates} 条重复` : ''
-    return `已收录 ${result.promoted} 条${dup}`
-  }
-  if (result.duplicates > 0) return '没有新事实，都是记忆里已有的'
-  return '这条里没有可收录的事实'
-}
 
 /**
  * Chinese copy per core issue code.

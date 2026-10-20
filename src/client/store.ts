@@ -31,8 +31,6 @@ export const PREVIEW_URL = `${BASE_URL}/preview`
 export const NOTE_URL = `${BASE_URL}/note`
 /** One canonical note's body, by file name — the search pane's open action. */
 export const DOC_URL = `${BASE_URL}/doc`
-export const DISMISS_URL = `${BASE_URL}/dismiss`
-export const ACCEPT_URL = `${BASE_URL}/accept`
 export const DECIDE_URL = `${BASE_URL}/decide`
 export const STATS_URL = `${BASE_URL}/stats`
 /** The core's own issue list — the health pane's "what do I do about it". */
@@ -484,92 +482,6 @@ export async function loadDoc(
   }
 }
 
-// ── Dismiss ────────────────────────────────────────────────────────
-
-/**
- * Retire one inbox item.
- *
- * `ok` is true only when the host confirms the move. The route answers 200 *or*
- * 409 and either can carry `ok:false`, so the HTTP status is not the verdict —
- * `body.ok === true` is. A 200 with `ok:false` is a refusal (e.g.
- * `outside-inbox`), not a success.
- *
- * `reason` is returned alongside the verdict rather than folded into a boolean:
- * "该条目不在提交区" and "记忆核心暂不可用" need different words and different
- * next steps, and a bare `false` cannot tell a user which one happened.
- */
-export async function dismissItem(
-  name: string,
-): Promise<{ ok: boolean; reason: string | null }> {
-  try {
-    const r = await fetch(DISMISS_URL, {
-      method: 'POST',
-      cache: 'no-store',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name }),
-    })
-    const body = (await r.json().catch(function () { return null })) as
-      { ok?: boolean; reason?: unknown } | null
-    return {
-      ok: body?.ok === true,
-      reason: typeof body?.reason === 'string' ? body.reason : null,
-    }
-  } catch {
-    return { ok: false, reason: 'unavailable' }
-  }
-}
-
-// ── Accept ─────────────────────────────────────────────────────────
-
-/** What one accept did: how many facts landed, and whether the rest were seen. */
-export interface AcceptResult {
-  ok: boolean
-  reason: string | null
-  promoted: number
-  duplicates: number
-  conflicts: number
-}
-
-/**
- * Promote one inbox submission into memory.
- *
- * The yes button. `ok` is true only when the host confirms a promotion, and a
- * 200 can still carry `ok:false` — a refusal (`conflicts`, `not-a-submission`,
- * `not-found`) is a business answer, not a transport failure, so `reason` is
- * returned next to the verdict instead of being flattened into a boolean.
- *
- * The counts travel because the pane has something useful to say afterwards:
- * "收录 3 条" and "3 条重复，没有新事实" are different outcomes of the same
- * click, and a bare `true` renders them identically.
- */
-export async function acceptItem(name: string): Promise<AcceptResult> {
-  const empty = { ok: false, reason: 'unavailable', promoted: 0, duplicates: 0, conflicts: 0 }
-  try {
-    const r = await fetch(ACCEPT_URL, {
-      method: 'POST',
-      cache: 'no-store',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name }),
-    })
-    const body = (await r.json().catch(function () { return null })) as
-      { ok?: boolean; reason?: unknown; promoted?: unknown; duplicates?: unknown; conflicts?: unknown } | null
-    if (!body) return empty
-    const count = function (v: unknown): number {
-      const n = Number(v)
-      return Number.isFinite(n) && n > 0 ? n : 0
-    }
-    return {
-      ok: body.ok === true,
-      reason: typeof body.reason === 'string' ? body.reason : null,
-      promoted: count(body.promoted),
-      duplicates: count(body.duplicates),
-      conflicts: count(body.conflicts),
-    }
-  } catch {
-    return empty
-  }
-}
-
 // ── Conflicts: the questions that actually need a person ───────────
 
 /** One queued conflict: a new fact and the existing line it contradicts. */
@@ -822,7 +734,7 @@ function shapeStats(d: Record<string, unknown>): StatsData {
  * Read the aggregate feed for the console figures.
  *
  * The route's contract is the shape the brief documents. Three independent
- * gates, exactly like `dismissItem`:
+ * gates, exactly like `loadDoc`:
  *
  *  - the HTTP status must be ok, because a 500 body is not ours to trust;
  *  - `body.ok === true` must hold, because the route answers **200 with
