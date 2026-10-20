@@ -185,6 +185,31 @@ python -m unified_memory.promoter --review
 python -m unified_memory.promoter --apply
 ```
 
+### 冲突怎么办：先让 Agent 判，判不了才问你 (Conflicts — the agent decides first)
+
+新事实和既有事实相似但值不同时，promoter 不会覆盖，而是把这一对放进
+`情境信息/事实冲突待裁决.md`。**读这两行、拆噪声、找出唯一不同的一处是机械
+工作**，所以默认由 Agent 裁决；只有它确实分不出来，才轮到人：
+
+```bash
+# 队列里有什么（面板 / 脚本都读这个）
+memory preview conflicts --json
+
+# 判得出来：直接定，理由写进 事实冲突已裁决.md
+memory decide <key> 并存  --why "一个是文件、一个是目录，两者不冲突"
+
+# 判不出来：留下建议和通俗解释，条目仍留在队列里等人点头
+memory advise <key> 并存  --why "两条都成立，取决于你要用哪个"
+
+# 人不想逐条点：看队列、清掉不重要的（跳过 = 先放着，不是判断）
+memory decide <key> 跳过
+```
+
+四个裁决的含义：`用新`（旧行挪进「已取代」，新事实写入现役区）、`保留旧`
+（什么都不写）、`并存`（两条都留在现役区）、`跳过`（什么都不写，但这条不再
+追问）。插件面板把 `Agent 的判断` 显示在按钮上方，并给被建议的那颗按钮加
+`（Agent 建议）`；理由和裁决一起进日志，半年后还看得懂当初为什么这么定。
+
 完整指南：[docs/DEPLOY.md](docs/DEPLOY.md) · 系统架构：[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · 安全文档：[docs/SECURITY.md](docs/SECURITY.md)
 
 ---
@@ -206,7 +231,7 @@ python -m unified_memory.forgetter --apply                   # 6. 定期衰减�
 对接你自己的运行时（不一定是 Hermes）只需要三件事：
 
 1. **写**：调 `memory submit`（或 dsh 插件的 `memory_submit`）。
-2. **定期晋升（需要 Agent 参与，不是裸脚本）**：在你部署环境里**指定一个带调度/定时功能的 Agent**（dsh、Codex、Claude Code、Hermes 中任一）负责每日晋升——由它运行 `python -m unified_memory.promoter --review` **先审核待晋升清单**、`adjudicate` 裁决冲突、再 `--apply` 晋升，并做错过补跑。只有当部署里**完全没有**带调度能力的 Agent 时，才退回用系统 cron 跑 `daily_cron.py` 脚本兜底。
+2. **定期晋升（需要 Agent 参与，不是裸脚本）**：在你部署环境里**指定一个带调度/定时功能的 Agent**（dsh、Codex、Claude Code、Hermes 中任一）负责每日晋升——由它运行 `python -m unified_memory.promoter --review` **先审核待晋升清单**、用 `memory decide <key> <裁决> --why "<理由>"` 裁决冲突（判不了就 `memory advise … --why` 把建议和解释留在条目上）、再 `--apply` 晋升，并做错过补跑。只有当部署里**完全没有**带调度能力的 Agent 时，才退回用系统 cron 跑 `daily_cron.py` 脚本兜底。
 3. **读/注入**：dsh 用户不需要自己做这一步——插件内置 `agent/pre-step` 自动召回（`recall` 配置为 `auto` / `always` / `off`，细节见 [docs/DSH-MEMORY-ADAPTERS.md](docs/DSH-MEMORY-ADAPTERS.md)）。其他运行时可参考 `integrations/hermes/README.md` 的 hook 草图，把 `memory search` / `memory show` 的输出包进 `<memory-data>` 注入到系统提示。
 
 Hermes 集成（`integrations/hermes/`）只是"其中一个 Agent 接进来"的可选示例，不是前提条件。详细说明见 [docs/DEPLOY.md](docs/DEPLOY.md) 的 *Full mode* 章节。

@@ -9,6 +9,10 @@ Date: 2026-09-12
 > [Re-validation (2026-10-18)](#re-validation-2026-10-18-dsh-021-rc2), with the
 > earlier DSH `0.2.0-rc.2` pass in
 > [Re-validation (2026-10-13)](#re-validation-2026-10-13) below.
+>
+> The 0.8.1 release itself was re-validated on 2026-10-20
+> ([below](#re-validation-2026-10-20-081--three-versions-that-never-shipped));
+> that pass is the one that covers the currently published package.
 
 - DSH: `0.1.5-rc.2` / npm `next`
 - `@deepseek-ai/dsh-tools`: `0.1.5-rc.2`
@@ -236,5 +240,111 @@ release-state gate, not a defect signal.
   contract tests and by `dsh --dump-config` (the bundle is not skipped), not by a
   live HTTP call. Route *matching* is unchanged in 0.2.1, and the exact-before-prefix
   rule is what keeps them reachable.
+
+---
+
+## Re-validation (2026-10-20): 0.8.1 — three versions that never shipped
+
+Trigger: preparing the 0.8.1 release. `npm` still served `0.7.1` while the
+CHANGELOG had been carrying 0.7.2, 0.8.0 and 0.8.1 for weeks. Three releases'
+worth of change therefore reach users in a single update — the case where a
+regression has the most room to hide, and the reason this pass drives the CLI
+directly instead of only re-reading the unit tests.
+
+### What was run
+
+| Check | Result |
+| --- | --- |
+| `npm run check` | exit `0` (all nine stages, on a clean tree) |
+| `npm run typecheck` | exit `0` |
+| `npm run test:js` | 37 files, 867 tests, all passed |
+| `npm test` (Python 3.13, `core/tests`) | 364 tests, all passed |
+| `npm run test:setup` | 32 tests, all passed |
+| `npm run test:node` | 21 tests, all passed |
+| `npm run drift:check` / `npm run drift:python` | no drift, exit `0` |
+| `npm run build` | bundles regenerated, no diff against the committed ones |
+| `npm run audit:package` | `npm package audit ok: 103 entries` |
+| `npm pack --dry-run --json` | 103 files, 505.8 kB packed / 1.7 MB unpacked; all 22 `core/**` files present |
+| Behavioural probe, 35 cases over a scratch vault | 35 passed |
+| Mutation probe, 5 hand-applied defects | 5 caught, 0 survived |
+| Version consistency | `package.json` = `dsh.plugin.json` = `package-lock.json` = `0.8.1` |
+| Real vault smoke (`memory status --json`) | `structure: ok`, 478 memories / 377 vectors |
+
+The 35-case probe is the part worth describing: it lives in `%TEMP%`, drives the
+CLI as a subprocess exactly as the panel and an agent do, and covers eight
+groups — "a reason is a requirement, not a flag", "what `advise` writes comes
+back readable", "the queue was changed by someone else mid-flight",
+"uninitialized vault answers in one clean line", "each of the four rulings lands
+as specified", "a reason cannot poison the log", "housekeeping with nothing to
+clean", and "the stdout contract". Every case runs against its own temporary
+vault with `HOME`/`USERPROFILE` redirected.
+
+The mutation probe applies one defect at a time and requires the suite to go
+red: (1) the parser stops validating the value, (2) `cmd_advise` stops refusing
+an empty reason, (3) `collapse_whitespace` stops collapsing, (4) `main()` stops
+translating `VaultMissing`, (5) `VaultMissing` stops deriving from
+`RuntimeError`. Each was restored byte-for-byte afterwards.
+
+### Findings and fixes
+
+1. **`advise --why ""` was accepted and wrote an empty explanation.** The option
+   was declared `required=True`, which only asks whether the *flag* was given,
+   so `--why ""` and `--why "   "` both reached `record_advice` and produced a
+   `- 解释：` line with nothing after it: advice with no reason, which is the
+   exact failure this command exists to prevent. Refused in two places that
+   must agree — `type=plain_reason` in the parser (exit 2, nothing written) and
+   an explicit check in `cmd_advise` (which is importable API, so the parser is
+   not on every path). Both are pinned by tests, including a byte-for-byte
+   assertion that the queue is unchanged after a refusal.
+2. **An uninitialized vault produced a four-frame traceback.** Every command
+   that calls `ensure_vault` — including `memory gc --apply`, the very command
+   `doctor` recommends — died with a stack trace instead of a sentence.
+   `common.VaultMissing(RuntimeError)` is now raised there and translated in
+   `main()` into a one-line `SystemExit`, so the process prints one line to
+   stderr and exits 1 with no envelope. `status` and `doctor` still receive it
+   as an ordinary runtime error, because reporting "this is broken" is their job
+   (see `docs/JSON-CONTRACT.md` §1.3).
+3. **The lockfile still said `0.8.0`** while both manifests said `0.8.1`.
+   `npm install --package-lock-only` would have regenerated it but also churned
+   seven unrelated `peer` fields, so the two version strings were replaced
+   literally and the diff kept to 2 lines.
+4. **A redundant normalisation made one test blind.** `cmd_advise` collapsed the
+   reason and `record_advice` collapsed it again, so a mutation that removed
+   collapsing *anywhere* changed nothing observable and the test stayed green.
+   The three copies became `common.collapse_whitespace`; the mutation is now
+   caught. A second candidate mutation — passing the raw `why` instead of the
+   collapsed `note` — remained invisible for the same reason (the caller had
+   already normalised), so it was **deleted** instead of kept as a test that
+   cannot fail.
+5. **Three of the probe's first six failures were the probe's own fault.** It
+   created a queue file without creating a vault, so several cases were really
+   testing "vault missing"; and two cases asserted `applied: true` for
+   `保留旧` / `跳过`, which by design do not touch canonical notes. The
+   expectations were wrong, not the code. The probe now states each contract
+   above the case, before it runs.
+6. **The probe rewrote this machine's real config — for the third time.**
+   `memory init` resolves `~/.unified-memory.yaml` from the *child* process's
+   `HOME`, so a probe that ran `init` in a subprocess repointed the real file at
+   a scratch directory that was deleted moments later. Restored byte-for-byte
+   (`vault: C:\Users\zhaowei\OneDrive\Desktop\Obsidian Vault`, 57 bytes) and
+   confirmed with `memory status --json` (478 memories, `structure: ok`). Every
+   probe now sets `HOME` and `USERPROFILE`, and `init()` asserts that the config
+   it wrote landed inside the scratch root before the case is allowed to run.
+
+### Remaining boundary (current)
+
+- The panel's advice row was verified through `preview conflicts --json` (the
+  exact payload the browser half consumes) and through the built bundle
+  (`lib/client-ui.js` contains `dsh-memory-advice`, `dsh-memory-action-suggested`,
+  `CONFLICT_ADVICE_LABEL` and `modeSteps`), not by clicking the buttons in a live
+  Desktop window. The Desktop profile keeps running the previously installed
+  build until it installs the published 0.8.1.
+- `advise` has no HTTP route by design: the agent that read the queue writes the
+  advice through the CLI, and the browser half only reads it back. Its contract
+  is therefore CLI-only, and `docs/JSON-CONTRACT.md` §5.3.3 says so explicitly.
+- The "every orphan index is newer than 30 days" branch of the doctor message is
+  exercised in `test_health.py` against a scratch `~/.unified-memory`, not
+  against the real one — manufacturing old orphans in a live user's index
+  directory to read a log line was not worth the risk.
 
 

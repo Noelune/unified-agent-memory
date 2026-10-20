@@ -10,7 +10,7 @@
 | `memory status --json` | 配置与索引健康度（§3） |
 | `memory search <query> --json` | 本地 FTS5 检索（plain，§4.1） |
 | `memory search <query> --hybrid --json` | 混合检索（BM25 + 中文 bigram + 向量 + 图 + trigram，§4.2） |
-| `memory doctor --json` | 只读健康报告；`data.ok` 表示健康，命令本身的 `ok` 固定为 true |
+| `memory doctor --json` | 只读健康报告；`data.ok` 表示健康，命令本身的 `ok` 固定为 true（`orphanIndexes` 见 §5.4） |
 | `memory gc --json` | 派生数据清理报告（默认 dry-run；`--apply` 才删除） |
 | `memory search <query> --remote --json` | **例外：不产出信封**，见 §1.2 / §4.3 |
 | `memory preview <view> --json` | 只读治理视图（§5） |
@@ -18,6 +18,7 @@
 | `memory dismiss <name> --json` | 把**一条**提交区条目移入 `已处理/`（§5.3） |
 | `memory accept <name> --json` | 把**一条**提交区条目**晋升进记忆**并归档（§5.3.1） |
 | `memory decide <key> <choice> --json` | 裁决**一条**待裁决冲突（§5.3.2） |
+| `memory advise <key> <choice> --why "<理由>" --json` | 给**一条**冲突附上建议与理由，**不裁决**（§5.3.3） |
 
 另附宿主 HTTP 路由契约（浏览器半边消费）：`buildStatusPayload` 的载荷见 §6，
 全部路由见 §7。其中**只有三条会改动 vault**：`/accept`、`/dismiss`、`/decide`。
@@ -25,6 +26,9 @@
 > **`note` / `dismiss` / `accept` 的 `name` 与 `decide` 的 `key` 都来自信任边界之外**
 > （浏览器按钮），因此只接受**提交区内的单个文件名**或**冲突队列里的稳定编号**，不接受路径。
 > 派生字段是数据，逐条带 `untrusted`。
+>
+> `advise` 的 `key` 受同一条约束（它来自 `preview conflicts` 的输出），但它**没有 HTTP 路由**：
+> 写建议的是读到队列的那个 Agent，走 CLI；面板只负责把建议**读**回来渲染（§5 `detail.advice`）。
 
 ---
 
@@ -37,9 +41,10 @@
 ```
 
 - `ok`：布尔。**不是**「命令是否跑起来」的标志，而是 `data.ok` 的副本（见 §1.1）。
-  除 `dismiss` 外，各命令成功恒为 `true`；`dismiss` 在业务拒绝时**仍打印信封且 exit 0**，
-  此时外层 `ok` 与 `data.ok` **同为 `false`**（见 §1.1，这是最容易被误用的字段）。
-- `command`：命令名。取值 `"status"`、`"search"`、`"preview"`、`"note"`、`"dismiss"`、`"accept"`、`"decide"`。
+  各命令成功时恒为 `true`；`dismiss` / `accept` / `decide` / `advise` 在业务拒绝时
+  **仍打印信封且 exit 0**，此时外层 `ok` 与 `data.ok` **同为 `false`**（见 §1.1，
+  这是最容易被误用的字段）。`note` 不接受这种形态：它恒 `ok: true`，失败写在 `data.reason`。
+- `command`：命令名。取值 `"status"`、`"search"`、`"preview"`、`"note"`、`"dismiss"`、`"accept"`、`"decide"`、`"advise"`。
 - `data`：命令自有载荷，见下。
 - 输出为**单行**紧凑 JSON，`ensure_ascii=False`（中文原样输出，不转义为 `\uXXXX`）。
   消费方必须按「读一整行 → 解析」处理，不可假设跨行美化格式。
@@ -48,9 +53,12 @@
 > `core/unified_memory/preview.py` 的 `envelope()`（同形信封）；`note` / `dismiss`
 > 各自在 `cmd_note` / `cmd_dismiss` 内直接 `json.dumps`（同形信封）。
 
-### 1.1 `dismiss`：失败**也打印信封且 exit 0**（区别于「非零退出」的失败）
+### 1.1 业务拒绝：**也打印信封且 exit 0**（区别于「非零退出」的失败）
 
 **这是本契约最容易被写错的一点，务必读完再写消费方代码。**
+
+`dismiss` 是这条规则最典型的例子，`accept` / `decide` / `advise` 同样如此——
+它们都「听懂了请求但执行不了」，那是业务答复，不是故障。
 
 `cmd_dismiss`（`memory.py` 约 407-417 行）的信封是：
 
@@ -76,6 +84,9 @@ json.dumps({"ok": result["ok"], "command": "dismiss", "data": result})
   失败写在 `data.reason`（§5.2）；**文本形态**没有信封可承载原因，所以读不到时
   往 stderr 报错并以**非零码**退出（此前恒退出 0 并打印空行，"文件不存在"与
   "文件是空的"在管道里无法区分）。
+- **参数校验失败一律 exit 2 且没有信封**（argparse 在命令跑起来之前就拒了）：
+  `advise` 缺 `--why`、或 `--why` 是纯空白（§5.3.3），`decide` 缺 `key`/`choice`。
+  消费方看到 exit 2 就该读 stderr，不要指望 stdout 有 JSON。
 
 > `preview` 的 `data.status == "unsupported"` 是**成功**信封（`ok: true`），
 > 不是失败——它表示「该视图结构上无法回答」，见 §5.1。
@@ -116,6 +127,36 @@ doc: <笔记文件名>
 | `preview <view> --json` | JSON 信封 |
 | `note <name> --json` | JSON 信封（恒 `ok: true`；读不到时 `body: null` + `reason`） |
 | `dismiss <name> --json` | JSON 信封（**业务拒绝时 `ok: false` 且 exit 0**，§1.1） |
+| `accept <name> --json` | JSON 信封（同上，见 §5.3.1） |
+| `decide <key> <choice> --json` | JSON 信封（同上，见 §5.3.2） |
+| `advise <key> <choice> --why … --json` | JSON 信封（同上；缺 `--why` 或纯空白是 exit 2 无信封，见 §5.3.3） |
+| `doctor --json` | JSON 信封 |
+| `gc --json` | JSON 信封（默认 dry-run） |
+
+### 1.3 未初始化 vault：一行 stderr，退出码 1，**没有信封**
+
+`ensure_vault()` 在 vault 结构缺失时抛 `common.VaultMissing`，`main()` 把它译成
+`SystemExit(str(exc))`——所以进程以 1 退出，stderr 是**一行**，**不带 traceback**、
+**stdout 为空**：
+
+```
+vault not initialized at <path> — run "memory init --vault <path>" (or set UNIFIED_MEMORY_VAULT)
+```
+
+- 适用于 `gc` / `preview` / `advise` / `decide` / `accept` / `dismiss` / `sync` /
+  `search` 等所有会 `ensure_vault` 的命令。**没有 `data` 可读**：`data` 缺失表示
+  「core 没给出业务答复」（同 §1.1 的判据），宿主据此归为 `unavailable`。
+- **`status` / `doctor` 不在其中**，它们自己捕获并产出报告：
+  - `status` 以 **exit 0** 报 `structure: "MISSING: …"`（§3.2）。
+  - `doctor` 照常打印信封：`data` 只有 `{ok: false, vault, issues}` 三个键，issues 里
+    恰好一条 `severity: "error"` / `code: "vault-missing"`。外层 `ok` **仍是 `true`**
+    （`doctor` 的信封不复制 `data.ok`，健康与否只看 `data.ok`，见 §5.4）。进程**以 1 退出**——
+    `cmd_doctor` 打完报告后按 issues 的严重度决定退出码，所以「有信封」与「exit 0」
+    在这里是两件事。
+  - 这是有意的：这两个命令的职责就是「告诉你哪里坏了」，压缩成一行错误反而丢掉了
+    其余检查项。
+- 在 0.8.1 之前，这一路径抛的是四帧 traceback，且 `doctor` 自己提示的
+  `memory gc --apply` 正是最容易被这样打脸的一条。
 
 ---
 
@@ -345,6 +386,7 @@ else:
 | `new` | `{text, recorded, source}`：这次提交的事实 |
 | `old` | `{text, recorded, source}`：记忆里现在的那条 |
 | `change` | `{prefix, new, old, suffix}`，或 `null`（两侧一致时） |
+| `advice` | `{choice, why}`，或 `null`：读到这条冲突的 Agent 附上的建议与理由（§5.3.3） |
 
 - `text` 去掉了列表符与**含 `写入`/`来源` 的**尾部括注。仅当括注讲的是出处才剥，
   `（随时可回滚）` 这类属于事实本身，保留 —— 否则读者看不到该看的那半句。
@@ -354,6 +396,16 @@ else:
   `suffix` 是共同结尾。切点会吸附到 `\`、`/`、`：` 这类分隔符，避免把差异切在
   词中间；`change` 存在时恒有 `prefix + 该侧差异段 + suffix == 该侧 text`。
 - `detail` 不含原始记录，所以它**不能**代替 `new`/`old` 用于裁决或回写。
+- `advice` 是 `null` 而不是 `{}`：空对象会让每一行都像是「已经有 Agent 看过并给了建议」。
+  面板据此决定画不画建议块（`dsh-memory-advice`）。
+- `advice.why` 与 `memory advise` 写进队列的那一行逐字相同——core 在写入时就把理由
+  压成了一行（`collapse_whitespace`），换行与连续空格不会穿到面板上。手写的
+  `- **建议**：…` / `- **解释**：…` 块同样读得回来。
+- `advice` 与 `new`/`old` 同属**派生字段**，随 `items[]` 逐条带 `untrusted: true`（§2）：
+  Agent 写的建议是一段散文，照样是数据，不是指令。
+- 建议**不改变**这条冲突的待裁决状态：它不会出队、不会让 `decide` 变成多余、也不会让
+  `_adjudicated_facts` 压掉任何事实。裁决权仍在人手上，`advice` 只是把「为什么判不了」
+  一并交出来。
 
 ### 5.1 `status`：空结果不等于"没有"
 
@@ -504,6 +556,9 @@ else:
 `reason` 枚举：`not-found`（已被裁决或文件被手工改过）/ `unknown-choice` / `unavailable`。
 宿主路由另有一个 `invalid-key`：解析器直接拒掉 key 形状，进程根本没起来。
 
+> `decide --why` 是**可选**的，只落在 `事实冲突已裁决.md` 的历史日志里；`advise` 的
+> `--why` 是**必需**的，因为它就是产出物本身（§5.3.3，那里多一个 `no-reason`）。
+
 > **`跳过` 不进宿主路由**（`src/route-decide.ts` 的 `parseDecideBody` 拒收）。它会记录裁决并出队，
 > 而 `_adjudicated_facts` 从此永久压掉这条事实 —— 一个叫「跳过」的按钮会**静默地永久结掉**
 > 用户拒绝回答的问题。CLI 里它是给终端前的人「先不做」用的，语义不同。
@@ -526,6 +581,86 @@ else:
 > 只认第一种时，第二种写法的队列会被读成 `[]` —— `adjudicate` 打印「no pending conflicts」，
 > 而冲突就明明白白写在文件里。**解析为空不等于队列为空**，这类读取必须两个写法都认。
 > `事实冲突已裁决.md` 也是双写法：`- <stamp>｜裁决：…｜新：…` 与 `- **新提交**：…`。
+
+### 5.3.3 `memory advise <key> <choice> --why "<理由>" --json` — 判不了，就写清「为什么判不了」
+
+`decide` 的另一半，为诚实的死角而设：Agent 读完冲突两侧、确实分不出哪条是真的、于是停手。
+把同样两行原封不动扔回给人，正是让队列读不下去的原因；`advise` 把建议与理由**写进那条冲突本身**，
+面板于是能在按钮上方显示「Agent 建议并存，因为…」，而不是再问一遍读者答不出的问题。
+
+`choice` ∈ `用新` / `保留旧` / `并存`（`promoter.ADVISABLE`）。**`跳过` 不在其中**：
+它是「先不做」，不是「哪一侧成立」的意见，用 `decide … 跳过`。
+
+```json
+{"ok": true,  "command": "advise", "data": {"ok": true,  "reason": null,         "key": "20261019030125-1", "choice": "并存", "why": "一个文件一个目录都说得通"}}
+{"ok": false, "command": "advise", "data": {"ok": false, "reason": "unknown-choice", "key": "20261019030125-1", "choice": "跳过", "allowed": ["用新", "保留旧", "并存"]}}
+{"ok": false, "command": "advise", "data": {"ok": false, "reason": "not-found",      "key": "ghost-key",        "choice": "并存"}}
+```
+
+`data` 字段：`ok` / `reason` / `key` / `choice`，成功时**另有 `why`**（压成一行后的理由）；
+`unknown-choice` 另有 `allowed`。`reason` 枚举：
+
+| 值 | 含义 |
+|---|---|
+| `null` | 建议已写入队列条目 |
+| `no-reason` | 理由压掉空白后为空。**先于查队列判定**：「没话可说」是关于请求的事实，不是关于队列的，所以它不会因为 key 恰好不存在而被报成 `not-found` |
+| `not-found` | `key` 不在队列里，或写回时那条已消失（别人刚裁决掉，属正常竞争，不是故障） |
+| `unknown-choice` | `choice` 不在 `ADVISABLE` 里（最常见的是 `跳过`） |
+
+**`--why` 是要求，不是开关。** `--why ""` 与 `--why "   \n\t "` 都在 argparse 的
+`type=plain_reason` 里被拒：**exit 2、stdout 为空、队列逐字节不变**。在 0.8.1 之前，
+`required=True` 只问「这个开关有没有给」，所以空的 `--why` 一路写出一行 `- 解释：`，
+建议有、理由没有——正是这个命令要修掉的那种「把问题原样扔回来」。
+
+- `no-reason` 因此**从命令行不可达**：它是给 `cmd_advise()` 这个可导入 API 的调用方留的拒绝，
+  那两个入口都要挡（CLI 的 `type=`、函数的判空），否则绕开命令行就能写出一条空理由。
+- 理由里的换行与连续空白在写入前被压成一行（`common.collapse_whitespace`）：队列是逐行解析的
+  markdown，多行理由会把 `- 解释：` 的第二行变成一条新条目。
+
+**它写什么、不写什么**：只改队列文件（`情境信息/事实冲突待裁决.md`），在条目里追加/替换
+`- 建议：<choice>` 与 `- 解释：<reason>`（两种队列写法都支持，重复建议**替换**而不是堆叠）；
+**不碰 canonical 笔记、不出队、不写裁决日志**。所以 `applied` 这个概念不存在——
+一条带建议的冲突仍然是待裁决的，`preview conflicts` 照常列出它，只是 `detail.advice` 不再是 `null`。
+
+### 5.4 `memory doctor --json`：`orphanIndexes` 的「够老」与「还新」
+
+`doctor` 走 `emit_json()`，因此**外层 `ok` 恒为 `true`**——它描述的是「报告有没有产出」，
+不是「记忆库健不健康」。健康与否只看 `data.ok`（`issues` 里没有 `severity: "error"` 即为 `true`）。
+
+**退出码与信封是两件事**：`cmd_doctor` 打完报告后按 issues 决定退出码——有 `error` 级 issue
+→ **exit 1**；`--strict` 时连 `warn` 也算 → exit 1；否则 exit 0。所以「`--json` 拿到了完整
+信封」与「进程退出 0」不能互相推断。
+
+`data` 顶层键：`vault`、`ok`、`index`、`inbox`、`canonical`、`conflicts`、`embeddings`、
+`digest`、`issues`、`orphanIndexes`（vault 未初始化时只有 `ok` / `vault` / `issues` 三个，
+见 §1.3）。
+
+```json
+"orphanIndexes": {"count": 0, "bytes": 0, "files": [], "prunable": 0, "newestAgeDays": null}
+```
+
+| 字段 | 含义 |
+|---|---|
+| `count` | 孤儿索引库总数：`~/.unified-memory` 下「源 vault 已不存在」的 `*.db`（当前 vault 的库永不参与） |
+| `bytes` | 这些库的字节数合计 |
+| `files` | 各自的绝对路径 |
+| `prunable` | 其中 `ageDays >= ORPHAN_INDEX_DAYS`（30）的条数，即**默认 `memory gc --apply` 真的会删掉**的那部分 |
+| `newestAgeDays` | 最年轻的孤儿是几天大（保留 1 位小数）；`count == 0` 时为 **`null`**，不是 `0` |
+
+**为什么要分成两个数**：`gc` 拒绝删除比 30 天新的孤儿——vault 可能只是暂时不可达（外接盘没插），
+为一个掉线的盘就把索引删掉，代价比它占的磁盘大。所以一个只数「全部孤儿」的报告，会把自己的
+提示变成一次空操作：读者照着跑 `memory gc --apply`，什么也没删，明天页面上还是同一句话。
+
+消费方的判据：
+
+| 情形 | 该给的提示 |
+|---|---|
+| `count == 0` | 什么都不说 |
+| `count > 0` 且 `prunable == count` | `memory gc --apply` 会把它们全部删掉 |
+| `count > 0` 且 `prunable == 0` | **不要**让人去跑 `memory gc --apply`——那是一次设计上的空操作，要说「都还年轻，默认保留；现在就想删用 `memory gc --apply --older-than 0`」 |
+| `count > 0` 且两者都有 | 分别说清「N 个够老会被删、M 个还新会被留」，并把 `--older-than 0` 作为「现在全删」的出口 |
+
+`files` / `count` 是**派生自磁盘的事实**，不是用户正文；但路径本身来自用户环境，按数据对待。
 
 ---
 
@@ -897,9 +1032,12 @@ python -m unified_memory.memory status --json
 python -m unified_memory.memory search "记忆系统" --json
 python -m unified_memory.memory search "记忆系统" --hybrid --json
 python -m unified_memory.memory preview pending --limit 10 --json
+python -m unified_memory.memory preview conflicts --limit 5 --json
 python -m unified_memory.memory note "dsh-2026-09-22-001.md" --json
-# dismiss 是唯一写命令：业务拒绝时仍打印信封且 exit 0（§1.1）
+# 写命令（dismiss / accept / decide / advise）：业务拒绝时仍打印信封且 exit 0（§1.1）
 python -m unified_memory.memory dismiss "dsh-2026-09-22-001.md" --json
+# 判不了就把建议与理由写回那条冲突；理由为空白是 exit 2、无信封（§5.3.3）
+python -m unified_memory.memory advise "20261019030125-1" 并存 --why "两种目录布局都能成立" --json
 # 注意：--remote 与 --json 同用时没有信封（§1.2）
 ```
 
@@ -950,5 +1088,13 @@ elif payload["command"] == "preview":
   若将来要给 `dismiss` 加"命令是否跑起来"的独立信号，**必须新增字段**，不得复用 `ok`。
 - `/dismiss` 的 `reason` 取值集合是契约的一部分：`unavailable` **只能**表示"core 未给出业务答复"，
   不得用来覆盖 `not-found` / `outside-inbox` / `io-error:*`（§7.4）。
+- `advise` 的 `reason` 取值集合同样是契约（§5.3.3）：`no-reason` **不得**被折成 `not-found` ——
+  「没话可说」是关于请求的事实，与队列里有没有那条无关，两者混同会让调用方去查一个不存在的
+  竞争条件。
+- `conflicts[].detail.advice` 为 `null`（或字段缺席）表示**没有建议**，**不得**折成 `{}`
+  或空字符串：那会让每一行都像是已经有 Agent 看过（§5）。
+- `doctor` 的外层 `ok` 恒为 `true`，健康与否**只**看 `data.ok`（§5.4）；`orphanIndexes.newestAgeDays`
+  在无孤儿时为 `null`，**不得**折成 `0`（否则「一个孤儿也没有」与「刚刚生成了一个孤儿」
+  在面板上无法区分）。
 - 五条 HTTP 路由的 `cache-control: no-store` **不得**移除；读路由"core 不可用仍返回 200"的
   降级语义（§7.2）同样不得收窄。

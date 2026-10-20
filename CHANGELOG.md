@@ -6,6 +6,59 @@ All notable changes to this project are documented in this file.
 
 ## [0.8.1] — 2026-10-20
 
+### Added — 判不了就写清理由，别把问题原样扔回来
+
+待确认页给每条冲突三颗按钮（取代 / 保留旧 / 共存），等于把「哪边是真的」这个
+问题原封不动交回给人。可题面上那两行是**写给机器的**：一条带 bullet、时间戳和
+事件 id 的单行，人得先剥掉噪声、再在两串几乎相同的路径里找出唯一不同的一处。
+两件事都是机械的 —— 读题机器在行，人不在行。所以新的分工是：**尽量由 Agent
+裁决，判不了才粘到待确认页，而且必须带上通俗解释。**
+
+- 新核心动词 `memory advise <key> <用新|保留旧|并存> --why "<通俗解释>"`：把
+  `- 建议：…` / `- 解释：…` **原地**写进队列条目（再 advise 一次是替换而非堆叠），
+  条目仍是 pending —— 给建议不是裁决。手写 `- **建议**：` 也一样能读回。
+- `memory decide … --why`：理由跟着裁决写进 `事实冲突已裁决.md`，作为裁决行下方
+  的缩进续行。理由不能污染裁决日志 —— `_adjudicated_facts` 只挖 bullet 行，一条
+  引用了 `｜新：` 的理由不会被当成「一条从没裁决过的事实」重新入队。
+- 面板 `conflicts-pending` 从 `analyze` 变成 **`judge` 模式**：按钮上方显示
+  `Agent 的判断` 与它的解释，被建议的那颗按钮加 `（Agent 建议）` 并高亮；没有建议
+  的行一个字都不加（不编一个默认建议）。修法提示词同时给出两条路径 —— 判得出来
+  就 `decide --why`，判不出来就 `advise --why`；「都不做」才是原样扔回去。
+- `preview conflicts` 的 `detail` 多一个 `advice`（`{choice, why}`，没有则 `null`），
+  面板不必再解析队列原文。
+- `跳过` 不在 `ADVISABLE` 里：它是「先放着」，不是关于哪边为真的判断。给它一颗
+  建议按钮，会让一个永远清不空的队列看起来像有四个答案。
+
+### Changed — 健康页的孤儿索引开始区分「够老」和「还新」
+
+`doctor` 原来对所有孤儿索引给同一句「跑 `memory gc --apply`」，而 `gc` 默认只删
+满 30 天的。于是还有用的孤儿库被建议删除，用户跑完发现一个没少 —— 提示和命令
+互相矛盾。现在 `orphanIndexes` 除了 `count` 还带 `prunable`（够老的条数）与
+`newestAgeDays`（最年轻的几天大），提示分三支：
+全部够老（给命令）、全部不够老（说清还要等多久）、两者都有（只删够老的）。
+
+### Fixed — 空 `--why` 也能通过，写出一行空的「解释」
+
+`advise` 的 `--why` 是 `required=True`，而 argparse 只问这个开关**有没有给**：
+`--why ""` 和 `--why "   "` 都算给了。结果是队列里出现 `- 解释：` 后面什么都没有
+—— 正是这条命令存在的目的所要替换的那种读不懂的建议。
+
+现在校验的是值不是开关：`plain_reason` 作为 parser 的 `type=`，空值 → exit 2 且
+一个字都不写；`cmd_advise` 是可导入 API，也拒绝，回答 `data.reason: "no-reason"`
+（面板要的是原因码，不是 SystemExit），并且**在查队列之前**判 ——「没什么可说」
+是关于这次请求的事实，不是关于队列的事实，条目恰好不在时不能报成 `not-found`。
+三处 `" ".join(str(x).split())`（parser、命令、两个写入者）合并成
+`common.collapse_whitespace`：待确认队列是行式格式，粘进来的多行理由必须落成一行，
+而「有没有内容」和「压成一行」用同一个函数，两者就不会各自漂移。
+
+### Fixed — 没初始化 vault 时，命令会抛 traceback
+
+`ensure_vault` 抛的是裸 `RuntimeError`，而它是所有命令的第一步（core 里 23 处
+调用）。于是新机器上跑 `memory gc --apply` —— `doctor` 自己推荐的那条命令 ——
+得到的是一条四帧 traceback，为的是一个「消息里已经写明怎么修」的状态。现在抛
+`VaultMissing`（`RuntimeError` 的子类）：CLI 打印那句话并退出 1，`status`/`doctor`
+照旧捕获它（仍是 RuntimeError），报告里 `vault-missing` 这个 code 一字未改。
+
 ### Added — 升级会自动把「其余三件」做完
 
 一次插件升级不是一件事，是四件：npm 只替换 `lib/` 和 `core/`，而 shim、托管段、
