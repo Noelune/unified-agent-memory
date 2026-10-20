@@ -29,6 +29,21 @@ export const PANEL_CSS = `
   background: var(--dsw-alias-interactive-bg-active);
   color: var(--dsw-alias-label-primary);
 }
+/* The wide sidebar is a row, not a 36px icon cell: the badge has to widen the
+   trigger or four characters would be clipped to "可". The rail keeps the fixed
+   square, which is why the badge is drawn only when data-wide is "row". */
+.dsh-memory-trigger[data-wide="row"] {
+  width: auto; min-width: 36px;
+}
+/* "可更新" beside the glyph. label-primary rather than the alarm tint: the 6px
+   dot on the glyph already carries the signal, and coloured body text is the
+   one combination this panel's contrast checks have burned us on — the same
+   words have to stay legible in both themes. */
+.dsh-memory-badge {
+  font-size: 11px; font-weight: 600; line-height: 1;
+  letter-spacing: .02em; white-space: nowrap;
+  color: var(--dsw-alias-label-primary);
+}
 /* shell.overlay is a click-through floating layer: entries must opt back into
    pointer events or every click falls through to the app underneath. The
    wrapper is transparent and only the sheet inside it is interactive. */

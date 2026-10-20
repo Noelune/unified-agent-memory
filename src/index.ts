@@ -75,6 +75,8 @@ import { ACCEPT_PATH, handleAccept, parseAcceptBody } from './route-accept.ts'
 import { DECIDE_PATH, handleDecide, parseDecideBody } from './route-decide.ts'
 import { DISMISS_PATH, handleDismiss, parseDismissBody } from './route-dismiss.ts'
 import { STATS_PATH, buildStatsArgs, shapeStatsResult } from './route-stats.ts'
+import { UPDATE_PATH, applyUpdate } from './route-update.ts'
+import type { PluginManagerLike } from './route-update.ts'
 import { startUpgradeReconcile, upgradeInfo } from './upgrade-boot.ts'
 import type { PluginConfig } from './types.ts'
 import type { StatusStats } from './status-payload.ts'
@@ -177,12 +179,22 @@ export function apply(ctx: Context, config: Record<string, unknown> = {}): void 
   // capture because the service can appear after this plugin starts, and the
   // tool only reads it at call time.
   let approvalRef: ApprovalLike | undefined
+  // `pluginManager` is the host's own package operation — the one the Plugins
+  // page uses. Resolved the same optional way as `approval`: a host without it
+  // (headless, CLI) keeps loading, and the update route answers `unsupported`.
+  let pluginManagerRef: PluginManagerLike | undefined
   const self = ctx as unknown as {
-    inject?: (deps: string[], apply: (child: { approval?: ApprovalLike }) => void) => unknown
+    inject?: (
+      deps: string[],
+      apply: (child: { approval?: ApprovalLike; pluginManager?: PluginManagerLike }) => void,
+    ) => unknown
   }
   if (typeof self.inject === 'function') {
     self.inject(['approval'], (child) => {
       approvalRef = child.approval
+    })
+    self.inject(['pluginManager'], (child) => {
+      pluginManagerRef = child.pluginManager
     })
   }
 
@@ -500,6 +512,35 @@ export function apply(ctx: Context, config: Record<string, unknown> = {}): void 
         } catch {
           sendJson(res, 500, { ok: false, status: 'unavailable', issues: [], counts: null })
         }
+      })()
+    },
+  })
+  // ---- HTTP update route: what the sidebar badge clicks into ----
+  // POST + `guardWrite`: this is the fourth writing route, and the only one that
+  // changes what code will run on the NEXT boot. A hostile page must not be able
+  // to trigger it with a forged form post, so it gets the same CSRF fence as
+  // /decide and /dismiss.
+  //
+  // The body is read and discarded. The route takes no arguments on purpose:
+  // the only decision it could accept is "which version", and the answer to that
+  // is whatever the updater's last registry read says. A caller-supplied version
+  // would be a way to install an arbitrary package under this plugin's name.
+  ws.webServer.register({
+    kind: 'exact',
+    path: UPDATE_PATH,
+    handler(req, res) {
+      if (!guardWrite(req, res)) return
+      return (async () => {
+        try {
+          await readBody(req)
+        } catch {
+          sendJson(res, 413, { ok: false, error: 'body too large' })
+          return
+        }
+        // 409 for "well-formed but could not be carried out" (unsupported host,
+        // no known version, pnpm failure); 200 only for a real install.
+        const outcome = await applyUpdate(pluginManagerRef, getUpdateInfo())
+        sendJson(res, outcome.ok ? 200 : 409, outcome)
       })()
     },
   })

@@ -73,3 +73,46 @@ describe('client panel rebuild', () => {
     )
   })
 })
+
+// ── The badge: "可更新", and the click that installs ────────────────
+//
+// No renderer here either, so what is pinned is the wiring that a component
+// test would otherwise catch: the label is drawn from `updateBadge`, the click
+// runs the install exactly when the badge says it installs, and the sheet's
+// progress is visible because the click also opens it.
+describe('sidebar update badge', () => {
+  const panel = read('src/client/Panel.tsx')
+  /** Strip comments: a mention in prose must not satisfy a wiring assertion. */
+  const code = panel.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+
+  it('labels the trigger from updateBadge instead of the 6px dot alone', () => {
+    expect(code).toContain('updateBadge(notice, progress)')
+    expect(code).toContain('badge.label')
+    expect(code).toContain('dsh-memory-badge')
+  })
+
+  it('runs the install on click, and only when the badge offers one', () => {
+    // The trap this guards: a badge that says "可更新" and only opens the panel
+    // is a lie in the shape of a button.
+    expect(code).toContain('if (badge.installs)')
+    expect(code).toContain('runUpdate()')
+    const click = /onClick:\s*function\s*\(\)\s*\{([\s\S]*?)\n    \}/.exec(code)?.[1] ?? ''
+    expect(click, 'click handler must be readable').not.toBe('')
+    expect(click).toContain('setOpen(true)')
+  })
+
+  it('prints the install phase under the console, not just the offer', () => {
+    // "有新版本" left on screen after a failed install is the panel contradicting
+    // what the user just watched happen.
+    expect(code).toContain('updateLine(notice, progress)')
+  })
+
+  it('styles the badge, and only widens the trigger in the row seat', () => {
+    // The rail seat is a 36px square: four characters there would wrap or push
+    // the neighbouring actions aside, so the label is drawn for `wide` only.
+    const css = read('src/client/styles.ts')
+    expect(css).toMatch(/\.dsh-memory-badge\s*\{/)
+    expect(css).toMatch(/\.dsh-memory-trigger\[data-wide="row"\]\s*\{[^}]*width:\s*auto/)
+    expect(code).toContain('wide && badge.label !== null')
+  })
+})

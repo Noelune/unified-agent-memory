@@ -61,6 +61,10 @@ const ROUTE_PATHS = [
   '/api/dsh-unified-agent-memory/stats',
   // The core's own issue list, behind the health pane's verdict.
   '/api/dsh-unified-agent-memory/doctor',
+  // The sidebar badge's install. The only route that mutates the PROFILE rather
+  // than the vault: it hands the version to the host's plugin manager, so this
+  // plugin never runs pnpm itself.
+  '/api/dsh-unified-agent-memory/update',
 ]
 
 /** Every model tool the host half registers, in registration order. */

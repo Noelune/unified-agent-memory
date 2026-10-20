@@ -16,7 +16,8 @@ import { useCallback, useEffect, useRef, useState } from '../deps.ts'
 import { buildRepairPrompt } from '../repair-prompt.ts'
 import type { RepairEnv } from '../repair-prompt.ts'
 import { runningOf, sendBrief, sessionsOf } from './agent-bridge.ts'
-import type { HealthFinding } from './view.ts'
+import { IDLE_UPDATE } from './view.ts'
+import type { HealthFinding, UpdateProgress } from './view.ts'
 import type {
   DoctorCounts, DoctorIssue, DoctorPayload,
   PreviewData, PreviewView, SearchHit, StatsData, StatsPayload, StatusPayload,
@@ -35,6 +36,14 @@ export const DECIDE_URL = `${BASE_URL}/decide`
 export const STATS_URL = `${BASE_URL}/stats`
 /** The core's own issue list — the health pane's "what do I do about it". */
 export const DOCTOR_URL = `${BASE_URL}/doctor`
+/**
+ * The one mutating route the sidebar badge uses.
+ *
+ * POST, empty body, no credentials of any kind: it asks the HOST to install the
+ * version the host's own registry read already found. Nothing about this machine
+ * travels with it, which is the property the badge's tooltip promises.
+ */
+export const UPDATE_URL = `${BASE_URL}/update`
 
 /**
  * Default cap on a preview list, matching the host route.
@@ -141,6 +150,101 @@ export function useMemoryOpen(): boolean {
   useEffect(function () {
     const unsub = subscribe(function () { setSnap(isOpen()) })
     setSnap(isOpen())
+    return unsub
+  }, [])
+  return snap
+}
+
+// ── Update: one POST, and only when a person clicks ────────────────
+//
+// Deliberately NOT polled and NOT retried. The only moment an install runs is
+// the moment someone clicks the badge, because that click is the whole consent
+// story: no background upgrade, no surprise restart prompt, no request that
+// carries anything about this machine.
+
+let progress: UpdateProgress = IDLE_UPDATE
+
+/** The current install state, for non-React readers (and tests). */
+export function updateProgress(): UpdateProgress { return progress }
+
+function setProgress(next: UpdateProgress): void {
+  progress = next
+  emit()
+}
+
+/**
+ * Test hook, the same one `updater.ts` carries: the install state is
+ * module-level by design (the badge and the sheet are sibling Slot occupants),
+ * so a test has to be able to put it back to "nothing tried".
+ */
+export function _resetUpdateForTesting(): void {
+  progress = IDLE_UPDATE
+}
+
+/**
+ * Read one route answer as install state.
+ *
+ * Pure and separate from `runUpdate` so the mapping is testable without a
+ * fetch: the interesting part is which of the five statuses become "done",
+ * "nothing to do" and "tell the user why", and a wrong mapping here shows a
+ * failure as a success.
+ */
+export function readUpdateOutcome(
+  http: number,
+  body: { status?: unknown; version?: unknown; reason?: unknown } | null,
+): UpdateProgress {
+  const status = typeof body?.status === 'string' ? body.status : ''
+  const version = typeof body?.version === 'string' ? body.version : null
+  const reason = typeof body?.reason === 'string' ? body.reason : null
+  if (status === 'installed') return { phase: 'installed', version, reason: null }
+  if (status === 'up-to-date') return { phase: 'current', version, reason: null }
+  if (status !== '') return { phase: 'failed', version: null, reason: reason ?? status }
+  // No status at all means the host answered with something that is not ours —
+  // a proxy error page, a 404 from an older build. Say so rather than guess.
+  return { phase: 'failed', version: null, reason: '宿主没有回答（HTTP ' + http + '）' }
+}
+
+/**
+ * Ask the host to install the newer version.
+ *
+ * Never rejects: the caller is a click handler, and a rejected promise there
+ * becomes an unhandled rejection in a component with nowhere to catch it. Every
+ * failure lands in `progress` where the badge and the sheet can print it.
+ *
+ * A second call while one is in flight returns the in-flight state untouched —
+ * double-clicking the badge must not start two pnpm runs over one lockfile.
+ */
+export async function runUpdate(): Promise<UpdateProgress> {
+  if (progress.phase === 'running') return progress
+  setProgress({ phase: 'running', version: null, reason: null })
+  try {
+    const r = await fetch(UPDATE_URL, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    })
+    const body = (await r.json().catch(function () { return null })) as
+      { status?: unknown; version?: unknown; reason?: unknown } | null
+    setProgress(readUpdateOutcome(r.status, body))
+  } catch (error) {
+    setProgress({
+      phase: 'failed',
+      version: null,
+      reason: error instanceof Error ? error.message : '网络不可用',
+    })
+  }
+  return progress
+}
+
+/** Read the install state from a Slot occupant. */
+export function useUpdateProgress(): UpdateProgress {
+  const [snap, setSnap] = useState<UpdateProgress>(updateProgress)
+  useEffect(function () {
+    // `updateProgress` returns the same object identity until an install changes
+    // it, so the poll's emit() does not re-render the badge every ten seconds.
+    const unsub = subscribe(function () { setSnap(updateProgress()) })
+    setSnap(updateProgress())
     return unsub
   }, [])
   return snap

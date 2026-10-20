@@ -4,6 +4,51 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.8.5] — 2026-10-20
+
+### Added — 侧边栏图标旁多出「可更新」三个字，点一下就把新版装上
+
+起因是一句确认：
+
+> 现在是不是那些已经装了这个插件的用户打开dsh之后都会收到更新提醒
+
+答案是**不会**。查 `app.asar` 里的 `updateAvailable()`：它第一件事就是读 `pkg.installTarget`，
+读不到就 `return false`；而 `installTarget` 只由 `officialBundleInstallTarget()` 产生，只给
+`OFFICIAL_ON_DEMAND_CATALOG`（官方按需目录）里的包设值。第三方插件永远拿不到这个字段，
+所以**永远不会**有一行「可更新」。加上两个第三方插件市场还都停在 0.7.1（`publishTimestamp`
+是 10-12），0.8.x 对老用户等于不存在——他们不会有任何提示，也不会有任何理由去查。
+
+所以由插件自己说：
+
+- 侧边栏图标旁渲染 **「可更新」**（只在宽侧栏显示；36px 的窄轨道放四个字会挤掉邻居，
+  那里保留原来的 6px 红点和悬停提示）。点击**直接安装**，不是打开面板再让人自己找按钮。
+- 状态走四个词：`可更新` → `更新中` → `重启生效`，失败则 `更新失败`（悬停给出宿主原话，
+  再点一次重试）。安装期间**不接受第二次点击**：两次 pnpm 跑同一个 lockfile 只会更慢更乱。
+- 点击同时会打开面板：失败的**原因**印在面板里，一个点了没反应的按钮和一个坏掉的按钮
+  长得一样。
+
+**安装不是我们做的。** `POST /api/dsh-unified-agent-memory/update` 只调宿主的
+`pluginManager.installBundle('dsh-unified-agent-memory@<版本>', {saveExact: true})` ——
+就是插件页和 `dsh plugin` 用的那个包操作，它自己会在失败/取消/无 bundle patch 时还原
+`package.json` 与 `pnpm-lock.yaml`，也会告诉你是否需要重启。这里不跑 pnpm、不碰
+`node_modules`：重写一遍包管理器的失败处理，只会写得更差。
+
+两个宿主细节决定了实现形状：
+
+- **`already-installed` 要退一步**。桌面端带 HMR 时，`installBundle` 对「已经是 profile
+  依赖」的包直接抛 `ManagementFailure('already-installed')`。官方 UI 的做法就是
+  **remove → install**（更新的定义本来就是这一对），这里照做；宿主没有 `removeBundle`
+  就如实报失败，绝不在背后覆写文件。
+- **没有插件管理器的主机**（headless / CLI）答 `unsupported`（409），提示手动更新，
+  而不是去猜一个 profile 路径。
+
+**隐私**：整个请求体是 `{}`。安装这次 POST 不发任何本机信息，只有 npm 上那个早已存在的
+版本号 GET 在跑（每小时一次，`registry.npmjs.org` 失败才退到 `npmmirror`）。悬停提示
+就把这句话写给用户看——一个「点一下就能改你环境」的按钮，必须自证它只要了这一点。
+
+**为什么是 patch**：没有对外契约变化——记忆文件格式、CLI 参数、既有 JSON 契约都没动，
+新路由是新增的（旧客户端不认识它，也就不调用它）。是一次功能性修复，不是新能力。
+
 ## [0.8.4] — 2026-10-20
 
 ### Changed — 面板不再把「还没晋升的提交」摆给读者看

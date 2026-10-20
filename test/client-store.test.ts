@@ -29,6 +29,7 @@ const TYPES = readFileSync(new URL('../src/client/types.ts', import.meta.url), '
 // Imported statically: touching window.location at module scope would make this
 // URL invalid, and store.ts must therefore not depend on a window.
 import {
+  _resetUpdateForTesting,
   canApplyPreview,
   decideConflict,
   isCurrentSearch,
@@ -42,10 +43,14 @@ import {
   newStatsGate,
   nextSeq,
   previewEffectKey,
+  readUpdateOutcome,
   runSearch,
   runSearchSequence,
+  runUpdate,
   statsEffectKey,
+  updateProgress,
   useSearchRun,
+  UPDATE_URL,
 } from '../src/client/store.ts'
 
 import type { SearchHit } from '../src/client/types.ts'
@@ -998,5 +1003,102 @@ describe('loadDoctor', () => {
     const got = await loadDoctor()
     expect(got.status).toBe('ok')
     expect(got.counts).toBeNull()
+  })
+})
+// ── Update: the one route that installs ────────────────────────────
+//
+// The click is the consent, so the transport is the thing worth pinning: one
+// POST, an empty body, and nothing about this machine on the wire. The mapping
+// from the route's answer to what the badge shows is pure logic and is tested
+// directly, because a wrong mapping presents a failure as a success.
+
+describe('runUpdate', () => {
+  afterEach(function () {
+    _resetUpdateForTesting()
+    vi.unstubAllGlobals()
+  })
+
+  it('sends one empty POST to the update route and nothing else', async () => {
+    stubFetch({ body: { ok: true, status: 'installed', version: '0.8.5', restartRequired: true, reason: null } })
+    const got = await runUpdate()
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0].url).toBe(UPDATE_URL)
+    expect(calls[0].init?.method).toBe('POST')
+    // '{}' — no version, no path, no host facts. The tooltip promises the user
+    // that the request carries no information about their machine.
+    expect(calls[0].init?.body).toBe('{}')
+    expect(got.phase).toBe('installed')
+    expect(got.version).toBe('0.8.5')
+  })
+
+  it('surfaces a refused install as failed, with the host’s reason', async () => {
+    // The host answers 409 for "well-formed but could not be carried out", so
+    // the ok-gate cannot be the HTTP status alone.
+    stubFetch({ status: 409, body: { ok: false, status: 'failed', version: null, reason: 'pnpm exited 1' } })
+    const got = await runUpdate()
+
+    expect(got.phase).toBe('failed')
+    expect(got.reason).toBe('pnpm exited 1')
+  })
+
+  it('never rejects: a dead transport becomes a printed reason', async () => {
+    stubFetch({ throws: true })
+    const got = await runUpdate()
+
+    expect(got.phase).toBe('failed')
+    expect(got.reason).toBe('network down')
+    expect(updateProgress().phase).toBe('failed')
+  })
+
+  it('does not start a second install while one is in flight', async () => {
+    // Double-clicking the badge must not run two pnpm operations over one
+    // lockfile. The second call returns the in-flight state and sends nothing.
+    calls.length = 0
+    let settle!: (body: unknown) => void
+    vi.stubGlobal('fetch', function (url: string, init?: RequestInit) {
+      calls.push({ url: String(url), init })
+      // Resolved by the test, not by a reply list: the point is to hold the
+      // first request open across the second click.
+      return new Promise(function (resolve) {
+        settle = function (body: unknown) {
+          resolve({ ok: true, status: 200, json: async () => body } as unknown as Response)
+        }
+      })
+    })
+
+    const first = runUpdate()
+    const second = await runUpdate()
+    expect(second.phase).toBe('running')
+    expect(calls).toHaveLength(1)
+
+    settle({ status: 'installed', version: '0.8.5' })
+    expect((await first).phase).toBe('installed')
+  })
+})
+
+describe('readUpdateOutcome', () => {
+  it('maps installed to a finished install', () => {
+    expect(readUpdateOutcome(200, { status: 'installed', version: '0.8.5' }))
+      .toEqual({ phase: 'installed', version: '0.8.5', reason: null })
+  })
+
+  it('maps up-to-date to "nothing to do", not to a failure', () => {
+    expect(readUpdateOutcome(200, { status: 'up-to-date', version: '0.8.4' }).phase).toBe('current')
+  })
+
+  it('keeps unsupported and unknown-version as failures with their own reason', () => {
+    expect(readUpdateOutcome(409, { status: 'unsupported', reason: 'no plugin manager' }))
+      .toEqual({ phase: 'failed', version: null, reason: 'no plugin manager' })
+    // A reason is optional in the contract; the status is still a word the user
+    // can act on, so it must not be swallowed into a generic message.
+    expect(readUpdateOutcome(409, { status: 'unknown-version' }).reason).toBe('unknown-version')
+  })
+
+  it('reports a body that is not ours instead of guessing', () => {
+    // A proxy error page or an older build answers without a status field.
+    const got = readUpdateOutcome(502, null)
+    expect(got.phase).toBe('failed')
+    expect(got.reason).toContain('502')
   })
 })

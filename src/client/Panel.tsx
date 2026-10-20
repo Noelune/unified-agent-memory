@@ -11,8 +11,8 @@
 import { h, useEffect, useRef } from '../deps.ts'
 import { Console } from './Console.tsx'
 import { adoptStyles } from './styles.ts'
-import { setOpen, toggleOpen, useMemoryOpen, useMemoryState } from './store.ts'
-import { updateNotice } from './view.ts'
+import { runUpdate, setOpen, useMemoryOpen, useMemoryState, useUpdateProgress } from './store.ts'
+import { updateBadge, updateLine, updateNotice } from './view.ts'
 
 // ── Icon glyph with optional update dot ─────────────────────────────
 
@@ -68,11 +68,15 @@ function show(v: unknown, fallback = '—'): string {
  */
 export function MemorySheet() {
   const { data, fetchError } = useMemoryState()
+  const progress = useUpdateProgress()
   // The npm check reports what the registry has; the sheet used to render only
   // the installed version, so "an update exists" was a 6px dot on the sidebar
   // glyph and a tooltip. Someone who never hovered it had no way to learn the
   // number, let alone what to do about it.
   const notice = updateNotice(data?.latestVersion, data?.updateAvailable)
+  // The note is the phase's sentence when an install has run, and the notice's
+  // own sentence otherwise. See `updateLine` for why the phase wins.
+  const line = updateLine(notice, progress)
 
   return h('div', { className: 'dsh-memory-sheet' },
     h('div', { className: 'dsh-memory-head' },
@@ -91,8 +95,8 @@ export function MemorySheet() {
     // would silently drop each new field the console learns to use.
     h(Console, { status: data ?? null }),
 
-    notice.text
-      ? h('div', { className: 'dsh-memory-note' }, notice.text)
+    line
+      ? h('div', { className: 'dsh-memory-note', 'data-phase': progress.phase }, line)
       : null,
 
     fetchError
@@ -108,23 +112,49 @@ export interface MemoryButtonProps {
 }
 
 /**
- * The small inline action beside Settings. It only toggles the shared store —
- * the sheet itself lives in `shell.overlay`, since a frame-wide floating
- * surface does not belong in an inline action seat.
+ * The small inline action beside Settings.
+ *
+ * It is two controls in one, because the seat is one button:
+ *
+ *  - **no update waiting** → it toggles the panel, which is what a footer icon
+ *    is expected to do;
+ *  - **an update waiting** → it installs, and opens the panel so the progress
+ *    and the result are visible. Opening is not incidental: the sheet is where
+ *    the reason for a failure is printed, and a click that failed silently
+ *    would just look broken.
+ *
+ * The text label is drawn only in the wide sidebar. The rail seat is a 36px
+ * icon, so four characters there would either wrap or push the neighbouring
+ * actions over; the rail keeps the 6px dot and the tooltip.
  */
 export function MemoryTrigger(props: MemoryButtonProps) {
   const wide = props.wide === true
   const open = useMemoryOpen()
   const { data } = useMemoryState()
-  const hasUpdate = data?.updateAvailable === true
+  const progress = useUpdateProgress()
+  const notice = updateNotice(data?.latestVersion, data?.updateAvailable)
+  const badge = updateBadge(notice, progress)
 
   return h('button', {
     className: 'dsh-memory-trigger',
     'data-wide': wide ? 'row' : 'rail',
     'data-open': open ? 'true' : 'false',
-    title: hasUpdate ? 'Update available — Unified Memory' : 'Unified Memory status',
-    onClick: function () { toggleOpen() },
-  }, h(MemoryGlyph, { size: wide ? 14 : 16, hasUpdate }))
+    title: badge.title,
+    onClick: function () {
+      if (badge.installs) {
+        setOpen(true)
+        void runUpdate()
+        return
+      }
+      if (open) setOpen(false)
+      else setOpen(true)
+    },
+  },
+    h(MemoryGlyph, { size: wide ? 14 : 16, hasUpdate: data?.updateAvailable === true }),
+    wide && badge.label !== null
+      ? h('span', { className: 'dsh-memory-badge' }, badge.label)
+      : null,
+  )
 }
 
 /**

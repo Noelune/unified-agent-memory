@@ -52,6 +52,9 @@ import {
   searchFailureText,
   splitHealth,
   statKpis,
+  IDLE_UPDATE,
+  updateBadge,
+  updateLine,
   updateNotice,
 } from '../src/client/view.ts'
 import type { PreviewData } from '../src/client/types.ts'
@@ -1544,7 +1547,9 @@ describe('updateNotice', () => {
     const n = updateNotice('0.8.0', true)
     expect(n.next).toBe('0.8.0')
     expect(n.text).toContain('0.8.0')
-    expect(n.text).toContain('重新安装')
+    // The next step is the badge, not a manual reinstall: the sheet has to
+    // point at the thing that actually installs.
+    expect(n.text).toContain('可更新')
   })
 
   it('stays silent while the registry answer is unknown', () => {
@@ -1626,7 +1631,7 @@ describe('mutation: updateNotice', () => {
     // because it sends people to reinstall nothing.
     const mutant = function (latest: string | null | undefined, _a: boolean | null | undefined) {
       return typeof latest === 'string' && latest !== ''
-        ? { next: latest, text: '有新版本 v' + latest + '，重新安装插件即可升级。' }
+        ? { next: latest, text: '有新版本 v' + latest + '，点侧边栏的「可更新」即可安装。' }
         : { next: null, text: null }
     }
     const assert = function (f: typeof updateNotice) {
@@ -1639,15 +1644,91 @@ describe('mutation: updateNotice', () => {
 
   it('goes red when the version is shown but the next step is not', () => {
     // A bare "→ v0.8.0" says something changed but not what to do about it;
-    // the reinstall hint is the actionable half of the notice.
+    // pointing at the badge is the actionable half of the notice.
     const mutant = function (latest: string | null | undefined, a: boolean | null | undefined) {
       return { next: updateNotice(latest, a).next, text: null }
     }
     const assert = function (f: typeof updateNotice) {
-      expect(f('0.8.0', true).text).toContain('重新安装')
+      expect(f('0.8.0', true).text).toContain('可更新')
     }
     assert(updateNotice)
     expect(function () { assert(mutant) }).toThrow()
+  })
+})
+
+// ── updateBadge / updateLine: the click that installs ──────────────
+//
+// The dot alone said "something changed" and offered nothing to do about it.
+// These are the decisions behind the text beside it, and the sentence in the
+// sheet: which states are clickable, and what the panel says after a click.
+
+describe('updateBadge', () => {
+  const idle = IDLE_UPDATE
+  const waiting = updateNotice('0.8.5', true)
+  const nothing = updateNotice(null, null)
+
+  it('offers to install, and says what the click talks to', () => {
+    const b = updateBadge(waiting, idle)
+    expect(b.label).toBe('可更新')
+    expect(b.installs).toBe(true)
+    // The promise that makes this acceptable to ship: one version query, no
+    // machine information on the wire.
+    expect(b.title).toContain('0.8.5')
+    expect(b.title).toContain('不上传任何本机信息')
+  })
+
+  it('says nothing when there is no update to install', () => {
+    const b = updateBadge(nothing, idle)
+    expect(b.label).toBeNull()
+    expect(b.installs).toBe(false)
+  })
+
+  it('outranks a stale poll: an installed version is not offered again', () => {
+    // The poll keeps reading updateAvailable:true until the app restarts,
+    // because the version in memory is the one that booted. A badge built from
+    // the flag alone would offer the same install forever.
+    const b = updateBadge(waiting, { phase: 'installed', version: '0.8.5', reason: null })
+    expect(b.label).toBe('重启生效')
+    expect(b.installs).toBe(false)
+    expect(b.title).toContain('0.8.5')
+  })
+
+  it('cannot be double-clicked into two installs', () => {
+    expect(updateBadge(waiting, { phase: 'running', version: null, reason: null }).installs).toBe(false)
+  })
+
+  it('offers a retry after a failure, but only with a version to aim at', () => {
+    const failed = { phase: 'failed', version: null, reason: 'pnpm exited 1' } as const
+    expect(updateBadge(waiting, failed).installs).toBe(true)
+    expect(updateBadge(waiting, failed).title).toContain('pnpm exited 1')
+    // No version means the registry never answered; a second click repeats the
+    // same failure, so the badge must not pretend it is an offer.
+    expect(updateBadge(nothing, failed).installs).toBe(false)
+    expect(updateBadge(nothing, failed).title).toBe('pnpm exited 1')
+  })
+})
+
+describe('updateLine', () => {
+  const waiting = updateNotice('0.8.5', true)
+
+  it('replaces the offer with what actually happened', () => {
+    // "有新版本" printed after a failed install is the panel lying about a thing
+    // the user just did.
+    const line = updateLine(waiting, { phase: 'failed', version: null, reason: 'already-installed' })
+    expect(line).toContain('更新失败')
+    expect(line).toContain('already-installed')
+    expect(line).not.toContain('有新版本')
+  })
+
+  it('says a restart is what remains, because nothing else does', () => {
+    const line = updateLine(waiting, { phase: 'installed', version: '0.8.5', reason: null })
+    expect(line).toContain('0.8.5')
+    expect(line).toContain('重启')
+  })
+
+  it('falls through to the offer while nothing has been tried', () => {
+    expect(updateLine(waiting, IDLE_UPDATE)).toBe(waiting.text)
+    expect(updateLine(waiting, IDLE_UPDATE)).toContain('可更新')
   })
 })
 

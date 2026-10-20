@@ -115,7 +115,117 @@ export function updateNotice(
   }
   return {
     next: latest,
-    text: '有新版本 v' + latest + '，重新安装插件即可升级。',
+    text: '有新版本 v' + latest + '，点侧边栏的「可更新」即可安装。',
+  }
+}
+
+// ── The badge: the one click that installs ─────────────────────────
+//
+// DSH's own `updateAvailable()` only ever answers for bundles in the official
+// on-demand catalog, so a third-party plugin never sees a "newer version" row
+// in the Plugins page. That left the sidebar dot saying "something changed"
+// with no way to act on it: the only route to a new release was to remember the
+// package name and reinstall by hand, and nobody does that. The badge closes the
+// loop — the text says a version is waiting, and clicking it asks the HOST's
+// plugin manager to install that version.
+
+/** Where the last install attempt stands. `idle` = nothing has been tried. */
+export type UpdatePhase = 'idle' | 'running' | 'installed' | 'current' | 'failed'
+
+/** What the client knows about the install in progress (or the last one). */
+export interface UpdateProgress {
+  phase: UpdatePhase
+  /** Version the attempt targeted; null while it has no answer yet. */
+  version: string | null
+  /** The host's own words when the attempt failed. */
+  reason: string | null
+}
+
+/** The state before any click: nothing running, nothing to report. */
+export const IDLE_UPDATE: UpdateProgress = { phase: 'idle', version: null, reason: null }
+
+/** What the sidebar trigger should draw and do. */
+export interface UpdateBadge {
+  /** Text beside the glyph; null when there is nothing to say. */
+  label: string | null
+  /** Tooltip: what a click does, or what the last one did. */
+  title: string
+  /**
+   * True when a click installs. False means the click only opens the panel —
+   * there is nothing left to install (in flight, done, or impossible).
+   */
+  installs: boolean
+}
+
+/**
+ * The trigger's badge, from the registry reading and the install state.
+ *
+ * `phase` outranks `notice`: once an install has started, the installed version
+ * in memory is stale until the app restarts, so the poll keeps reporting
+ * `updateAvailable: true` and a badge driven by that flag alone would go on
+ * offering an update that was already installed. The phase is the newer fact.
+ */
+export function updateBadge(notice: UpdateNotice, progress: UpdateProgress): UpdateBadge {
+  const version = progress.version ?? notice.next
+  switch (progress.phase) {
+    case 'running':
+      return {
+        label: '更新中',
+        title: '正在安装' + (version ? ' v' + version : '新版本') + '，装完要重启 DSH。',
+        installs: false,
+      }
+    case 'installed':
+      return {
+        label: '重启生效',
+        title: 'v' + (version ?? '新版本') + ' 已装好，重启 DSH 后生效。',
+        installs: false,
+      }
+    case 'current':
+      return { label: '已是最新', title: '已经是最新版本了。', installs: false }
+    case 'failed': {
+      const why = progress.reason ?? '更新失败'
+      // A retry needs a version to aim at. Without one the registry never
+      // answered, and a second click would fail identically.
+      if (notice.next === null) return { label: '更新失败', title: why, installs: false }
+      return { label: '更新失败', title: why + ' — 点一下重试。', installs: true }
+    }
+    default:
+      if (notice.next === null) {
+        return { label: null, title: 'Unified Memory status', installs: false }
+      }
+      return {
+        label: '可更新',
+        // The promise this line makes is the reason the feature is allowed to
+        // exist: one version query to npm, nothing about this machine on the wire.
+        title: '点击更新到 v' + notice.next + '（只向 npm 查一个版本号，不上传任何本机信息）',
+        installs: true,
+      }
+  }
+}
+
+/**
+ * The sentence under the console about the update.
+ *
+ * Same inputs as the badge, different job: the badge has room for four
+ * characters, this has room for a reason. `notice.text` is what an untouched
+ * install says; every other phase replaces it with what actually happened,
+ * because "有新版本" printed after a failed install is the panel lying about a
+ * thing the user just did.
+ */
+export function updateLine(notice: UpdateNotice, progress: UpdateProgress): string | null {
+  const version = progress.version ?? notice.next
+  switch (progress.phase) {
+    case 'running':
+      return '正在安装' + (version ? ' v' + version : '新版本') + '，装完要重启 DSH 才生效。'
+    case 'installed':
+      return 'v' + (version ?? '新版本') + ' 已装好，重启 DSH 后生效。'
+    case 'current':
+      return '已经是最新版本了，不用再装。'
+    case 'failed':
+      return '更新失败：' + (progress.reason ?? '原因不明') +
+        (notice.next === null ? '。' : '。点侧边栏的「可更新」可以重试。')
+    default:
+      return notice.text
   }
 }
 
