@@ -35,14 +35,15 @@ import {
   BreakdownDonut, CalendarHeatmap, GrowthChart, TopBars,
 } from './Figures.tsx'
 import {
-  COMMAND_NOTE, CONFLICT_CHOICES, CONFLICT_LEAD, CONSOLE_TABS,
+  COMMAND_NOTE, CONFLICT_CHOICES, CONFLICT_INCOMING_LABEL, CONFLICT_LEAD,
+  CONFLICT_NOW_LABEL, CONFLICT_RULES_NOTE, CONSOLE_TABS,
   INBOX_ACCEPT_NOTE, INBOX_LEAD, PENDING_BADGE_TAB, SEVERITY_LABEL, TAB_LABEL,
-  acceptOutcomeText, acceptReasonText, decideOutcomeText, decideReasonText,
+  acceptOutcomeText, acceptReasonText, conflictSides, decideOutcomeText, decideReasonText,
   dismissReasonText, healthFindings, healthRows, healthSummary, highlightParts,
   inboxSummary, issueTitle, noteDigest, oldestFirst, openFailureText, previewEmptyText,
   relativeAge, rowFindings, searchFailureText, splitHealth, statKpis,
 } from './view.ts'
-import type { HealthFinding, TabId } from './view.ts'
+import type { ConflictSide, HealthFinding, TabId } from './view.ts'
 
 export { CONSOLE_TABS }
 export type { TabId }
@@ -260,6 +261,30 @@ function Hit(props: {
  * (`conflicts`, `not-found`, `unavailable`, …), which says both what happened
  * and what to do next — a bare failure toast cannot.
  */
+/**
+ * One side of a conflict: the shared part plain, the differing part marked.
+ *
+ * The two sides of a queued conflict are usually nearly identical paths, and
+ * finding the one segment that differs is the whole job. Marking it is not
+ * decoration — it is the difference between "these look the same" and "one
+ * points at a single file, the other at a directory of three".
+ *
+ * The pieces are only used when they reassemble into exactly the original
+ * text; a mismatch means the core's split and this core's copy disagree, and
+ * showing a rearranged fact is worse than showing an unhighlighted one.
+ */
+function factLine(side: ConflictSide): Child {
+  const reassembled = side.diff === null ? null : side.before + side.diff + side.after
+  if (reassembled === null || reassembled !== side.text) {
+    return h('div', { className: 'dsh-memory-fact' }, side.text)
+  }
+  return h('div', { className: 'dsh-memory-fact' },
+    side.before,
+    h('b', { className: 'dsh-memory-factdiff' }, side.diff),
+    side.after,
+  )
+}
+
 function InboxTab(): Child {
   const preview = usePreview('pending')
   const conflicts = useConflicts()
@@ -366,16 +391,23 @@ function InboxTab(): Child {
           h('div', { className: 'dsh-memory-rows' },
             ...rows.map(function (it) {
               const busy = ruling === it.key
+              const sides = conflictSides(it)
               return h('div', { key: it.key, className: 'dsh-memory-item' },
                 h('div', { className: 'dsh-memory-row', 'data-tone': 'warn' },
                   h('i', { className: 'dsh-memory-bar' }),
-                  h('span', { className: 'dsh-memory-rowname' },
-                    it.doc || '未指定笔记'),
+                  h('span', { className: 'dsh-memory-rowname' }, sides.doc),
                 ),
                 h('div', { className: 'dsh-memory-body' },
-                  h('div', null, '新的：' + (it.new || '（空）')),
-                  h('div', null, '旧的：' + (it.old || '（没有对应的旧记录）')),
-                  it.source ? h('div', null, '来源：' + it.source) : null,
+                  h('div', { className: 'dsh-memory-factlabel' }, CONFLICT_NOW_LABEL),
+                  factLine(sides.now),
+                  sides.now.meta
+                    ? h('div', { className: 'dsh-memory-factmeta' }, sides.now.meta)
+                    : null,
+                  h('div', { className: 'dsh-memory-factlabel' }, CONFLICT_INCOMING_LABEL),
+                  factLine(sides.incoming),
+                  sides.incoming.meta
+                    ? h('div', { className: 'dsh-memory-factmeta' }, sides.incoming.meta)
+                    : null,
                 ),
                 h('div', { className: 'dsh-memory-row' },
                   ...CONFLICT_CHOICES.map(function (c) {
@@ -389,6 +421,7 @@ function InboxTab(): Child {
                     }, busy ? '处理中…' : c.label)
                   }),
                 ),
+                h('div', { className: 'dsh-memory-rulenote' }, CONFLICT_RULES_NOTE),
               )
             })),
         ),

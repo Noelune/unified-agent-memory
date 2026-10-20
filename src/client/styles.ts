@@ -227,12 +227,40 @@ export const PANEL_CSS = `
   white-space: pre-wrap; word-break: break-word;
   max-height: 168px; overflow-y: auto;
 }
+/* One side of a conflict. Monospace because these are usually paths: the
+   differing segment has to line up under the eye, and a proportional face makes
+   SOUL.md.bak-… and adjudicate-… look more alike than they are. */
+.dsh-memory-factlabel {
+  margin: 6px 0 2px; font-size: 10.5px; letter-spacing: .03em;
+  color: var(--dsw-alias-label-tertiary);
+}
+.dsh-memory-fact {
+  margin: 0; color: var(--dsw-alias-label-primary);
+  font-size: 12px; line-height: 1.6; word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+/* The segment where the two sides disagree. Amber plate with the fixed deep
+   neutral ink, same pair the pending badge uses: it is the one combination
+   that clears AA in both themes, and it reads as "look here", not as "error" —
+   neither side is wrong until the reader rules. */
+.dsh-memory-factdiff {
+  font-weight: 600; border-radius: 3px; padding: 0 2px;
+  background: var(--dsw-alias-state-warn-secondary);
+  color: var(--dsw-static-neutral-bluish-1000);
+}
+.dsh-memory-factmeta {
+  margin-top: 2px; font-size: 10.5px;
+  color: var(--dsw-alias-label-tertiary);
+}
+.dsh-memory-rulenote {
+  margin: 0 8px 9px 23px; font-size: 10.5px; line-height: 1.5;
+  color: var(--dsw-alias-label-tertiary);
+}
 .dsh-memory-row {
   display: flex; align-items: center; gap: 9px;
   padding: 8px 8px 8px 6px; border-radius: 8px; position: relative;
   transition: background-color .13s, transform .13s;
-}
-.dsh-memory-row + .dsh-memory-row::before {
+}.dsh-memory-row + .dsh-memory-row::before {
   content: ''; position: absolute; top: 0; left: 12px; right: 8px; height: 1px;
   background: var(--dsw-alias-border-l1);
 }

@@ -620,7 +620,26 @@ export const INBOX_ACCEPT_NOTE =
  * they get their own block and their own three buttons.
  */
 export const CONFLICT_LEAD =
-  '这些提交和已有记忆对不上，需要你定谁对：新的成立、旧的对，还是两边都对。'
+  '同一个位置出现了两种说法。上面是记忆里现在的，下面是这次提交想换成的 — 看哪个对，点一下。'
+
+/**
+ * The two sides, named by their role rather than by their age.
+ *
+ * 「新的」/「旧的」 makes the reader work out which one is currently stored, and
+ * on a screen full of near-identical paths that is exactly the wrong thing to
+ * ask. 记忆里现在是 / 这次提交的是 says what each line IS.
+ */
+export const CONFLICT_NOW_LABEL = '记忆里现在是'
+export const CONFLICT_INCOMING_LABEL = '这次提交的是'
+
+/**
+ * What the three buttons do, in one line under the buttons.
+ *
+ * The same text was in a `title`, which only appears on hover — the one moment
+ * it is useless, because the reader is already deciding whether to click.
+ */
+export const CONFLICT_RULES_NOTE =
+  '取代＝删掉记忆里那行、换成新的 · 保留旧＝记忆不动、这条作废 · 共存＝两条都留着'
 
 /**
  * The three rulings, in the words a person uses.
@@ -635,6 +654,74 @@ export const CONFLICT_CHOICES = [
   { value: '保留旧', label: '保留旧', hint: '记忆不动，这条提交作废' },
   { value: '并存', label: '共存', hint: '两条都留下' },
 ] as const
+
+/** One side of a conflict, ready to render. */
+export interface ConflictSide {
+  text: string
+  meta: string
+  /** The substring that differs from the other side, or null when unknown. */
+  diff: string | null
+  before: string
+  after: string
+}
+
+/** Both sides plus the note they belong to, already cleaned for reading. */
+export interface ConflictSides {
+  doc: string
+  now: ConflictSide
+  incoming: ConflictSide
+}
+
+/** `记录于 2026-10-16 · 来自 [[…]]` out of the fields the core extracted. */
+function sideMeta(recorded?: string, source?: string, fallbackSource?: string): string {
+  const parts: string[] = []
+  if (recorded) parts.push(`记录于 ${recorded}`)
+  const from = source || fallbackSource || ''
+  if (from) parts.push(`来自 ${from}`)
+  return parts.join(' · ')
+}
+
+/**
+ * Turn one queued conflict into two readable sides.
+ *
+ * Falls back to the raw strings when the core did not send `detail` (an older
+ * core, or a hand-written queue the parser could only half read). A missing
+ * detail must degrade to "less pretty", never to an empty row: the reader still
+ * has to be able to rule on it.
+ */
+export function conflictSides(item: {
+  new?: string
+  old?: string
+  source?: string
+  doc?: string
+  detail?: {
+    doc?: string
+    new?: { text?: string; recorded?: string; source?: string }
+    old?: { text?: string; recorded?: string; source?: string }
+    change?: { prefix?: string; new?: string; old?: string; suffix?: string } | null
+  } | null
+}): ConflictSides {
+  const detail = item.detail ?? null
+  const change = detail?.change ?? null
+  const fallbackDoc = (item.doc || '').split(/[\\/]/).pop() || ''
+  return {
+    doc: detail?.doc || fallbackDoc || '未指定笔记',
+    now: {
+      text: detail?.old?.text || item.old || '（没有对应的旧记录）',
+      meta: sideMeta(detail?.old?.recorded, detail?.old?.source),
+      diff: change?.old ?? null,
+      before: change?.prefix ?? '',
+      after: change?.suffix ?? '',
+    },
+    incoming: {
+      text: detail?.new?.text || item.new || '',
+      meta: sideMeta(detail?.new?.recorded, detail?.new?.source, item.source),
+      diff: change?.new ?? null,
+      before: change?.prefix ?? '',
+      after: change?.suffix ?? '',
+    },
+  }
+}
 
 /** What one of the three rulings did, said in a sentence. */
 export function decideOutcomeText(

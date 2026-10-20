@@ -573,6 +573,21 @@ export async function acceptItem(name: string): Promise<AcceptResult> {
 // ── Conflicts: the questions that actually need a person ───────────
 
 /** One queued conflict: a new fact and the existing line it contradicts. */
+export interface ConflictSideDetail {
+  text?: string
+  recorded?: string
+  source?: string
+}
+
+export interface ConflictDetail {
+  /** Note name without the folder path: 常用路径与环境.md */
+  doc?: string
+  new?: ConflictSideDetail
+  old?: ConflictSideDetail
+  /** Where the two sides stop agreeing; null when they are identical. */
+  change?: { prefix?: string; new?: string; old?: string; suffix?: string } | null
+}
+
 export interface ConflictItem {
   /** Stable handle for the ruling. Never a list index — resolving shifts them. */
   key: string
@@ -581,6 +596,41 @@ export interface ConflictItem {
   source: string
   /** Vault-relative note the new fact would land in. */
   doc: string
+  /**
+   * The same two sides, stripped and diffed. Optional: an older core omits it,
+   * and the pane then falls back to the raw text rather than showing nothing.
+   */
+  detail?: ConflictDetail | null
+}
+
+/**
+ * Validate the optional `detail` block.
+ *
+ * It is vault-derived text arriving over HTTP, so every field is checked rather
+ * than cast: a missing key must read as "no detail", which the renderer turns
+ * into the plain fallback, not as `undefined` leaking into a string template.
+ */
+function conflictDetail(raw: unknown): ConflictDetail | null {
+  if (!raw || typeof raw !== 'object') return null
+  const o = raw as Record<string, unknown>
+  const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined)
+  const side = function (v: unknown): ConflictSideDetail | undefined {
+    if (!v || typeof v !== 'object') return undefined
+    const s = v as Record<string, unknown>
+    return { text: str(s.text), recorded: str(s.recorded), source: str(s.source) }
+  }
+  const changeRaw = o.change
+  let change: ConflictDetail['change'] = null
+  if (changeRaw && typeof changeRaw === 'object') {
+    const c = changeRaw as Record<string, unknown>
+    change = {
+      prefix: str(c.prefix) ?? '',
+      new: str(c.new) ?? '',
+      old: str(c.old) ?? '',
+      suffix: str(c.suffix) ?? '',
+    }
+  }
+  return { doc: str(o.doc), new: side(o.new), old: side(o.old), change }
 }
 
 /**
@@ -611,6 +661,7 @@ export async function loadConflicts(limit: number = PREVIEW_LIMIT): Promise<Conf
         old: typeof o.old === 'string' ? o.old : '',
         source: typeof o.source === 'string' ? o.source : '',
         doc: typeof o.doc === 'string' ? o.doc : '',
+        detail: conflictDetail(o.detail),
       }]
     })
   } catch {

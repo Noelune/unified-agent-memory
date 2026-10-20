@@ -404,8 +404,56 @@ describe('loadConflicts', () => {
       old: '- 备份目录是 C:/backups（写入 2026-10-16）',
       source: '[[Hermes会话自动归档/2026-10-18]]',
       doc: '50-Agent-Context\\常用路径与环境.md',
+      // No `detail` in this payload: the pane must still get a row it can
+      // render from the raw sides, so the absence is a null, not a missing key.
+      detail: null,
     }])
     expect(calls[0].url).toContain('view=conflicts')
+  })
+
+  it('carries the cleaned sides through when the core sends them', async () => {
+    stubFetch({
+      status: 200,
+      body: {
+        ok: true,
+        items: [{
+          key: 'k1',
+          new: 'raw new',
+          old: 'raw old',
+          source: 's.md',
+          doc: '50-Agent-Context\\常用路径与环境.md',
+          detail: {
+            doc: '常用路径与环境.md',
+            new: { text: '清洗后的新事实', recorded: '', source: '' },
+            old: { text: '清洗后的旧事实', recorded: '2026-10-16', source: 'Hermes/2026-10-15' },
+            change: { prefix: '共同：', new: '新', old: '旧', suffix: '' },
+          },
+        }],
+      },
+    })
+
+    const got = await loadConflicts()
+
+    expect(got![0].detail).toEqual({
+      doc: '常用路径与环境.md',
+      new: { text: '清洗后的新事实', recorded: '', source: '' },
+      old: { text: '清洗后的旧事实', recorded: '2026-10-16', source: 'Hermes/2026-10-15' },
+      change: { prefix: '共同：', new: '新', old: '旧', suffix: '' },
+    })
+  })
+
+  it('refuses to trust a detail block that is not shaped like one', async () => {
+    // It is vault text arriving over HTTP. A non-object must read as "no
+    // detail", not leak into a template as `[object Object]`.
+    stubFetch({
+      status: 200,
+      body: { ok: true, items: [{ key: 'k1', detail: 'not-an-object' }, { key: 'k2', detail: {} }] },
+    })
+
+    const got = await loadConflicts()
+
+    expect(got![0].detail).toBeNull()
+    expect(got![1].detail).toEqual({ doc: undefined, new: undefined, old: undefined, change: null })
   })
 
   it('drops a row with no key, because nothing could rule on it', async () => {

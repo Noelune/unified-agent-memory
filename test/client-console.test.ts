@@ -32,7 +32,10 @@ import { execSync } from 'node:child_process'
 
 import {
   CONFLICT_CHOICES,
+  CONFLICT_INCOMING_LABEL,
   CONFLICT_LEAD,
+  CONFLICT_NOW_LABEL,
+  CONFLICT_RULES_NOTE,
   CONSOLE_TABS,
   INBOX_ACCEPT_NOTE,
   INBOX_LEAD,
@@ -41,6 +44,7 @@ import {
   acceptOutcomeText,
   acceptReasonText,
   compactCount,
+  conflictSides,
   decideOutcomeText,
   decideReasonText,
   dismissReasonText,
@@ -595,18 +599,101 @@ describe('the inbox says what confirming means', () => {
   })
 
   it('explains why the conflicts have their own block', () => {
-    expect(CONFLICT_LEAD).toContain('对不上')
-    expect(CONFLICT_LEAD).toContain('你定')
+    expect(CONFLICT_LEAD).toContain('同一个位置')
+    expect(CONFLICT_LEAD).toContain('点一下')
     expect(inboxBody()).toMatch(/CONFLICT_LEAD/)
   })
 
   it('shows both sides of a conflict, never just the new fact', () => {
     // "新的：…" alone is unanswerable — you cannot rule on a replacement without
-    // seeing what it would replace. Both lines are rendered as text.
+    // seeing what it would replace. Both sides are rendered, each labelled by
+    // its ROLE: 新的/旧的 makes the reader work out which one is stored today.
     const body = inboxBody()
-    expect(body).toContain('新的：')
-    expect(body).toContain('旧的：')
-    expect(body).toContain('没有对应的旧记录')
+    expect(body).toContain('CONFLICT_NOW_LABEL')
+    expect(body).toContain('CONFLICT_INCOMING_LABEL')
+    expect(CONFLICT_NOW_LABEL).toBe('记忆里现在是')
+    expect(CONFLICT_INCOMING_LABEL).toBe('这次提交的是')
+    // Both sides go through the same renderer, so neither can lose its diff.
+    expect(body.match(/factLine\(/g)?.length).toBe(2)
+  })
+
+  it('says what each button does without needing a hover', () => {
+    // The same sentence used to live only in `title`, which appears exactly
+    // when the reader has already decided to click.
+    expect(CONFLICT_RULES_NOTE).toContain('取代')
+    expect(CONFLICT_RULES_NOTE).toContain('保留旧')
+    expect(CONFLICT_RULES_NOTE).toContain('共存')
+    expect(inboxBody()).toContain('CONFLICT_RULES_NOTE')
+  })
+})
+
+describe('make a conflict readable', () => {
+  const item = {
+    key: 'k1',
+    new: '备份：`C:\\h\\backups\\adjudicate-20261018\\`（三个文件完整副本）',
+    old: '- 备份：`C:\\h\\backups\\soul\\SOUL.md.bak`（随时可回滚）'
+      + '（写入 2026-10-16｜来源：[[Hermes会话自动归档/2026-10-15]]，事件 `86022e98`）',
+    source: '[[Hermes会话自动归档/2026-10-18]]',
+    doc: '50-Agent-Context\\常用路径与环境.md',
+    detail: {
+      doc: '常用路径与环境.md',
+      new: { text: '备份：`C:\\h\\backups\\adjudicate-20261018\\`（三个文件完整副本）' },
+      old: {
+        text: '备份：`C:\\h\\backups\\soul\\SOUL.md.bak`（随时可回滚）',
+        recorded: '2026-10-16',
+        source: 'Hermes会话自动归档/2026-10-15',
+      },
+      change: {
+        prefix: '备份：`C:\\h\\backups\\',
+        new: 'adjudicate-20261018\\`（三个文件完整副本）',
+        old: 'soul\\SOUL.md.bak`（随时可回滚）',
+        suffix: '',
+      },
+    },
+  }
+
+  it('names the note the way a person does', () => {
+    // 50-Agent-Context\常用路径与环境.md → 常用路径与环境.md
+    expect(conflictSides(item).doc).toBe('常用路径与环境.md')
+  })
+
+  it('drops the stamp that was written for a machine', () => {
+    const now = conflictSides(item).now
+    expect(now.text).not.toContain('86022e98')
+    expect(now.text).not.toContain('- 备份')
+    expect(now.text).toContain('（随时可回滚）')
+  })
+
+  it('keeps when and where the stored fact came from, as metadata', () => {
+    const now = conflictSides(item).now
+    expect(now.meta).toContain('记录于 2026-10-16')
+    expect(now.meta).toContain('Hermes会话自动归档/2026-10-15')
+  })
+
+  it('marks only the segment that differs, and rebuilds the whole fact', () => {
+    const sides = conflictSides(item)
+    expect(sides.now.diff).toBe('soul\\SOUL.md.bak`（随时可回滚）')
+    expect(sides.incoming.diff).toBe('adjudicate-20261018\\`（三个文件完整副本）')
+    expect(sides.now.before + sides.now.diff + sides.now.after).toBe(sides.now.text)
+    expect(sides.incoming.before + sides.incoming.diff + sides.incoming.after)
+      .toBe(sides.incoming.text)
+  })
+
+  it('still shows the incoming source when the fact carries none of its own', () => {
+    // The block's `- 来源：` belongs to the queue entry, not to the fact, so it
+    // never reaches describe(). Without this the incoming side looks unsourced.
+    expect(conflictSides(item).incoming.meta).toContain('Hermes会话自动归档/2026-10-18')
+  })
+
+  it('falls back to the raw text when the core sends no detail', () => {
+    // An older core, or a queue the parser could only half read. Less pretty is
+    // fine; an empty row the reader cannot rule on is not.
+    const bare = { key: 'k', new: '新的说法', old: '旧的说法', source: 'x.md', doc: '' }
+    const sides = conflictSides(bare)
+    expect(sides.now.text).toBe('旧的说法')
+    expect(sides.incoming.text).toBe('新的说法')
+    expect(sides.now.diff).toBeNull()
+    expect(sides.doc).toBe('未指定笔记')
   })
 })
 
