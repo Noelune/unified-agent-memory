@@ -128,93 +128,86 @@ class PreviewViewTest(unittest.TestCase):
         keys = [(i["accessCount"], i["importance"]) for i in data["items"]]
         self.assertEqual(keys, sorted(keys))
 
-    def test_conflicts_is_reported_unsupported_not_as_an_empty_answer(self):
-        # No code path ever writes type='conflict': classify_type covers
-        # MEMORY_TYPES only and the column default is 'fact'. An empty list
-        # would therefore be indistinguishable from "there are no conflicts",
-        # which a governance read must never imply.
+    def _conflict_file(self) -> Path:
+        from unified_memory.common import CONFLICT_FILE, situation_dir
+
+        return situation_dir(self.vault) / CONFLICT_FILE
+
+    def test_an_empty_conflict_queue_is_a_real_answer(self):
+        # The queue is a file this code reads, so an empty parse IS "nothing to
+        # rule on". It used to query an index value no writer ever emitted and
+        # report `unsupported` instead — honest about the query, but it told the
+        # panel nothing about the queue that actually exists.
         data = preview.build(self.vault, "conflicts", 10)
 
         self.assertEqual(data["view"], "conflicts")
+        self.assertEqual(data["status"], "ok")
         self.assertEqual(data["count"], 0)
         self.assertEqual(data["items"], [])
-        self.assertEqual(data["status"], "unsupported")
-        self.assertIn("conflict", data["reason"])
-
-    def test_conflicts_unsupported_becomes_ok_once_a_row_is_typed_conflict(self):
-        rules = canonical_dir(self.vault) / "工程执行规则.md"
-        rules.write_text(
-            read_maybe(rules)
-            + "\n- 端口使用 8080（写入 2026-08-15｜来源：Agent提交区/codex-20260815-002-01.md）\n",
-            encoding="utf-8",
-        )
-        from unified_memory import index as index_mod
-
-        index_mod.update_index(self.vault)
-        conn = index_mod.get_conn(self.vault)
-        try:
-            row = conn.execute(
-                "SELECT id FROM memories WHERE doc = ? AND line LIKE '%8080%'", (str(rules),)
-            ).fetchone()
-        finally:
-            conn.close()
-        self.assertIsNotNone(row, "the promoted line must have been indexed")
-
-        # Relabel exactly the way the (not yet wired) conflict detector would.
-        conn = index_mod.get_conn(self.vault)
-        try:
-            conn.execute("UPDATE memories SET type = 'conflict' WHERE id = ?", (row["id"],))
-            conn.commit()
-        finally:
-            conn.close()
-
-        data = preview.build(self.vault, "conflicts", 10)
-
-        self.assertEqual(data["status"], "ok")
         self.assertNotIn("reason", data)
-        self.assertEqual(data["count"], 1)
-        self.assertEqual(data["items"][0]["type"], "conflict")
 
-    def test_other_views_are_always_ok(self):
-        for view in ("pending", "forgetting", "recent"):
-            data = preview.build(self.vault, view, 10)
-            self.assertEqual(data["status"], "ok", view)
+    def test_a_queued_conflict_surfaces_with_both_sides(self):
+        from unified_memory.conflict import append_conflict
 
-    def test_conflicting_rows_are_surfaced(self):
-        rules = canonical_dir(self.vault) / "工程执行规则.md"
-        rules.write_text(
-            read_maybe(rules)
-            + "\n- 端口使用 8080（写入 2026-08-15｜来源：Agent提交区/codex-20260815-002-01.md）\n",
-            encoding="utf-8",
+        append_conflict(
+            self.vault, "the relay listens on 9090", "the relay listens on 8080", "a.md", "env"
         )
-        from unified_memory import index as index_mod
-
-        index_mod.update_index(self.vault)
-        conn = index_mod.get_conn(self.vault)
-        try:
-            row = conn.execute(
-                "SELECT id FROM memories WHERE doc = ? AND line LIKE '%8080%'", (str(rules),)
-            ).fetchone()
-        finally:
-            conn.close()
-        self.assertIsNotNone(row, "the promoted line must have been indexed")
-
-        # Preview must read `type` verbatim from the table, so relabel this
-        # memory as a conflict exactly the way a real detector would.
-        conn = index_mod.get_conn(self.vault)
-        try:
-            conn.execute("UPDATE memories SET type = 'conflict' WHERE id = ?", (row["id"],))
-            conn.commit()
-        finally:
-            conn.close()
 
         data = preview.build(self.vault, "conflicts", 10)
 
         self.assertEqual(data["count"], 1)
         item = data["items"][0]
-        self.assertEqual(item["type"], "conflict")
-        self.assertEqual(item["doc"], rules.name)
+        self.assertEqual(item["new"], "the relay listens on 9090")
+        self.assertEqual(item["old"], "the relay listens on 8080")
+        self.assertEqual(item["doc"], "env")
+        self.assertTrue(item["key"], "a decision needs a handle, not an index")
         self.assertIs(item["untrusted"], True)
+
+    def test_a_hand_written_block_is_read_the_same_as_a_json_line(self):
+        # The shape the user's own vault contains, written by the other runtime:
+        # a `##` heading and one field per line. Reading only the JSON shape
+        # returned [] for this file, so the panel said "no conflicts" while the
+        # conflict sat in plain sight.
+        self._conflict_file().write_text(
+            "# 事实冲突待裁决队列\n\n---\n"
+            "## 2026-10-19 03:01 冲突 #20261019030125-1\n"
+            "- 状态：[待裁决]\n"
+            "- 新提交：备份目录已迁移到 D:\\backups\n"
+            "- 来源：[[Hermes会话自动归档/2026-10-18]]\n"
+            "- 既有：- 备份目录是 C:\\backups（写入 2026-10-16）\n"
+            "- 所在：50-Agent-Context\\常用路径与环境.md\n",
+            encoding="utf-8",
+        )
+
+        data = preview.build(self.vault, "conflicts", 10)
+
+        self.assertEqual(data["count"], 1)
+        item = data["items"][0]
+        self.assertEqual(item["new"], "备份目录已迁移到 D:\\backups")
+        self.assertEqual(item["old"], "- 备份目录是 C:\\backups（写入 2026-10-16）")
+        self.assertEqual(item["doc"], "50-Agent-Context\\常用路径与环境.md")
+        self.assertEqual(item["key"], "20261019030125-1")
+
+    def test_a_block_marked_resolved_is_not_pending(self):
+        # A block someone decided but did not delete must not come back as a
+        # fresh question: re-asking a settled conflict is how a queue becomes
+        # a loop nobody trusts.
+        self._conflict_file().write_text(
+            "## 2026-10-19 03:01 冲突 #20261019030125-1\n"
+            "- 状态：[已裁决]\n"
+            "- 新提交：备份目录已迁移到 D:\\backups\n"
+            "- 既有：- 备份目录是 C:\\backups\n",
+            encoding="utf-8",
+        )
+
+        data = preview.build(self.vault, "conflicts", 10)
+
+        self.assertEqual(data["count"], 0)
+
+    def test_other_views_are_always_ok(self):
+        for view in ("pending", "conflicts", "forgetting", "recent"):
+            data = preview.build(self.vault, view, 10)
+            self.assertEqual(data["status"], "ok", view)
 
 
 class PreviewEnvelopeTest(unittest.TestCase):

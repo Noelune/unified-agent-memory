@@ -5,8 +5,7 @@ Four views, all strictly read-only (no writes, no index mutation beyond the
 self-healing update_index call every command performs):
 
   pending     inbox files awaiting promotion (Agent提交区)
-  conflicts   memories flagged as conflicting (unsupported until the detector
-              writes type='conflict' — see CONFLICTS_UNSUPPORTED_REASON)
+  conflicts   conflicts queued for a human ruling (情境信息/事实冲突待裁决.md)
   forgetting  low-salience active memories, decay-ordered
   recent      canonical notes by modification time
 
@@ -22,6 +21,7 @@ from pathlib import Path
 
 from . import index as index_mod
 from .common import AGENT_CONTEXT, NON_SUBMISSION_FILES, SUBMISSION_DIR, canonical_dir, redact
+from .conflict import entry_key, read_conflicts
 
 VIEWS = ("pending", "conflicts", "forgetting", "recent")
 
@@ -31,16 +31,6 @@ VIEWS = ("pending", "conflicts", "forgetting", "recent")
 # absolute helper; this constant is kept for callers that hold a vault string
 # rather than a Path, and for the CLI's read_inbox_item() join.
 INBOX_REL = os.path.join(AGENT_CONTEXT, SUBMISSION_DIR)
-
-# Why the conflicts view cannot answer yet: no code path writes this type.
-# classify_type() covers MEMORY_TYPES only, and the column default is 'fact'.
-CONFLICTS_UNSUPPORTED_REASON = (
-    "no memory is ever typed 'conflict': classify_type() only emits index.py "
-    "MEMORY_TYPES and the column default is 'fact'. An empty list here means "
-    "'no rows carry that type', NOT 'there are no conflicts'. Only a "
-    "hand-written row with type='conflict' can surface. Wire the conflict "
-    "detector (core/unified_memory/conflict.py) to make this view meaningful."
-)
 
 
 def build(vault: Path, view: str, limit: int = 20) -> dict:
@@ -63,11 +53,6 @@ def build(vault: Path, view: str, limit: int = 20) -> dict:
     }
     items = builders[view](vault, limit)
     data = {"view": view, "status": "ok", "count": len(items), "items": items}
-    if view == "conflicts" and not items:
-        # The type is unreachable from every writer, so an empty result is the
-        # absence of an answer, never a negative answer.
-        data["status"] = "unsupported"
-        data["reason"] = CONFLICTS_UNSUPPORTED_REASON
     return data
 
 
@@ -96,21 +81,28 @@ def _pending(vault: Path, limit: int) -> list[dict]:
 
 
 def _conflicts(vault: Path, limit: int) -> list[dict]:
-    conn = index_mod.get_conn(vault)
-    try:
-        rows = conn.execute(
-            "SELECT id, doc, line, type, importance FROM memories "
-            "WHERE status = 'active' AND type = 'conflict' LIMIT ?",
-            (limit,),
-        ).fetchall()
-    except Exception:  # noqa: BLE001 — a missing column/table must not crash the view
-        return []
-    finally:
-        conn.close()
+    """The pending-conflict queue, as rows a person can rule on.
+
+    This used to query the index for `type = 'conflict'`, a value no writer ever
+    emits — the view therefore always came back empty and was reported as
+    "unsupported", which at least did not lie. The queue itself is a markdown
+    file, written by the conflict detector and by hand, so reading that file is
+    both the honest source and the only one that has content.
+
+    Each row carries `key`: a stable handle for the decision route. An index
+    would not do, because resolving an earlier row shifts every later one.
+    """
     return [
-        {"id": r["id"], "doc": redact(Path(r["doc"]).name), "line": redact(r["line"]),
-         "type": r["type"], "importance": r["importance"], "untrusted": True}
-        for r in rows
+        {
+            "key": entry_key(entry),
+            "new": redact(str(entry.get("新", ""))),
+            "old": redact(str(entry.get("旧", ""))),
+            "source": redact(str(entry.get("来源", ""))),
+            "doc": redact(str(entry.get("目标", ""))),
+            "queue": "conflicts",
+            "untrusted": True,
+        }
+        for entry in read_conflicts(vault)[:limit]
     ]
 
 
