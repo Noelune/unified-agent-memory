@@ -252,6 +252,21 @@ export const PANEL_CSS = `
   margin-top: 2px; font-size: 10.5px;
   color: var(--dsw-alias-label-tertiary);
 }
+/* The agent's own reading of the two sides. It sits inside the fact box, after
+   both sides, separated by a dashed rule rather than a solid one: the rule says
+   "this is a different voice", not "the facts end here". Dashed also keeps it
+   from competing with the solid left border already framing the box.
+   The body text is primary, not secondary like the facts above it — this is the
+   one run of prose on the row a person is meant to actually read, and dimming it
+   to match the paths would defeat the point of writing it. */
+.dsh-memory-advice {
+  margin: 7px 0 0; padding-top: 7px;
+  border-top: 1px dashed var(--dsw-alias-border-l1);
+}
+.dsh-memory-advicebody {
+  margin: 0; color: var(--dsw-alias-label-primary);
+  font-size: 12px; line-height: 1.6; word-break: break-word;
+}
 .dsh-memory-rulenote {
   margin: 0 8px 9px 23px; font-size: 10.5px; line-height: 1.5;
   color: var(--dsw-alias-label-tertiary);
@@ -298,6 +313,19 @@ export const PANEL_CSS = `
 .dsh-memory-row:hover .dsh-memory-action {
   opacity: 1; color: var(--dsw-alias-brand-primary);
   border-color: var(--dsw-alias-brand-primary);
+}
+/* The one button the agent picked. Every action here is dimmed to .65 until the
+   row is hovered, which is right for a row of equal choices — but a recommendation
+   that only becomes legible on hover is not a recommendation. This one is lit at
+   rest, tinted, and bold, so the answer is visible before the pointer moves.
+   The selector carries .dsh-memory-row and both classes on purpose: it has to
+   out-weigh the hover rule above (0,4,0 vs 0,3,0) or hovering would re-dim the
+   button back to the tertiary colour the moment the reader reaches for it. */
+.dsh-memory-row .dsh-memory-action.dsh-memory-action-suggested {
+  opacity: 1; font-weight: 600;
+  color: var(--dsw-alias-brand-primary);
+  border-color: var(--dsw-alias-brand-primary);
+  background: var(--dsw-alias-interactive-bg-active);
 }
 /* A health row that needs attention: the same bar the search list uses, but in
    the error colour, plus primary text instead of tertiary — the number has to

@@ -365,11 +365,21 @@ describe('agentAction — who does the work, and on what terms', () => {
   })
 
   it('routes the codes that are the user’s decision into "analyze"', () => {
-    // Two conflicting facts, two overlapping copies, a missing vault: an agent
-    // that "fixes" these deletes something the user wanted.
-    for (const code of ['conflicts-pending', 'sync-conflict-copies', 'vault-missing']) {
+    // Two overlapping copies, a missing vault: an agent that "fixes" these
+    // deletes something the user wanted.
+    for (const code of ['sync-conflict-copies', 'vault-missing']) {
       expect(agentAction(code).mode, code).toBe('analyze')
     }
+  })
+
+  it('routes queued conflicts into "judge", not "analyze"', () => {
+    // The queue was never a decision the user was better at — it was a decision
+    // nobody was making, which is why it only ever grew. `judge` keeps what
+    // `analyze` was protecting (nothing is written that the agent cannot
+    // justify) without the dead end: what it cannot settle comes back carrying
+    // a recommendation and a reason.
+    expect(agentAction('conflicts-pending').mode).toBe('judge')
+    expect(agentAction('conflicts-pending').risk).toContain('定不了')
   })
 
   it('offers no button for a code this build does not understand', () => {

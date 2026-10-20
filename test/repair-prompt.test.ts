@@ -126,6 +126,63 @@ describe('buildRepairPrompt — scope and consent', () => {
   })
 })
 
+describe('buildRepairPrompt — judge mode: settle what you can, escalate the rest', () => {
+  function judgeFinding(): HealthFinding {
+    return finding({
+      key: 'conflicts-pending',
+      title: '事实互相矛盾待处理',
+      detail: '事实和已有记录互相矛盾。',
+      fix: '先交给 Agent 判断。',
+      command: null,
+      agent: { mode: 'judge', label: '让 Agent 判断', risk: '能定就直接定 · 定不了写清理由问你' },
+    })
+  }
+
+  it('hands the agent both commands, because they mean different things', () => {
+    // An agent that only knows `decide` guesses rather than admitting it cannot
+    // tell; one that only knows `advise` re-files the question it was asked to
+    // answer. The brief has to name both and say when each applies.
+    const brief = buildRepairPrompt(judgeFinding(), ENV, AT)
+    expect(brief).toContain('memory decide <key> <用新|保留旧|并存> --why')
+    expect(brief).toContain('memory advise <key> <用新|保留旧|并存> --why')
+    expect(brief).toContain('真的判不了')
+  })
+
+  it('will not take a verdict without a reason', () => {
+    // A bare 裁决：并存 in the history log is unreadable a month later, and an
+    // escalation with no explanation is the question handed back untouched.
+    const brief = buildRepairPrompt(judgeFinding(), ENV, AT)
+    expect(brief).toContain('两种命令都必须带 `--why`')
+    expect(brief).toContain('人话')
+    expect(brief).toContain('不要复述原文')
+  })
+
+  it('does not ask permission for the ruling it just asked the agent to make', () => {
+    // The one sentence that would have made the whole mode a no-op. A blanket
+    // "wait for my approval before writing" reads, correctly, as "do not rule".
+    const brief = buildRepairPrompt(judgeFinding(), ENV, AT)
+    expect(brief).not.toContain('等我明确同意再动手')
+    expect(brief).toContain('不要原样退回给我')
+  })
+
+  it('still fences off everything outside that one ruling', () => {
+    const brief = buildRepairPrompt(judgeFinding(), ENV, AT)
+    expect(brief).toContain('只会动队列里的这一条和它指向的那篇笔记')
+    expect(brief).toContain('除此之外的任何改动')
+    expect(brief).toContain('仍然要先问我')
+  })
+
+  it('numbers its requirements without gaps or repeats', () => {
+    // The steps are numbered by position, not typed by hand — adding a step per
+    // mode is how a list ends up reading 1, 2, 2, 4.
+    const brief = buildRepairPrompt(judgeFinding(), ENV, AT)
+    const numbers = Array.from(brief.matchAll(/^(\d+)\. /gm))
+      .map(function (m) { return Number(m[1]) })
+    expect(numbers.length).toBeGreaterThan(3)
+    expect(numbers).toEqual(numbers.map(function (_, i) { return i + 1 }))
+  })
+})
+
 describe('buildRepairPrompt — the finding is data, never instructions', () => {
   it('wraps the payload and says so before the block, not after it', () => {
     const brief = buildRepairPrompt(finding(), ENV, AT)

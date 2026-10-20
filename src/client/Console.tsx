@@ -35,7 +35,7 @@ import {
   BreakdownDonut, CalendarHeatmap, GrowthChart, TopBars,
 } from './Figures.tsx'
 import {
-  COMMAND_NOTE, CONFLICT_CHOICES, CONFLICT_INCOMING_LABEL, CONFLICT_LEAD,
+  COMMAND_NOTE, CONFLICT_ADVICE_LABEL, CONFLICT_CHOICES, CONFLICT_INCOMING_LABEL, CONFLICT_LEAD,
   CONFLICT_NOW_LABEL, CONFLICT_RULES_NOTE, CONSOLE_TABS,
   INBOX_ACCEPT_NOTE, INBOX_LEAD, PENDING_BADGE_TAB, SEVERITY_LABEL, TAB_LABEL,
   acceptOutcomeText, acceptReasonText, conflictSides, decideOutcomeText, decideReasonText,
@@ -408,17 +408,26 @@ function InboxTab(): Child {
                   sides.incoming.meta
                     ? h('div', { className: 'dsh-memory-factmeta' }, sides.incoming.meta)
                     : null,
+                  sides.advice
+                    ? h('div', { className: 'dsh-memory-advice' },
+                        h('div', { className: 'dsh-memory-factlabel' }, CONFLICT_ADVICE_LABEL),
+                        h('div', { className: 'dsh-memory-advicebody' },
+                          (sides.advice.label || sides.advice.choice) +
+                            (sides.advice.why ? '：' + sides.advice.why : '')),
+                      )
+                    : null,
                 ),
                 h('div', { className: 'dsh-memory-row' },
                   ...CONFLICT_CHOICES.map(function (c) {
+                    const suggested = sides.advice !== null && sides.advice.choice === c.value
                     return h('button', {
                       key: c.value,
                       type: 'button',
-                      className: 'dsh-memory-action',
+                      className: suggested ? 'dsh-memory-action dsh-memory-action-suggested' : 'dsh-memory-action',
                       disabled: busy,
                       title: c.hint,
                       onClick: function () { rule(it.key, c.value) },
-                    }, busy ? '处理中…' : c.label)
+                    }, busy ? '处理中…' : (suggested ? c.label + '（Agent 建议）' : c.label))
                   }),
                 ),
                 h('div', { className: 'dsh-memory-rulenote' }, CONFLICT_RULES_NOTE),
@@ -771,7 +780,9 @@ function FindingCard(props: { finding: HealthFinding; repair: RepairApi }): Chil
               h('p', { className: 'dsh-memory-confirm-note' },
                 f.agent.mode === 'analyze'
                   ? '它会先只读核对，然后给你建议；不会直接改库。'
-                  : '它会先只读核对，改库之前会再问你一次。',
+                  : f.agent.mode === 'judge'
+                    ? '它会先只读核对，能判的直接判掉并写清理由；判不了的连同推荐和通俗解释留在待确认里等你点头。'
+                    : '它会先只读核对，改库之前会再问你一次。',
               ),
               h('div', { className: 'dsh-memory-confirm-row' },
                 h('button', {

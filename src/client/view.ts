@@ -520,8 +520,17 @@ export interface HealthFinding {
   core: { message: string; hint: string } | null
 }
 
-/** How far an agent should go without coming back for permission. */
-export type AgentMode = 'fix' | 'analyze' | 'none'
+/**
+ * How far an agent should go without coming back for permission.
+ *
+ * `judge` is the one that is not a straight answer to that question: for a
+ * queued conflict the agent is expected to settle the ones it can actually
+ * settle, and hand back only the ones it cannot — with a recommendation and a
+ * reason in plain words. The point is to stop the queue from being a pile of
+ * questions the user has to adjudicate alone, without letting an agent silently
+ * overwrite a fact it merely guessed at.
+ */
+export type AgentMode = 'fix' | 'judge' | 'analyze' | 'none'
 
 /** What the card's action row offers, if anything. */
 export interface AgentAction {
@@ -541,7 +550,9 @@ export const NO_AGENT: AgentAction = { mode: 'none', label: '', risk: '' }
  * `fix` means "go change the vault, listing the changes first". `analyze` means
  * "read, then come back with a recommendation" — used wherever the decision is
  * the user's (which of two conflicting facts wins, which of two copies to
- * keep). Anything absent gets no button: a card that says `fix: 让 agent 读一遍`
+ * keep). `judge` sits between them: settle what can be settled, and come back
+ * only with what cannot — carrying a recommendation and a reason. Anything
+ * absent gets no button: a card that says `fix: 让 agent 读一遍`
  * without a command is better served by reading it in the conversation than by
  * a button that starts an agent with nothing to do.
  */
@@ -554,7 +565,7 @@ const AGENT_PLAN: Record<string, AgentAction> = {
   'doctor-failed': { mode: 'fix', label: '让 Agent 处理', risk: '会重建派生数据' },
   'orphan-indexes': { mode: 'fix', label: '让 Agent 处理', risk: '会删旧索引 · 可重建' },
   'embedding-coverage': { mode: 'fix', label: '让 Agent 补向量', risk: '会写向量 · 需要 key' },
-  'conflicts-pending': { mode: 'analyze', label: '让 Agent 分析', risk: '先给建议，改库前问你' },
+  'conflicts-pending': { mode: 'judge', label: '让 Agent 判断', risk: '能定就直接定 · 定不了写清理由问你' },
   'sync-conflict-copies': { mode: 'analyze', label: '让 Agent 分析', risk: '不动文件，只给合并建议' },
   'vault-missing': { mode: 'analyze', label: '让 Agent 诊断', risk: '可能要改配置，先问你' },
 }
@@ -620,7 +631,8 @@ export const INBOX_ACCEPT_NOTE =
  * they get their own block and their own three buttons.
  */
 export const CONFLICT_LEAD =
-  '同一个位置出现了两种说法。上面是记忆里现在的，下面是这次提交想换成的 — 看哪个对，点一下。'
+  '同一个位置出现了两种说法。上面是记忆里现在的，下面是这次提交想换成的。' +
+  '这类判断默认交给 Agent：它能定的已经定掉，才轮到这里的 — 有 Agent 的判断就直接照着点，没有就自己看哪个对。'
 
 /**
  * The two sides, named by their role rather than by their age.
@@ -631,6 +643,15 @@ export const CONFLICT_LEAD =
  */
 export const CONFLICT_NOW_LABEL = '记忆里现在是'
 export const CONFLICT_INCOMING_LABEL = '这次提交的是'
+
+/**
+ * The line above a recommendation the agent left behind.
+ *
+ * This block is the whole answer to "我不想自己当裁判，但我也不敢乱点": when the
+ * agent could not tell the two sides apart it still has to say so in words a
+ * person can act on, next to the buttons it is recommending.
+ */
+export const CONFLICT_ADVICE_LABEL = 'Agent 的判断'
 
 /**
  * What the three buttons do, in one line under the buttons.
@@ -665,11 +686,22 @@ export interface ConflictSide {
   after: string
 }
 
+/** What an agent recommended, when it left a recommendation behind. */
+export interface ConflictAdvice {
+  /** The ruling it suggests: `用新` / `保留旧` / `并存`. */
+  choice: string
+  /** The same ruling in button words (`取代` / `保留旧` / `共存`), or '' if unknown. */
+  label: string
+  /** Why, in the agent's own plain language. */
+  why: string
+}
+
 /** Both sides plus the note they belong to, already cleaned for reading. */
 export interface ConflictSides {
   doc: string
   now: ConflictSide
   incoming: ConflictSide
+  advice: ConflictAdvice | null
 }
 
 /** `记录于 2026-10-16 · 来自 [[…]]` out of the fields the core extracted. */
@@ -699,6 +731,7 @@ export function conflictSides(item: {
     new?: { text?: string; recorded?: string; source?: string }
     old?: { text?: string; recorded?: string; source?: string }
     change?: { prefix?: string; new?: string; old?: string; suffix?: string } | null
+    advice?: { choice?: string; why?: string } | null
   } | null
 }): ConflictSides {
   const detail = item.detail ?? null
@@ -720,7 +753,24 @@ export function conflictSides(item: {
       before: change?.prefix ?? '',
       after: change?.suffix ?? '',
     },
+    advice: adviceOf(detail?.advice),
   }
+}
+
+/**
+ * A recommendation, in the words the buttons use.
+ *
+ * The raw value is a core token (`用新`), which reads as a verb the agent
+ * performed rather than an option the reader can pick. Same mapping as the
+ * buttons, so `并存` in the advice and `共存` on the button cannot disagree.
+ */
+function adviceOf(raw: { choice?: string; why?: string } | null | undefined): ConflictAdvice | null {
+  if (!raw) return null
+  const choice = (raw.choice || '').trim()
+  const why = (raw.why || '').trim()
+  if (!choice && !why) return null
+  const known = CONFLICT_CHOICES.find(function (c) { return c.value === choice })
+  return { choice, label: known ? known.label : '', why }
 }
 
 /** What one of the three rulings did, said in a sentence. */
@@ -805,7 +855,7 @@ const ISSUE_COPY: Record<string, { title: string; detail: string; fix: string; c
   'conflicts-pending': {
     title: '事实互相矛盾',
     detail: '在你裁决之前，冲突双方都不算生效，检索会绕开这段记忆。',
-    fix: '逐条选保留哪一条；判旧的赢，新值会进历史段，不会丢。',
+    fix: '先交给 Agent 判断：能定的它直接定掉并说明理由，定不了才留在这里，并写明推荐哪一种。',
     command: 'python -m unified_memory.promoter --adjudicate',
   },
   'inbox-stale': {
@@ -841,7 +891,7 @@ const ISSUE_COPY: Record<string, { title: string; detail: string; fix: string; c
   'orphan-indexes': {
     title: '有残留的孤儿索引',
     detail: '旧 vault 留下的索引文件，和现在的库无关，只是占磁盘。',
-    fix: '清掉孤儿索引库，不影响当前 vault。',
+    fix: '清掉孤儿索引库，不影响当前 vault；不过刚生成的会等满 30 天才自动清，要立刻清加 --older-than 0。',
     command: 'memory gc --apply',
   },
   'unclassified-facts': {

@@ -439,7 +439,32 @@ describe('loadConflicts', () => {
       new: { text: '清洗后的新事实', recorded: '', source: '' },
       old: { text: '清洗后的旧事实', recorded: '2026-10-16', source: 'Hermes/2026-10-15' },
       change: { prefix: '共同：', new: '新', old: '旧', suffix: '' },
+      advice: null,
     })
+  })
+
+  it('carries the agent’s recommendation, and drops one that says nothing', async () => {
+    // The advice block is what makes the queue answerable: it is the agent's own
+    // reading, in words, sitting above the buttons. It is still vault-derived
+    // text over HTTP, so it gets the same treatment as the sides — and an empty
+    // one must not survive as an empty "Agent 的判断" heading on every row.
+    stubFetch({
+      status: 200,
+      body: {
+        ok: true,
+        items: [
+          { key: 'k1', detail: { advice: { choice: '并存', why: '两条指的不是同一个东西。' } } },
+          { key: 'k2', detail: { advice: { choice: '  ', why: '' } } },
+          { key: 'k3', detail: { advice: 'not-an-object' } },
+        ],
+      },
+    })
+
+    const got = await loadConflicts()
+
+    expect(got![0].detail!.advice).toEqual({ choice: '并存', why: '两条指的不是同一个东西。' })
+    expect(got![1].detail!.advice).toBeNull()
+    expect(got![2].detail!.advice).toBeNull()
   })
 
   it('refuses to trust a detail block that is not shaped like one', async () => {
@@ -453,7 +478,9 @@ describe('loadConflicts', () => {
     const got = await loadConflicts()
 
     expect(got![0].detail).toBeNull()
-    expect(got![1].detail).toEqual({ doc: undefined, new: undefined, old: undefined, change: null })
+    expect(got![1].detail).toEqual({
+      doc: undefined, new: undefined, old: undefined, change: null, advice: null,
+    })
   })
 
   it('drops a row with no key, because nothing could rule on it', async () => {

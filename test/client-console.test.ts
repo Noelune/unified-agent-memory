@@ -31,6 +31,7 @@ import { dirname, join } from 'node:path'
 import { execSync } from 'node:child_process'
 
 import {
+  CONFLICT_ADVICE_LABEL,
   CONFLICT_CHOICES,
   CONFLICT_INCOMING_LABEL,
   CONFLICT_LEAD,
@@ -600,7 +601,11 @@ describe('the inbox says what confirming means', () => {
 
   it('explains why the conflicts have their own block', () => {
     expect(CONFLICT_LEAD).toContain('同一个位置')
-    expect(CONFLICT_LEAD).toContain('点一下')
+    // The lead used to end at "点一下选一个", which described a queue the reader
+    // had to clear alone. It now has to say who does this work by default, or
+    // the advice block underneath reads as an opinion nobody asked for.
+    expect(CONFLICT_LEAD).toContain('交给 Agent')
+    expect(CONFLICT_LEAD).toContain('照着点')
     expect(inboxBody()).toMatch(/CONFLICT_LEAD/)
   })
 
@@ -624,6 +629,28 @@ describe('the inbox says what confirming means', () => {
     expect(CONFLICT_RULES_NOTE).toContain('保留旧')
     expect(CONFLICT_RULES_NOTE).toContain('共存')
     expect(inboxBody()).toContain('CONFLICT_RULES_NOTE')
+  })
+
+  it('puts the agent’s judgement on the row, above the buttons it recommends', () => {
+    // A recommendation the reader has to hover, or match against four buttons
+    // by memory, is not a recommendation. The block renders after both sides
+    // and before the action row, and the matching button carries the label.
+    const body = inboxBody()
+    expect(body).toContain('CONFLICT_ADVICE_LABEL')
+    expect(CONFLICT_ADVICE_LABEL).toBe('Agent 的判断')
+    expect(body).toContain('sides.advice')
+    expect(body).toContain('dsh-memory-advicebody')
+    expect(body).toContain('（Agent 建议）')
+    // The class has to be CHOSEN by the comparison, not merely computed next to
+    // it — a `suggested` that nothing consumes is a highlight that never
+    // appears, and the assertion above would still pass (verified by mutation).
+    expect(body).toMatch(/className: suggested \? 'dsh-memory-action dsh-memory-action-suggested'/)
+    expect(body).toMatch(/suggested \? c\.label \+ '（Agent 建议）'/)
+    // Order is the argument: sides first, then the judgement, then the buttons.
+    // Advice above the facts would be a verdict before the evidence.
+    const adviceAt = body.indexOf('CONFLICT_ADVICE_LABEL')
+    expect(adviceAt).toBeGreaterThan(body.indexOf('CONFLICT_INCOMING_LABEL'))
+    expect(adviceAt).toBeLessThan(body.indexOf('CONFLICT_CHOICES'))
   })
 })
 
@@ -694,6 +721,44 @@ describe('make a conflict readable', () => {
     expect(sides.incoming.text).toBe('新的说法')
     expect(sides.now.diff).toBeNull()
     expect(sides.doc).toBe('未指定笔记')
+  })
+
+  it('has no advice block until an agent has actually ruled on it', () => {
+    // Every row in the queue is one a person may have to settle alone. Drawing
+    // an empty "Agent 的判断" heading over an empty line would promise input
+    // that was never given, on every single row.
+    expect(conflictSides(item).advice).toBeNull()
+    expect(conflictSides({ ...item, detail: {} }).advice).toBeNull()
+  })
+
+  it('carries the agent’s reason beside the sides, in its own words', () => {
+    // This is the whole point of the block: the two paths are nearly identical,
+    // and the reason is the only thing on the row that says which one is which.
+    const sides = conflictSides({
+      ...item,
+      detail: { ...item.detail, advice: { choice: '并存', why: '一个指目录，一个指文件，不冲突。' } },
+    })
+    expect(sides.advice).toEqual({
+      choice: '并存',
+      label: '共存',
+      why: '一个指目录，一个指文件，不冲突。',
+    })
+  })
+
+  it('keeps a ruling word it does not recognise instead of blanking the block', () => {
+    // A newer core, or a hand-edited queue. Showing the raw token is ugly;
+    // dropping the line would delete the agent's judgement and leave only its
+    // reason, which then reads as an opinion about nothing.
+    const sides = conflictSides({
+      ...item,
+      detail: { ...item.detail, advice: { choice: '暂缓', why: '等下周确认。' } },
+    })
+    expect(sides.advice).toEqual({ choice: '暂缓', label: '', why: '等下周确认。' })
+  })
+
+  it('drops an advice block that says nothing', () => {
+    const blank = conflictSides({ ...item, detail: { ...item.detail, advice: { choice: '  ', why: '' } } })
+    expect(blank.advice).toBeNull()
   })
 })
 
@@ -1179,6 +1244,34 @@ describe('console styles', () => {
     for (const m of STYLES.matchAll(/\.(dsh-memory-[a-z0-9-]+)/g)) declared.add(m[1])
     for (const cls of declared) {
       expect(used.has(cls), `${cls} is styled but never rendered`).toBe(true)
+    }
+  })
+
+  it('never renders a class that styles.ts has no rule for', () => {
+    // The other half of the drift, and the one that actually happened: the
+    // conflict row grew a `.dsh-memory-advice` block and a
+    // `.dsh-memory-action-suggested` button while styles.ts still only knew the
+    // old class names. Nothing failed — an unstyled div is a plain div, so the
+    // advice rendered as one more line of grey text and the recommended button
+    // stayed dimmed with all the others. A rendered class with no rule is
+    // invisible in exactly the way that looks like a design choice.
+    //
+    // Comments are stripped first: a class named in prose is not a class the
+    // component renders, and letting a comment satisfy (or trip) this check is
+    // how the test starts lying in both directions.
+    const strip = (text: string): string => text
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '')
+    const panel = readFileSync(new URL('../src/client/Panel.tsx', import.meta.url), 'utf8')
+    const figures = readFileSync(new URL('../src/client/Figures.tsx', import.meta.url), 'utf8')
+    const rendered = new Set<string>()
+    for (const src of [CONSOLE, panel, figures]) {
+      for (const m of strip(src).matchAll(/dsh-memory-[a-z0-9-]+/g)) rendered.add(m[0])
+    }
+    const declared = new Set<string>()
+    for (const m of STYLES.matchAll(/\.(dsh-memory-[a-z0-9-]+)/g)) declared.add(m[1])
+    for (const cls of rendered) {
+      expect(declared.has(cls), `${cls} is rendered but has no rule in styles.ts`).toBe(true)
     }
   })
 })
@@ -1717,6 +1810,47 @@ describe('updateNotice', () => {
 //
 //   assert(real)                                     // must pass
 //   expect(() => assert(mutant)).toThrow()           // must be caught
+
+describe('mutation: conflictSides advice', () => {
+  function row(advice: { choice: string; why: string }) {
+    return {
+      key: 'k1',
+      new: '备份：D:\\backups\\',
+      old: '- 备份：C:\\backups\\soul\\SOUL.md.bak',
+      source: 's.md',
+      doc: '50-Agent-Context\\常用路径与环境.md',
+      detail: { advice },
+    }
+  }
+
+  it('goes red when the advice is treated as decoration and dropped', () => {
+    // The plausible simplification: the sides are the evidence, the advice is
+    // commentary, so leave it out of the view model. That is the version of
+    // this feature that shipped without a block.
+    const mutant = function (it: ReturnType<typeof row>) {
+      return { ...conflictSides(it), advice: null }
+    }
+    const assert = function (f: typeof conflictSides) {
+      expect(f(row({ choice: '并存', why: '一个指目录，一个指文件。' })).advice).not.toBeNull()
+    }
+    assert(conflictSides)
+    expect(function () { assert(mutant as typeof conflictSides) }).toThrow()
+  })
+
+  it('goes red when the ruling is shown as the core’s token instead of a word', () => {
+    // `并存` is the core's vocabulary. The reader has three Chinese labels on
+    // the buttons and a fourth word in the sentence above them otherwise.
+    const mutant = function (it: ReturnType<typeof row>) {
+      const advice = it.detail.advice
+      return { ...conflictSides(it), advice: { ...advice, label: advice.choice } }
+    }
+    const assert = function (f: typeof conflictSides) {
+      expect(f(row({ choice: '并存', why: 'x' })).advice!.label).toBe('共存')
+    }
+    assert(conflictSides)
+    expect(function () { assert(mutant as typeof conflictSides) }).toThrow()
+  })
+})
 
 describe('mutation: previewEmptyText', () => {
   it('goes red when both statuses collapse to one message', () => {

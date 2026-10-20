@@ -586,6 +586,11 @@ export interface ConflictDetail {
   old?: ConflictSideDetail
   /** Where the two sides stop agreeing; null when they are identical. */
   change?: { prefix?: string; new?: string; old?: string; suffix?: string } | null
+  /**
+   * The agent's recommendation, when it left one. Absent for conflicts nobody
+   * has analysed yet, and for cores older than this field.
+   */
+  advice?: { choice?: string; why?: string } | null
 }
 
 export interface ConflictItem {
@@ -630,7 +635,17 @@ function conflictDetail(raw: unknown): ConflictDetail | null {
       suffix: str(c.suffix) ?? '',
     }
   }
-  return { doc: str(o.doc), new: side(o.new), old: side(o.old), change }
+  const adviceRaw = o.advice
+  let advice: ConflictDetail['advice'] = null
+  if (adviceRaw && typeof adviceRaw === 'object') {
+    const a = adviceRaw as Record<string, unknown>
+    const choice = str(a.choice)
+    const why = str(a.why)
+    // An advice block with no words in it is not an advice block: the renderer
+    // would otherwise draw an empty "Agent 的判断" heading on every row.
+    if ((choice && choice.trim()) || (why && why.trim())) advice = { choice, why }
+  }
+  return { doc: str(o.doc), new: side(o.new), old: side(o.old), change, advice }
 }
 
 /**
