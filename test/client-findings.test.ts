@@ -31,12 +31,56 @@ import type { DoctorIssue } from '../src/client/types.ts'
 const CONSOLE = readFileSync(new URL('../src/client/Console.tsx', import.meta.url), 'utf8')
 const STYLES = readFileSync(new URL('../src/client/styles.ts', import.meta.url), 'utf8')
 
+const HEALTH_PY = new URL('../core/unified_memory/health.py', import.meta.url)
+const MEMORY_PY = new URL('../core/unified_memory/memory.py', import.meta.url)
+
 /** Comments stripped: assertions about call sites must not match prose. */
 function stripComments(src: string): string {
   return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')
 }
 
 const CONSOLE_CODE = stripComments(CONSOLE)
+
+/**
+ * The issue codes the core can emit, read out of the core's own source.
+ *
+ * A literal array here would be the bug it is meant to catch. The day the core
+ * grows a tenth check, a hard-coded list keeps passing while the pane renders
+ * that finding with a raw `some-new-code` for a title, a generic "本版面板还不
+ * 认识" for a next step and no hand-off button — i.e. exactly the "it looks
+ * fine from here" failure this whole audit exists to eliminate.
+ *
+ * Two emit sites feed the set:
+ *   1. `health.doctor()` — `_issue("<severity>", "<code>", …)`, the nine checks.
+ *   2. `cmd_doctor`'s fallback envelope — a one-line `code = A if … else B`,
+ *      the only place `vault-missing` and `doctor-failed` are born.
+ */
+function coreIssueCodes(): string[] {
+  const health = readFileSync(HEALTH_PY, 'utf8')
+  const memory = readFileSync(MEMORY_PY, 'utf8')
+
+  const fromDoctor = [...health.matchAll(/_issue\(\s*"(?:error|warn|info)"\s*,\s*"([a-z][a-z0-9-]*)"/g)]
+    .map(function (m) { return m[1] })
+
+  // Both branches of the ternary sit on the assignment line; every kebab-case
+  // literal on it is a code.
+  const fromFallback = [...memory.matchAll(/^\s*code\s*=\s*(.+)$/gm)]
+    .flatMap(function (line) {
+      return [...line[1].matchAll(/"([a-z][a-z0-9-]*)"/g)].map(function (s) { return s[1] })
+    })
+
+  return [...new Set([...fromDoctor, ...fromFallback])].sort()
+}
+
+/** The codes `AGENT_PLAN` in view.ts carries terms for, read from the source. */
+function agentPlanCodes(): string[] {
+  const src = readFileSync(new URL('../src/client/view.ts', import.meta.url), 'utf8')
+  const at = src.indexOf('const AGENT_PLAN')
+  const end = src.indexOf('\n}', at)
+  return [...src.slice(at, end).matchAll(/^\s*'([a-z][a-z0-9-]*)':/gm)]
+    .map(function (m) { return m[1] })
+    .sort()
+}
 
 function issue(
   code: string,
@@ -49,22 +93,53 @@ function issue(
 const COUNTS = { memories: 476, vectors: 377, conflicts: 3, inbox: 2, duplicates: 5, orphans: 2 }
 
 describe('healthFindings', () => {
-  it('ends every known finding in an actionable step', () => {
+  it('has translated copy and a next step for every code the core can emit', () => {
     // The bug this module exists to fix: a warning that names a symptom and
     // stops. A card without `fix` is the same dead end one scroll further down.
-    const codes = [
-      'sync-conflict-copies', 'conflicts-pending', 'inbox-stale', 'duplicate-facts',
-      'embedding-coverage', 'graph-bloat', 'index-bloat', 'orphan-indexes',
-      'unclassified-facts', 'vault-missing', 'doctor-failed',
-    ]
-    const got = healthFindings(codes.map((c) => issue(c)))
+    //
+    // The assertions below are the ones that can actually fail. A `fix.length >
+    // 6` check passes on the generic unknown-code card too — so a missing
+    // ISSUE_COPY entry would slip through a length guard while the user reads
+    // "本版面板还不认识" against a real problem. Both fallbacks are therefore
+    // asserted against directly: `issueTitle` returns the RAW CODE when it has
+    // no copy, and `healthFindings` returns a fixed sentence.
+    const codes = coreIssueCodes()
+    const got = healthFindings(codes.map((c) => issue(c)), COUNTS)
     expect(got).toHaveLength(codes.length)
     for (const f of got) {
-      expect(f.fix.length).toBeGreaterThan(6)
-      expect(f.detail.length).toBeGreaterThan(6)
-      expect(f.title.length).toBeGreaterThan(0)
-      expect(f.title).not.toContain('undefined')
+      expect(f.title, f.key).not.toBe(f.key)
+      expect(f.title, f.key).toMatch(/[\u4e00-\u9fa5]/)
+      expect(f.title, f.key).not.toContain('undefined')
+      expect(f.fix, f.key).not.toContain('本版面板还不认识')
+      expect(f.fix.length, f.key).toBeGreaterThan(6)
+      expect(f.detail.length, f.key).toBeGreaterThan(6)
+      // The "a repair introduced a problem" line builds its sentence from
+      // `issueTitle`, which returns the RAW CODE when it has no copy — a
+      // different function, a different fallback, so it is asserted separately.
+      expect(issueTitle(f.key), f.key).not.toBe(f.key)
     }
+  })
+
+  it('accounts for every `_issue` call site, so a parse failure is loud', () => {
+    // The parser above is a regex, and a regex that quietly matches nothing
+    // reports green — a blind spot wearing the same colour as a clean bill.
+    // Counting the call sites makes an unparseable new check a failure here
+    // rather than a silent omission there.
+    const health = readFileSync(HEALTH_PY, 'utf8')
+    const callSites = [...health.matchAll(/_issue\(/g)].length - 1 // minus `def _issue(`
+    const parsed = [...health.matchAll(/_issue\(\s*"(?:error|warn|info)"\s*,\s*"([a-z][a-z0-9-]*)"/g)]
+    expect(parsed.length).toBe(callSites)
+    expect(callSites).toBeGreaterThanOrEqual(9)
+  })
+
+  it('reads the fallback envelope’s two codes too', () => {
+    // `vault-missing` and `doctor-failed` never appear in health.py — they are
+    // minted in the CLI catch block. A parser pointed only at the doctor would
+    // report a complete set while missing the two codes the user is most likely
+    // to see (a broken vault is why the pane is empty in the first place).
+    const codes = coreIssueCodes()
+    expect(codes).toContain('vault-missing')
+    expect(codes).toContain('doctor-failed')
   })
 
   it('offers a paste-ready command where one exists', () => {
@@ -302,16 +377,23 @@ describe('agentAction — who does the work, and on what terms', () => {
     expect(healthFindings([issue('some-future-code')])[0].agent).toEqual(NO_AGENT)
   })
 
-  it('says what the hand-off may touch, in every case', () => {
-    // The risk label is the only thing on the card that distinguishes "rebuild
-    // a derived index" from "delete duplicate lines" before the click.
-    const codes = [
-      'sync-conflict-copies', 'conflicts-pending', 'inbox-stale', 'duplicate-facts',
-      'embedding-coverage', 'graph-bloat', 'index-bloat', 'orphan-indexes',
-      'unclassified-facts', 'vault-missing', 'doctor-failed',
-    ]
+  it('keeps the hand-off table in step with the core’s codes, both directions', () => {
+    // Direction 1 — every code the core can emit has terms here. A missing
+    // entry does not crash: the card simply grows no button, which is the
+    // quietest regression this pane can have.
+    // Direction 2 — every entry names a code the core still emits. After a
+    // rename in the core, a stale entry keeps offering "analyze" for a check
+    // that no longer runs.
+    const codes = coreIssueCodes()
+    expect(agentPlanCodes()).toEqual(codes)
     for (const code of codes) {
-      expect(agentAction(code).risk.length, code).toBeGreaterThan(2)
+      const act = agentAction(code)
+      expect(act.mode, code).not.toBe('none')
+      expect(act.label.length, code).toBeGreaterThan(0)
+      // The risk label is the only thing on the card that distinguishes
+      // "rebuild a derived index" from "delete duplicate lines" before the
+      // click; a button without one is worse than no button.
+      expect(act.risk.length, code).toBeGreaterThan(2)
     }
   })
 
