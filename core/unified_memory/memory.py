@@ -690,24 +690,25 @@ def cmd_advise(vault: str, key: str, choice: str, why: str, as_json: bool = Fals
     from . import promoter as promoter_mod
 
     note = collapse_whitespace(why)
-    entry = conflict_mod.find_conflict(Path(vault), key)
     if not note:
-        # Checked before the entry is even consulted: "there is nothing to say"
-        # is a fact about the request, not about the queue, and it must not be
-        # reported as `not-found` when the entry happens to be missing too.
+        # Decided before the queue is even read: "there is nothing to say" is a
+        # fact about the request, not about the queue, and it must not come back
+        # as `not-found` when the key happens to be missing as well.
         result = {"ok": False, "reason": "no-reason", "key": key, "choice": choice}
-    elif entry is None:
-        result = {"ok": False, "reason": "not-found", "key": key, "choice": choice}
-    elif choice not in promoter_mod.ADVISABLE:
-        result = {"ok": False, "reason": "unknown-choice", "key": key, "choice": choice,
-                  "allowed": list(promoter_mod.ADVISABLE)}
     else:
-        wrote = conflict_mod.record_advice(Path(vault), entry, choice, note)
-        result = {
-            "ok": wrote,
-            "reason": None if wrote else "not-found",
-            "key": key, "choice": choice, "why": note,
-        }
+        entry = conflict_mod.find_conflict(Path(vault), key)
+        if entry is None:
+            result = {"ok": False, "reason": "not-found", "key": key, "choice": choice}
+        elif choice not in promoter_mod.ADVISABLE:
+            result = {"ok": False, "reason": "unknown-choice", "key": key, "choice": choice,
+                      "allowed": list(promoter_mod.ADVISABLE)}
+        else:
+            wrote = conflict_mod.record_advice(Path(vault), entry, choice, note)
+            result = {
+                "ok": wrote,
+                "reason": None if wrote else "not-found",
+                "key": key, "choice": choice, "why": note,
+            }
 
     if as_json:
         # Same envelope rule as everywhere else: a business refusal exits 0,
