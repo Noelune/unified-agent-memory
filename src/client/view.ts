@@ -195,9 +195,7 @@ export function updateBadge(notice: UpdateNotice, progress: UpdateProgress): Upd
       }
       return {
         label: '可更新',
-        // The promise this line makes is the reason the feature is allowed to
-        // exist: one version query to npm, nothing about this machine on the wire.
-        title: '点击更新到 v' + notice.next + '（只向 npm 查一个版本号，不上传任何本机信息）',
+        title: '点击更新到 v' + notice.next,
         installs: true,
       }
   }
@@ -342,7 +340,7 @@ export function healthRows(input: HealthInput): HealthRow[] {
       value: input.agentName === null
         ? '—'
         : input.agentSource === 'fallback'
-          ? input.agentName + '（未识别 profile）'
+          ? input.agentName + ' · 未识别 profile'
           : input.agentName,
       tone: input.agentName === null ? 'muted' : input.agentSource === 'fallback' ? 'warn' : 'ok',
     },
@@ -674,7 +672,7 @@ export function conflictSides(item: {
   return {
     doc: detail?.doc || fallbackDoc || '未指定笔记',
     now: {
-      text: detail?.old?.text || item.old || '（没有对应的旧记录）',
+      text: detail?.old?.text || item.old || '没有对应的旧记录',
       meta: sideMeta(detail?.old?.recorded, detail?.old?.source),
       diff: change?.old ?? null,
       before: change?.prefix ?? '',
@@ -711,7 +709,7 @@ function adviceOf(raw: { choice?: string; why?: string } | null | undefined): Co
 export function decideOutcomeText(
   result: { applied: boolean; target: string | null; choice: string },
 ): string {
-  const target = result.target ? `（写进 ${result.target}）` : ''
+  const target = result.target ? `，写进 ${result.target}` : ''
   if (result.choice === '保留旧') return '已保留旧值，这条冲突清掉了'
   if (result.choice === '并存') return `已并存，两条都留下${target}`
   return `已取代，旧的那行删掉了${target}`
@@ -877,7 +875,7 @@ function countedDetail(code: string, base: string, counts?: DoctorCounts | null)
     return '共 ' + counts.duplicates + ' 行完全重复的事实，占掉检索名额，也让「重要度」虚高。'
   }
   if (code === 'orphan-indexes' && counts.orphans > 0) {
-    return counts.orphans + ' 个孤儿索引库（旧 vault 留下的），和现在的库无关，只占磁盘。'
+    return counts.orphans + ' 个孤儿索引库，是旧 vault 留下的，和现在的库无关，只占磁盘。'
   }
   if (code === 'inbox-stale' && counts.inbox > 0) {
     return '收件箱有 ' + counts.inbox + ' 条提交还没晋升，最老的超过两周，新事实会排在它们后面。'

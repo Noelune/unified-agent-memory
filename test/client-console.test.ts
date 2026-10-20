@@ -527,12 +527,12 @@ describe('the pane asks one question', () => {
     expect(CONFLICT_ADVICE_LABEL).toBe('Agent 的判断')
     expect(body).toContain('sides.advice')
     expect(body).toContain('dsh-memory-advicebody')
-    expect(body).toContain('（Agent 建议）')
+    expect(body).toContain(' · Agent 建议')
     // The class has to be CHOSEN by the comparison, not merely computed next to
     // it — a `suggested` that nothing consumes is a highlight that never
     // appears, and the assertion above would still pass (verified by mutation).
     expect(body).toMatch(/className: suggested \? 'dsh-memory-action dsh-memory-action-suggested'/)
-    expect(body).toMatch(/suggested \? c\.label \+ '（Agent 建议）'/)
+    expect(body).toMatch(/suggested \? c\.label \+ ' · Agent 建议'/)
     // Order is the argument: sides first, then the judgement, then the buttons.
     // Advice above the facts would be a verdict before the evidence.
     const adviceAt = body.indexOf('CONFLICT_ADVICE_LABEL')
@@ -1667,14 +1667,14 @@ describe('updateBadge', () => {
   const waiting = updateNotice('0.8.5', true)
   const nothing = updateNotice(null, null)
 
-  it('offers to install, and says what the click talks to', () => {
+  it('offers to install the version it names, and nothing else', () => {
     const b = updateBadge(waiting, idle)
     expect(b.label).toBe('可更新')
     expect(b.installs).toBe(true)
-    // The promise that makes this acceptable to ship: one version query, no
-    // machine information on the wire.
-    expect(b.title).toContain('0.8.5')
-    expect(b.title).toContain('不上传任何本机信息')
+    // The tooltip is a verb and a version. It used to carry a parenthetical
+    // explaining the feature's own privacy posture, which is the kind of thing
+    // that reads as an advertisement and teaches nobody anything.
+    expect(b.title).toBe('点击更新到 v0.8.5')
   })
 
   it('says nothing when there is no update to install', () => {

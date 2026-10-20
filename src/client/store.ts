@@ -201,7 +201,7 @@ export function readUpdateOutcome(
   if (status !== '') return { phase: 'failed', version: null, reason: reason ?? status }
   // No status at all means the host answered with something that is not ours —
   // a proxy error page, a 404 from an older build. Say so rather than guess.
-  return { phase: 'failed', version: null, reason: '宿主没有回答（HTTP ' + http + '）' }
+  return { phase: 'failed', version: null, reason: '宿主没有回答：HTTP ' + http }
 }
 
 /**
