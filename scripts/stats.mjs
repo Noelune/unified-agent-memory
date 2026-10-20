@@ -183,11 +183,85 @@ function readLocal(name) {
   return null
 }
 
+// ── 第三方插件市场 ────────────────────────────────────────────────────────────
+//
+// DSH 的「市场」不是一个下载源，只是一份 JSON 索引：每个条目声明 name + versions，
+// 每个 version 带一个 source。source.type === 'npm' 时安装执行的是 pnpm add
+// `name@version`，仍然打在 registry 上（除非该 version 额外声明了 registry）。
+// 也就是说：市场装出来的每一次，都计入 npm 的下载数，无法区分来源。
+
+function semverParts(v) {
+  return String(v)
+    .split('-')[0]
+    .split('.')
+    .map((n) => Number(n) || 0)
+}
+
+function cmpSemver(a, b) {
+  const [x, y] = [semverParts(a), semverParts(b)]
+  for (let i = 0; i < 3; i++) {
+    if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) - (y[i] ?? 0)
+  }
+  return 0
+}
+
+/** 从本机 DSH profile 的 cordis.patch.yml 里读出配置的市场索引地址。 */
+function readIndexUrls() {
+  const file = path.join(os.homedir(), '.dsh', 'profiles', 'desktop', 'cordis.patch.yml')
+  if (!fs.existsSync(file)) return []
+  const text = fs.readFileSync(file, 'utf8')
+  const urls = []
+  let inBlock = false
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim()
+    if (/^-?\s*id:\s*plugin-market\s*$/.test(line)) {
+      inBlock = true
+      continue
+    }
+    if (inBlock) {
+      if (/^-?\s*id:\s*\S+/.test(line)) break
+      const m = line.match(/^-\s*(https?:\/\/\S+)$/)
+      if (m) urls.push(m[1])
+    }
+  }
+  return urls
+}
+
+async function readMarkets(name) {
+  const urls = readIndexUrls()
+  const out = []
+  for (const url of urls) {
+    try {
+      const j = await getJSON(url)
+      const entry = (j.plugins ?? []).find((p) => p.name === name)
+      const top = entry?.versions?.[0]
+      out.push({
+        url,
+        title:
+          typeof j.title === 'string'
+            ? j.title
+            : (j.title?.zh ?? j.title?.en ?? new URL(url).hostname),
+        listed: Boolean(entry),
+        version: top?.version ?? null,
+        sourceType: top?.source?.type ?? null,
+        sourceRegistry: top?.source?.registry ?? null,
+        publishedAt: top?.publishTimestamp
+          ? new Date(top.publishTimestamp * 1000).toISOString().slice(0, 10)
+          : null,
+      })
+    } catch (e) {
+      out.push({ url, title: new URL(url).hostname, listed: false, error: e.message })
+    }
+  }
+  return out
+}
+
 // ── 汇总 ─────────────────────────────────────────────────────────────────────
 
 const npm = await readNpm(pkg.name)
 const github = readGithub(REPO)
 const local = readLocal(pkg.name)
+const markets = await readMarkets(pkg.name)
 
 const data = {
   generatedAt: new Date().toISOString(),
@@ -195,6 +269,7 @@ const data = {
   npm,
   github,
   local,
+  markets,
 }
 
 // 峰值日
@@ -249,6 +324,29 @@ function report() {
   line('profile 装的版本', local ? local.version : '(未安装)')
   line('仓库最新版本', pkg.version)
   console.log('')
+
+  if (markets.length) {
+    console.log('  第三方插件市场（索引 + npm 转发，安装会计入上面的 npm 数字）')
+    for (const m of markets) {
+      if (m.error) {
+        console.log(`  ✗ ${m.title}`.padEnd(34) + `读不到：${m.error}`)
+        continue
+      }
+      if (!m.listed) {
+        console.log(`  · ${m.title}`.padEnd(34) + '未收录')
+        continue
+      }
+      const lag = cmpSemver(pkg.version, m.version)
+      const note = lag === 0 ? '与 npm 同步' : lag > 0 ? '落后' : '比 npm 还新'
+      const reg = m.sourceRegistry ? ` 私有 registry ${m.sourceRegistry}` : ' npm 源'
+      console.log(`  ✓ ${m.title}`.padEnd(34) + `${m.version}${reg}  ${note}`)
+    }
+    console.log('')
+    console.log('  · 市场装出来的每一次都走 npm，所以它们已经算在 npm 的计数里，')
+    console.log('    无法拆分「哪个市场来的」。要分市场，只能让市场托管自己的 tarball，')
+    console.log('    那样反而不进 npm 统计，等于把数换了个地方。')
+    console.log('')
+  }
 
   console.log('  口径（这些数字各自意味着什么）')
   console.log('  · npm 的计数是「tarball 被下载的次数」，不是人数：重装、CI、')
@@ -332,6 +430,23 @@ function renderHTML() {
     </div>`
     : `<div class="card muted"><h2>GitHub</h2><p class="empty">${github.reason}</p></div>`
 
+  const marketRows = markets.length
+    ? markets
+        .map((m) => {
+          if (m.error) {
+            return `<li class="bad"><span>${m.title}</span><b>读不到</b><em>${m.error}</em></li>`
+          }
+          if (!m.listed) {
+            return `<li><span>${m.title}</span><b>未收录</b><em>—</em></li>`
+          }
+          const lag = cmpSemver(pkg.version, m.version)
+          const state = lag === 0 ? '已同步' : lag > 0 ? '落后' : '超前'
+          const cls = lag > 0 ? ' class="lag"' : ''
+          return `<li${cls}><span>${m.title}</span><b>${m.version}</b><em>${state}</em></li>`
+        })
+        .join('')
+    : '<li><span>本机没有配置任何市场索引</span><b>—</b><em>—</em></li>'
+
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -389,6 +504,13 @@ function renderHTML() {
   .refs b{text-align:right;font-variant-numeric:tabular-nums}
   .refs em{font-style:normal;color:var(--ink3);text-align:right;font-size:12px}
   .empty{color:var(--ink3);font-size:13px;margin:6px 0}
+  .markets li{grid-template-columns:1fr 90px 90px}
+  .markets li.lag b{color:var(--warn)}
+  .markets li.lag em{color:var(--warn);font-weight:600}
+  .markets li.bad b,.markets li.bad em{color:#b3261e}
+  .tip{margin:12px 0 0;padding-top:12px;border-top:1px solid var(--line);
+    color:var(--ink2);font-size:12.5px;line-height:1.7}
+  .tip code{background:#eef1f6;padding:1px 5px;border-radius:4px;font-size:11.5px}
   .muted{opacity:.7}
   .note{background:#fffdf5;border:1px solid #f0e2bd;border-radius:var(--radius);
     padding:16px 20px;color:#5a4a20;font-size:13px;line-height:1.75}
@@ -427,6 +549,17 @@ function renderHTML() {
       ${versionBars}
     </div>
     ${ghCard}
+  </div>
+
+  <div class="card">
+    <h2>第三方插件市场 <em>索引只声明「装哪个版本」，安装仍走 npm</em></h2>
+    <ul class="refs markets">${marketRows}</ul>
+    <p class="tip">
+      市场条目的 <code>source.type</code> 是 <code>npm</code> 时，点安装执行的是
+      <code>pnpm add 包名@版本</code>，拉的就是 registry 上那个 tarball——所以市场带来的下载
+      <b>已经算在上面的 npm 数字里</b>，而且没法拆出「哪个市场来的」。只有当某个版本在索引里
+      额外声明了 <code>registry</code>（私有源或镜像）时，那次安装才不进 npm 官方统计。
+    </p>
   </div>
 
   <div class="note">
