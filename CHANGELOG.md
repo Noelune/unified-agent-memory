@@ -4,7 +4,7 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
-## [0.9.0] — 2026-10-20
+## [0.8.4] — 2026-10-20
 
 ### Changed — 面板不再把「还没晋升的提交」摆给读者看
 
@@ -37,9 +37,10 @@ All notable changes to this project are documented in this file.
 - 「读不到」与「没有」**继续分两个分支**：`items === null` 且非 busy 时显示
   「裁决队列读不到，记忆核心暂不可用」+ 重试，绝不渲染成「没有需要你裁决的事」。
 
-**这一版是 0.9.0 而不是 0.8.4**：删掉的是用户面前的**两个动作**（收录 / 不采纳）。虽然
-服务端 `/accept` `/dismiss` 与 CLI `memory accept/dismiss` 都还在（见 `docs/JSON-CONTRACT.md`
-§7.2 的说明），但**面板上确实没有这条路了**，按 semver 就该抬 minor。
+**为什么是 patch**：0.8.3 是为了把两个队列的说法分开，事后看那是半成品——真正该做的
+是让那一块消失。这一版补完同一件事，属于同一个改动的下半截，不另开一个版本号。服务端
+`/accept` `/dismiss` 与 CLI `memory accept/dismiss` 原封不动（见 `docs/JSON-CONTRACT.md`
+§7.2 的说明），对外契约没有变化。
 
 ### 顺带清掉的死代码
 
