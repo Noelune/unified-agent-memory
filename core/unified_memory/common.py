@@ -159,6 +159,19 @@ def looks_like_credential(line: str) -> bool:
     return bool(CREDENTIAL_LINE_RE.search(line))
 
 
+def collapse_whitespace(text: str) -> str:
+    """One line, no runs of whitespace — or "" when there is nothing to say.
+
+    A reason is free text: an agent writes it, a person pastes it, and it has to
+    travel into a line-oriented markdown block. Newlines would split the entry
+    it belongs to, and a reason of pure whitespace would be written out as an
+    empty field — which is how `- 解释：` with nothing after it ends up in the
+    queue. Both are answered by the same collapse, so the check for "is there
+    anything to say" and the normalisation of what is said cannot drift apart.
+    """
+    return " ".join(str(text or "").split())
+
+
 # --------------------------------------------------------------------------
 # Vault resolution
 # --------------------------------------------------------------------------
@@ -188,9 +201,21 @@ def resolve_vault() -> Path:
     return DEFAULT_VAULT
 
 
+class VaultMissing(RuntimeError):
+    """This machine has no memory vault at the resolved path.
+
+    A subclass rather than a bare RuntimeError so the CLI can turn *exactly*
+    this one condition into a one-line error while leaving every other
+    RuntimeError a traceback. Ten commands call `ensure_vault` as their first
+    step, so a user who follows doctor's own advice on a fresh machine
+    (`memory gc --apply`) used to get a stack trace for a state the message
+    already knows how to fix in one documented command.
+    """
+
+
 def ensure_vault(vault: Path) -> None:
     if not (vault / AGENT_CONTEXT).is_dir():
-        raise RuntimeError(
+        raise VaultMissing(
             f"vault not initialized at {vault} — run \"memory init --vault <path>\" "
             f"(or set {VAULT_ENV})"
         )

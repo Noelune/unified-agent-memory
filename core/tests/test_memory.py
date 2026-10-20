@@ -1,16 +1,26 @@
 # -*- coding: utf-8 -*-
+import json
 import os
 import io
+import shutil
+import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stdout
+from pathlib import Path
 from threading import Barrier
 from unittest.mock import patch
 
 from test_common import destroy_scratch, make_scratch_vault
 from unified_memory import memory as mem_mod
 from unified_memory import promoter
-from unified_memory.common import atomic_create, canonical_dir, canonical_path, resolve_vault
+from unified_memory.common import (
+    VAULT_ENV,
+    atomic_create,
+    canonical_dir,
+    canonical_path,
+    resolve_vault,
+)
 
 
 class MemoryCoreTest(unittest.TestCase):
@@ -231,6 +241,60 @@ class DriftSubcommandTest(unittest.TestCase):
         files = json.loads(pkg.read_text(encoding="utf-8"))["files"]
         self.assertIn("driftrc.yaml", files)
         self.assertTrue((pkg.parent / "driftrc.yaml").is_file())
+
+
+class VaultMissingCliTest(unittest.TestCase):
+    """One uninitialized vault, one clean answer — for every verb.
+
+    Ten commands call `ensure_vault` as their first step and it raised a bare
+    RuntimeError, so `memory gc` on a fresh machine printed a four-frame
+    traceback for a state whose message already names the command that fixes
+    it. `doctor` tells users to run exactly that command, which made the
+    traceback the first thing they saw.
+    """
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix="um-novault-"))
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.missing = self.root / "not-a-vault"
+        patcher = patch.dict(os.environ, {VAULT_ENV: str(self.missing)})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_a_missing_vault_is_a_one_line_error_not_a_traceback(self):
+        # `status` is deliberately absent: it is a diagnostic, catches the same
+        # condition itself and reports `structure: MISSING` at exit 0 so the
+        # panel can render the state instead of losing the output.
+        for argv in (
+            ["gc", "--json"],
+            ["preview", "conflicts", "--json"],
+            ["sync", "--json"],
+            ["advise", "k", "并存", "--why", "x", "--json"],
+        ):
+            with self.assertRaises(SystemExit) as cm:
+                with redirect_stdout(io.StringIO()):
+                    mem_mod.main(argv)
+            # A SystemExit carrying a message is printed to stderr with exit
+            # status 1, and `.code` is the message itself — this codebase's
+            # convention for a CLI error (see cmd_drift / cmd_use). What the
+            # old behaviour cost was the traceback, so that is what is pinned.
+            self.assertIsInstance(cm.exception.code, str, argv)
+            self.assertIn("vault not initialized", cm.exception.code)
+            self.assertIn(str(self.missing), cm.exception.code)
+
+    def test_doctor_still_receives_it_as_a_report(self):
+        # The subclass exists so `status`/`doctor` keep catching it: doctor
+        # answers with a JSON report and a `vault-missing` issue code rather
+        # than dying, and that contract is what the panel reads.
+        buf = io.StringIO()
+        with self.assertRaises(SystemExit):
+            with redirect_stdout(buf):
+                mem_mod.main(["doctor", "--json"])
+        payload = json.loads(buf.getvalue())
+        self.assertIs(payload["data"]["ok"], False)
+        self.assertEqual(
+            [issue["code"] for issue in payload["data"]["issues"]], ["vault-missing"]
+        )
 
 
 if __name__ == "__main__":

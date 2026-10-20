@@ -41,6 +41,7 @@ from .common import (
     CONFLICT_FILE,
     atomic_write,
     bare_fact_line,
+    collapse_whitespace,
     file_lock,
     read_maybe,
     situation_dir,
@@ -303,7 +304,7 @@ def record_advice(
             return record_advice(vault, entry, choice, why, locked=True)
     path = situation_dir(vault) / CONFLICT_FILE
     lines = read_maybe(path).splitlines()
-    note = " ".join(str(why or "").split())
+    note = collapse_whitespace(why)
     wanted = _signature(entry)
 
     if entry.get("format") == "block":
@@ -604,6 +605,6 @@ def record_adjudication(
     written = f"- {stamp}｜裁决：{decision}｜新：{entry.get('新', '')}｜旧：{entry.get('旧', '')}\n"
     with open(path, "a", encoding="utf-8") as fh:
         fh.write(written)
-        note = " ".join(str(why or "").split())
+        note = collapse_whitespace(why)
         if note:
             fh.write(f"  理由：{note}\n")

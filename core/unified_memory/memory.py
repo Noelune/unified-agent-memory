@@ -35,10 +35,12 @@ from .common import (
     CONFIG_PATH,
     NON_SUBMISSION_FILES,
     VAULT_ENV,
+    VaultMissing,
     atomic_create,
     atomic_write,
     canonical_dir,
     canonical_path,
+    collapse_whitespace,
     ensure_vault,
     is_bare_note_name,
     looks_like_credential,
@@ -649,6 +651,25 @@ def cmd_accept_cli(args: argparse.Namespace) -> None:
         print(text)
 
 
+def plain_reason(value: str) -> str:
+    """Collapse a free-text reason, refusing one that carries no words.
+
+    argparse's ``required=True`` asks only whether the flag was *given*, so
+    ``--why ""`` and ``--why "   "`` both pass it — and the entry then carried
+    ``- 解释：`` with nothing after it, which is precisely the unreadable
+    advice this command exists to replace. The value is therefore validated,
+    not just its presence, and collapsed so a pasted multi-line reason lands as
+    one line in the queue like every other field.
+    """
+    note = collapse_whitespace(value)
+    if not note:
+        raise argparse.ArgumentTypeError(
+            "a reason is required — advising without saying why is the "
+            "question handed back untouched"
+        )
+    return note
+
+
 def cmd_advise(vault: str, key: str, choice: str, why: str, as_json: bool = False) -> str:
     """Attach a recommendation to a conflict the agent could not settle.
 
@@ -659,22 +680,33 @@ def cmd_advise(vault: str, key: str, choice: str, why: str, as_json: bool = Fals
 
     Restricted to the three rulings that mean something as a recommendation:
     `跳过` is a way to defer, not advice about which side is true.
+
+    A reason of pure whitespace is refused here as well as in the parser: this
+    function is importable API, and the CLI's ``type=plain_reason`` only guards
+    the command line. Both refusals exist so that no caller can reach
+    ``record_advice`` with nothing to say.
     """
     from . import conflict as conflict_mod
     from . import promoter as promoter_mod
 
+    note = collapse_whitespace(why)
     entry = conflict_mod.find_conflict(Path(vault), key)
-    if entry is None:
+    if not note:
+        # Checked before the entry is even consulted: "there is nothing to say"
+        # is a fact about the request, not about the queue, and it must not be
+        # reported as `not-found` when the entry happens to be missing too.
+        result = {"ok": False, "reason": "no-reason", "key": key, "choice": choice}
+    elif entry is None:
         result = {"ok": False, "reason": "not-found", "key": key, "choice": choice}
     elif choice not in promoter_mod.ADVISABLE:
         result = {"ok": False, "reason": "unknown-choice", "key": key, "choice": choice,
                   "allowed": list(promoter_mod.ADVISABLE)}
     else:
-        wrote = conflict_mod.record_advice(Path(vault), entry, choice, why)
+        wrote = conflict_mod.record_advice(Path(vault), entry, choice, note)
         result = {
             "ok": wrote,
             "reason": None if wrote else "not-found",
-            "key": key, "choice": choice, "why": why,
+            "key": key, "choice": choice, "why": note,
         }
 
     if as_json:
@@ -1089,7 +1121,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_advise = sub.add_parser("advise", help="attach a recommendation to a conflict you cannot settle")
     p_advise.add_argument("key")
     p_advise.add_argument("choice", help=" / ".join(("用新", "保留旧", "并存")))
-    p_advise.add_argument("--why", required=True, help="the reason, in plain language")
+    p_advise.add_argument("--why", required=True, type=plain_reason, help="the reason, in plain language")
     p_advise.add_argument("--json", action="store_true", help="emit a machine-readable JSON envelope")
     p_advise.set_defaults(fn=cmd_advise_cli)
 
@@ -1123,7 +1155,14 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
-    args.fn(args)
+    try:
+        args.fn(args)
+    except VaultMissing as exc:
+        # One condition, one shape of answer: the message already names the
+        # command that fixes it, so the stack trace added nothing but noise —
+        # and `status`/`doctor` still receive it as a RuntimeError, because
+        # this class is a subclass of one.
+        raise SystemExit(str(exc)) from None
 
 
 if __name__ == "__main__":

@@ -161,6 +161,51 @@ class AdviseCliTest(unittest.TestCase):
         log = read_maybe(situation_dir(self.vault) / ADJUDICATED_FILE)
         self.assertIn("理由：9090 是当前值，8080 已停用。", log)
 
+    def _queue_text(self) -> str:
+        from unified_memory.common import CONFLICT_FILE, read_maybe, situation_dir
+
+        return read_maybe(situation_dir(self.vault) / CONFLICT_FILE)
+
+    def test_a_blank_reason_is_refused_before_anything_is_written(self):
+        # `required=True` asks only whether --why was *given*. `--why ""` and
+        # `--why "   "` both passed it and the entry was rewritten with
+        # `- 解释：` and nothing after it — the unreadable advice this whole
+        # command exists to replace. The check is on the value, not the flag.
+        before = self._queue_text()
+        for blank in ("", "   ", " \n\t "):
+            with self.assertRaises(SystemExit) as cm:
+                with contextlib.redirect_stderr(io.StringIO()):
+                    memory.main(["advise", self.key, "并存", "--why", blank, "--json"])
+            self.assertEqual(cm.exception.code, 2, "a blank reason is a usage error")
+            self.assertEqual(self._queue_text(), before, "the queue must be untouched")
+
+    def test_the_library_entry_point_refuses_a_blank_reason_as_a_business_answer(self):
+        # `cmd_advise` is importable API; the parser's type check runs only on
+        # the command line. Same rule, same refusal, different vocabulary:
+        # a panel caller needs `data.reason`, not a SystemExit.
+        payload = json.loads(memory.cmd_advise(
+            vault=str(self.vault), key=self.key, choice="并存", why="   ", as_json=True,
+        ))
+
+        self.assertIs(payload["ok"], False)
+        self.assertEqual(payload["data"]["reason"], "no-reason")
+
+        from unified_memory.conflict import find_conflict
+
+        self.assertNotIn("建议", find_conflict(self.vault, self.key))
+
+    def test_a_multi_line_reason_lands_as_one_line(self):
+        # Pasted prose arrives with newlines. The queue is a line-oriented
+        # format, so an un-collapsed reason would break the block it lives in.
+        payload = self._run([
+            "advise", self.key, "保留旧", "--why", "第一行。\n  第二行。\n", "--json",
+        ])
+
+        self.assertEqual(payload["data"]["why"], "第一行。 第二行。")
+        from unified_memory.conflict import find_conflict
+
+        self.assertEqual(find_conflict(self.vault, self.key)["解释"], "第一行。 第二行。")
+
 
 if __name__ == "__main__":
     unittest.main()
