@@ -264,7 +264,7 @@ directly instead of only re-reading the unit tests.
 | `npm run drift:check` / `npm run drift:python` | no drift, exit `0` |
 | `npm run build` | bundles regenerated, no diff against the committed ones |
 | `npm run audit:package` | `npm package audit ok: 103 entries` |
-| `npm pack --dry-run --json` | 103 files, 505.8 kB packed / 1.7 MB unpacked; all 22 `core/**` files present |
+| `npm pack --dry-run --json` | 103 files, 514.7 kB packed / 1.68 MB unpacked; all 22 `core/**` files present |
 | Behavioural probe, 35 cases over a scratch vault | 35 passed |
 | Mutation probe, 5 hand-applied defects | 5 caught, 0 survived |
 | Version consistency | `package.json` = `dsh.plugin.json` = `package-lock.json` = `0.8.1` |
