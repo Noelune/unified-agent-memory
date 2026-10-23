@@ -324,6 +324,34 @@ class PreviewCliTest(unittest.TestCase):
         self.assertIn("<memory-data>", out)
         self.assertIn("no items in view 'pending'", out)
 
+    def test_cli_accepts_the_view_option_as_an_alias(self):
+        """`--view` is the spelling people reach for; it used to be exit 2.
+
+        The positional form is canonical (every doc and the plugin's argv
+        builder use it), so the alias must render exactly the same view
+        rather than being a second, differently-behaving entry point.
+        """
+        positional = self._run(["preview", "pending", "--json"])
+        aliased = self._run(["preview", "--view", "pending", "--json"])
+        self.assertEqual(json.loads(positional), json.loads(aliased))
+
+    def test_cli_rejects_two_different_views_instead_of_picking_one(self):
+        # Both spellings accepted is a convenience; silently preferring one
+        # would render a view the caller did not ask for.
+        with self.assertRaises(SystemExit) as cm:
+            with contextlib.redirect_stdout(io.StringIO()):
+                memory.main(["preview", "recent", "--view", "pending"])
+        self.assertNotEqual(cm.exception.code, 0)
+        self.assertIn("two views", str(cm.exception.code))
+
+    def test_cli_without_any_view_names_the_choices(self):
+        with self.assertRaises(SystemExit) as cm:
+            with contextlib.redirect_stdout(io.StringIO()):
+                memory.main(["preview"])
+        self.assertIn("preview needs a view", str(cm.exception.code))
+        for view in preview.VIEWS:
+            self.assertIn(view, str(cm.exception.code))
+
 
 class ReadInboxItemTest(unittest.TestCase):
     def setUp(self):

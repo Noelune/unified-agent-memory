@@ -39,7 +39,10 @@ Thumbs.db
 .DS_Store
 
 # Extra excludes for the npm package
-core/tests/
+# core/tests/ is deliberately NOT excluded: the suite is stdlib-only and
+# ~700 KB, and shipping it is what makes "installed, therefore unverifiable"
+# avoidable — `python -m unittest discover -s core/tests` works from the
+# installed package with no clone and no dev dependencies.
 src/
 test/
 scripts/
