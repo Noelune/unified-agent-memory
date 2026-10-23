@@ -33,6 +33,7 @@
     "core/pyproject.toml",
     "core/README.md",
     "core/unified_memory/*.py",
+    "core/tests/*.py",
     "setup/*.py",
     "setup/README.md"
   ],

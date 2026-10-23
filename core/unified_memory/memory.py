@@ -519,6 +519,24 @@ def preview_views() -> tuple[str, ...]:
 def cmd_preview(args: argparse.Namespace) -> None:
     from . import preview as preview_mod
 
+    # Reconcile the positional and the `--view` alias here, once.
+    positional = args.view
+    option = getattr(args, "view_option", None)
+    if positional and option and positional != option:
+        # Two spellings, two different answers: silently picking one would
+        # render a view the caller did not ask for.
+        raise SystemExit(
+            f"preview got two views — {positional!r} positionally and {option!r} via --view"
+        )
+    view = positional or option
+    if not view:
+        # `view` is optional only so `--view` can exist as an alias; with
+        # neither spelling the subcommand has nothing to render. Say which
+        # views exist instead of letting preview.build() receive None.
+        raise SystemExit(
+            "preview needs a view — one of: " + ", ".join(preview_views())
+        )
+    args.view = view
     vault = resolve_vault()
     ensure_vault(vault)
     data = preview_mod.build(vault, args.view, limit=args.limit)
@@ -1103,7 +1121,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_digest.set_defaults(fn=cmd_digest)
 
     p_preview = sub.add_parser("preview", help="read-only governance views (pending/conflicts/forgetting/recent)")
-    p_preview.add_argument("view", choices=preview_views(), help="which view to render")
+    # `view` is positional, and that is what every doc and the plugin's own
+    # argv builder use. `--view` is kept as an alias because it is the spelling
+    # a caller reaches for after reading `search --limit` / `doctor --strict`:
+    # argparse rejected it outright, so the mistake surfaced as exit 2 and
+    # "unrecognized arguments" rather than a hint.
+    #
+    # The alias gets its own dest on purpose. Sharing `view` looks tidier but
+    # does not work: argparse processes the optional first and the positional
+    # second, so a bare positional would overwrite the already-parsed value
+    # with its own default. Two names, reconciled once in cmd_preview.
+    p_preview.add_argument("view", nargs="?", choices=preview_views(), help="which view to render")
+    p_preview.add_argument("--view", dest="view_option", choices=preview_views(), help=argparse.SUPPRESS)
     p_preview.add_argument("--limit", type=int, default=20)
     p_preview.add_argument("--json", action="store_true", help="emit a machine-readable JSON envelope")
     p_preview.set_defaults(fn=cmd_preview)
