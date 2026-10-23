@@ -4,6 +4,40 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.8.8] — 2026-10-23
+
+### Fixed — 两个进门就绊人的小地方
+
+**`preview` 拒绝 `--view`。** view 是位置参数，文档和插件自己的 argv 构造都用那个形式，所以位置参数仍是唯一规范写法。但 `--view` 是读过 `search --limit`、`doctor --strict` 之后会顺手打出来的拼法，argparse 直接以 exit 2 顶回去：
+
+```
+$ memory preview --view pending
+memory: error: unrecognized arguments: --view
+```
+
+现在它是别名，渲染同一个 view。两道闸门防止它变成第二个行为不同的入口：位置参数和 `--view` 给了**不同** view 时报错并列出两者，不静默挑一个；一个都不给时列出四个可选 view，而不是把 `None` 传进 `preview.build()`。
+
+顺带记一个坑：两者共用一个 `dest` 看着更整洁，但不工作——argparse 先解析可选、后解析位置，位置参数的默认值会把已解析的值冲掉。两个名字分开，在 `cmd_preview` 里汇合一次。
+
+**装好的包跑不了自己的测试。** `files` 没列 `core/tests`，`.npmignore` 里又写着 `core/tests/`，两处一起把它挡在外面：
+
+```
+$ python -m unittest discover -s core/tests
+Ran 0 tests
+```
+
+于是"装了所以无法自证"成了必然。测试套件只用标准库，约 700 KB，没有任何依赖上的理由扣着不放。包从 104 条目增到 132，含 28 个测试模块，打包 545 KB。`audit:package` 仍然干净：入口是 `core/tests/*.py` 这个 glob，`.log`/`.bak`/`.db`/`__pycache__` 进不来。
+
+### Tests
+
+- `test_preview.py`：别名与位置参数输出同一个 JSON；两种拼法冲突时非零退出并说明；都不给时列出四个 view。
+- `test/package-contents.test.mjs`（新增）：`core/tests/*.py` 在 `files` 里、`.npmignore` 没排除它、非源码（`src/`、`scripts/`、`test/`、`node_modules`、字节码）不随包走、入口保持 `*.py` glob 以免夹带 fixture。
+- `health.py` 的未归类计数不再把 markdown `---` 分隔线当事实行（用与同一函数里判重复相同的谓词；回归测试在旧谓词下报 `4 != 3`）。
+
+### Verified
+
+core `unittest discover` 374 OK、`node --test` 24 OK、vitest 865 OK（38 文件）、typecheck 0 错误、`audit:package` 132 条目、`drift:check` 与 `drift:python` 均通过。
+
 ## [0.8.7] — 2026-10-21
 
 ### Fixed — 0.8.6 把正常的括注也一起拆了
