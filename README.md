@@ -1,5 +1,7 @@
 <div align="center">
 
+<a href="docs/images/logo.jpg"><img src="docs/images/logo.jpg" alt="unified-agent-memory logo" width="320"></a>
+
 # 🧠 unified-agent-memory
 
 ### *Unified Fleet-Wide Agent Memory System for DeepSeek Harness & Multi-Agent Runtimes*
