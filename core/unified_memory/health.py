@@ -164,8 +164,18 @@ def doctor(vault: Path) -> dict:
         "files": len(canonical_files),
         "conflictCopies": copies,
         "duplicateLines": duplicates,
+        # Count bullets the same way the duplicate scan above does. A bare
+        # `startswith("-")` also matches a markdown `---` rule, so the note
+        # reported one phantom "fact" per horizontal line and the "N fact(s)
+        # landed in 未归类事实" finding overstated the backlog. The file is
+        # written by this module, so both readers must agree on what a fact
+        # line is.
         "unclassifiedLines": (
-            sum(1 for line in unclassified.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip().startswith("-"))
+            sum(
+                1
+                for line in unclassified.read_text(encoding="utf-8", errors="replace").splitlines()
+                if line.strip().startswith(("- ", "• ", "* "))
+            )
             if unclassified.is_file()
             else 0
         ),
