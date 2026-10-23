@@ -45,6 +45,31 @@ class DoctorTest(unittest.TestCase):
             report = health.doctor(self.vault)
         self.assertIn("inbox-stale", [issue["code"] for issue in report["issues"]])
 
+    def test_unclassified_count_ignores_markdown_rules(self):
+        """A `---` rule is not a fact line.
+
+        `unclassifiedLines` used to count any line starting with `-`, so a
+        single horizontal rule inflated the "N fact(s) landed in 未归类事实"
+        finding by one. The file's other reader (the duplicate scan) has
+        always required `- `, `• ` or `* `; these two must agree.
+        """
+        note = common.canonical_dir(self.vault) / common.UNCLASSIFIED_FACT_REL
+        note.parent.mkdir(parents=True, exist_ok=True)
+        note.write_text(
+            "# 未归类事实\n"
+            "\n"
+            "- 真事实一\n"
+            "- 真事实二\n"
+            "\n"
+            "---\n"
+            "\n"
+            "- 真事实三\n",
+            encoding="utf-8",
+        )
+        with patch("unified_memory.embed.configured", return_value=False):
+            report = health.doctor(self.vault)
+        self.assertEqual(report["canonical"]["unclassifiedLines"], 3)
+
 
 class OrphanIndexReportTest(unittest.TestCase):
     """doctor must not print a command that removes nothing.
