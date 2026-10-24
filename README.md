@@ -74,7 +74,7 @@
 - **版本化取代 (Supersession)**  
   Promoter 识别“改用/迁移到/instead of”等取代信号时，把旧事实移入该笔记 `已取代` 小节并保留历史，索引标记旧行 `superseded`，检索只返回最新。
 - **智能遗忘评分 (Salience × Decay × Reinforcement)**  
-  Forgetter 从“90 天未用”升级为 `重要性 × (持久地板 + 时间衰减) + 访问强化`：偏好/架构/规则等高价值记忆长期保留，普通事实随时间衰减，始终可逆。中文持久主题（路径/配置/服务器/凭据…）同样受保护，最近一次检索会重置衰减时钟；笔记编辑不会清空历史访问计数或已生成的向量。每周一 04:00 的遗忘扫描由 `setup.py cron` 开箱注册，与每日晋升共用错过补跑机制。
+  Forgetter 从“90 天未用”升级为 `重要性 × (持久地板 + 时间衰减) + 访问强化`：偏好/架构/规则等高价值记忆长期保留，普通事实随时间衰减，始终可逆。中文持久主题（路径/配置/服务器/凭据…）同样受保护，最近一次检索会重置衰减时钟；笔记编辑不会清空历史访问计数或已生成的向量。
 
 ---
 
@@ -174,7 +174,7 @@ flowchart LR
 
 | # | 部署决策项 (Decision Item) | 默认裁定策略 (Default Strategy) |
 |---|---|---|
-| 1 | **主控 Agent (Main Agent)** 归属（负责生命周期 Cron 调度） | 默认分配给 dsh（插件内置错过补跑：启动时/每小时调用 `unified_memory.catchup`）；存在 Hermes 等调度型运行时且用户偏好时可移交 |
+| 1 | **主控 Agent (Main Agent)** 归属（负责生命周期 Cron 调度） | 默认 dsh（插件内置错过补跑）；可移交其他带调度运行时 |
 | 2 | **索引模式 (Indexing Mode)** | 默认采用本地宿主机模式 (`local machine`) |
 | 3 | **知识晋升模式 (Promotion Mode)** | 默认采用人工确认模式 (`human-confirmed review`) |
 | 4 | **连接 Agent 范围 (Connected Fleet)** | 自动扫描并连接所有已感知的代理（dsh / Codex / Claude / Hermes） |
@@ -277,14 +277,13 @@ memory submit "the build server is at 127.0.0.1:8080" --agent you   # 2. 写一�
 memory search "build server"                                # 3. 检索（FTS5 本地索引）
 python -m unified_memory.promoter --review                   # 4. 生成待晋升清单
 python -m unified_memory.promoter --apply                    # 5. 晋升进 canonical
-python setup/setup.py cron --vault ~/Documents/AgentMemory   # 6. 注册调度：每日晋升 03:00 + 每周遗忘周一 04:00
-python -m unified_memory.catchup                             # 7. 错过定时？下次上线补跑（dsh 插件自动做）
+python setup/setup.py cron --vault ~/Documents/AgentMemory   # 6. 定时：每日晋升+每周遗忘，错过自动补跑
 ```
 
 对接你自己的运行时（不一定是 Hermes）只需要三件事：
 
 1. **写**：调 `memory submit`（或 dsh 插件的 `memory_submit`）。
-2. **定期晋升（dsh 默认主导，需要 Agent 参与，不是裸脚本）**：dsh 插件在启动时与每小时自动补跑错过的晋升/遗忘任务（`unified_memory.catchup`，状态戳存于 vault 内 `50-Agent-Context/调度状态.json`）；系统级定时由 `setup.py cron` 一次性注册（每日 03:00 `promoter --auto` + 每周一 04:00 `forgetter --apply`）。其他运行时（Codex、Claude Code、Hermes 中任一带调度者）可承担同一角色——由它运行 `python -m unified_memory.promoter --review` **先审核待晋升清单**、用 `memory decide <key> <裁决> --why "<理由>"` 裁决冲突（判不了就 `memory advise … --why` 把建议和解释留在条目上）、再 `--apply` 晋升；错过定时就跑 `python -m unified_memory.catchup` 补跑。只有当部署里**完全没有**带调度能力的 Agent 时，才退回用系统 cron 跑 `daily_cron.py` 脚本兜底。
+2. **定期晋升（dsh 默认主导，需要 Agent 参与，不是裸脚本）**：`setup.py cron` 一键注册每日晋升与每周遗忘的定时，dsh 插件在启动时/每小时自动补跑错过的任务；其他带调度的运行时可承担同一角色（`--review` → 裁决冲突 → `--apply`），错过就跑 `python -m unified_memory.catchup`。细节见 [docs/DEPLOY.md](docs/DEPLOY.md) 的 *Full mode* 章节。
 3. **读/注入**：参考 `integrations/hermes/README.md` 的 hook 草图，把 `memory search` / `memory show` 的输出包进 `<memory-data>` 注入到你的系统提示——那个模式适用于任何 Python 运行时。
 
 Hermes 集成（`integrations/hermes/`）只是"其中一个 Agent 接进来"的可选示例，不是前提条件。详细说明见 [docs/DEPLOY.md](docs/DEPLOY.md) 的 *Full mode* 章节。
