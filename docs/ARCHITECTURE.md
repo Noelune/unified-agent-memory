@@ -108,6 +108,23 @@ layout; the index/model layer organizes content across layers.
 
 ## Lifecycle
 
+```mermaid
+flowchart TD
+    A[Agent 提交: memory submit / Agent提交区/] --> B{凭据脱敏引擎}
+    B -- 匹配 API Key / Token 模式 --> C[掩码清洗 REDACTED]
+    B -- 校验通过 --> D[写入 50-Agent-Context/Agent提交区/]
+    D --> E[更新 SQLite FTS5 本地索引]
+    D --> F[Promoter 审核管线]
+    F -- 事实无冲突 --> G[晋升至 50-Agent-Context/ canonical 笔记]
+    F -- 存在矛盾 --> H[情境信息/事实冲突待裁决.md]
+    H --> I[Adjudicator 裁决 decide / advise]
+    I --> G
+    G --> J[Forgetter 记忆衰减 · 每周一 04:00]
+    J -- 触发衰减条件 --> K[记忆遗忘区/ 可逆降级]
+```
+
+The same flow in words:
+
 1. **Write** — `memory submit` (or any file in `Agent提交区/`) → inbox.
 2. **Digest (optional, default on)** — `digest.py` summarizes archived
    sessions into durable facts via a small LLM call and drops them into the

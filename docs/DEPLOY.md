@@ -138,6 +138,34 @@ python -m unified_memory.promoter --apply      # promotes into canonical
 python -m unified_memory.promoter --auto       # or one step (explicit opt-in)
 ```
 
+### Conflicts — the agent decides first, you get asked only when it can't
+
+When a new fact resembles an existing one but disagrees on the value, the
+promoter does not overwrite: it queues the pair in
+`情境信息/事实冲突待裁决.md`. Reading two lines, discarding the noise and
+spotting the one differing slot is mechanical work, so the agent adjudicates
+by default; a human is only asked when it genuinely cannot tell:
+
+```bash
+# What is in the queue (the panel and scripts both read this)
+memory preview conflicts --json
+
+# Agent can tell: rule directly, the reasoning lands in 事实冲突已裁决.md
+memory decide <key> 并存  --why "一个是文件、一个是目录，两者不冲突"
+
+# Agent cannot tell: leave a suggestion in plain words, the row stays for a human
+memory advise <key> 并存  --why "两条都成立，取决于你要用哪个"
+
+# Human does not want to click through: skim and skip (skip = defer, not a ruling)
+memory decide <key> 跳过
+```
+
+The four rulings: `用新` (old line moves under `已取代`, new fact goes live),
+`保留旧` (nothing written), `并存` (both stay live), `跳过` (nothing written and
+the row stops asking). The panel shows the agent's judgement above the buttons
+and tags the suggested one with `（Agent 建议）`; the ruling and its reasoning
+are logged together, so six months later you can still see why it was decided.
+
 ### Health check and housekeeping
 
 Run `memory doctor` after deployment and whenever memory behaves oddly. It is a
@@ -244,6 +272,35 @@ Details are deployment-specific; the core never sends vault content anywhere
 unless you configure a remote endpoint yourself.
 
 ## Upgrading
+
+`dsh plugin update` only replaces `lib/` and `core/`. **The other artifacts stay
+on disk untouched**, and they are the ones that decide how agents behave:
+
+| Artifact that can go stale | Symptom | What the reconcile pass does |
+|---|---|---|
+| `~/.unified-memory/bin/memory` (CLI shim) | Non-DSH agents fail with `No module named unified_memory` — reads like a broken install, but the shim's absolute path just points at a deleted directory | Reads the `PYTHONPATH=` line back, re-points at the current core |
+| Managed sections in the agent instruction files | Agent follows last version's rules while tools enforce this version's behaviour; both look "fine" and logs show no conflict | Re-delegates to `deploy.py apply` (timestamped backup, nothing outside the section moves) |
+| Vault template files | Documents mentioned in a new release's notes come back as `unknown document` | Adds only missing files (`COPYFILE_EXCL`); existing ones are never overwritten |
+| Derived index | None (core rebuilds on open when `SCHEMA_VERSION` moved) | Reported, so the version switch is never silent |
+
+The reconcile pass runs itself after the plugin loads — **never blocks startup,
+never prompts, never throws into the host**. Order is `shim → vault →
+instructions → registry → version record`, with the version written last: any
+failed step leaves the record untouched and the whole pass retries on the next
+boot. Writing the version first would stamp a half-applied upgrade as "done"
+and it would never retry.
+
+State lives in `~/.unified-memory/upgrade.json` (version, `corePath`, time, which
+artifacts actually changed); the `/status` route's `upgrade` field hands
+`fromVersion` / `toVersion` / `needsAttention` plus a problem summary to the
+panel. On a machine that was never set up the pass does nothing — no recorded
+version, no vault and no `~/.unified-memory` together mean `memory_setup` owns
+the first install.
+
+For maintainers: bumping `package.json`'s version is the only act required —
+files added to `vault-template/`, changed section rules, a new `SCHEMA_VERSION`
+and moved install directories all follow automatically. Design notes:
+[docs/superpowers/specs/2026-10-20-plugin-upgrade-design.md](superpowers/specs/2026-10-20-plugin-upgrade-design.md).
 
 - Core CLI is versioned; check CHANGELOG.md for changes.
 - The DSH plugin targets DSH `0.2.0-rc.2` and `0.2.1-rc.2` (CLI/Web and
