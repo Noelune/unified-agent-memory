@@ -162,7 +162,7 @@ Hermes 集成（`integrations/hermes/`）只是"其中一个 Agent 接进来"的
 ## 🔧 环境要求 (Requirements)
 
 - Python ≥ 3.10 (核心 Engine，仅需 Python 标准库)
-- Node.js ≥ 20 + DSH `0.2.1-rc.2`（兼容 `0.2.0-rc.2`、`0.1.5-rc.2`）(仅 dsh 插件需要；桌面端见 [docs/DESKTOP.md](docs/DESKTOP.md))
+- Node.js ≥ 20 + DSH `0.2.1-rc.3`（兼容 `0.2.1-rc.2`、`0.2.0-rc.2`、`0.1.5-rc.2`）(仅 dsh 插件需要；桌面端见 [docs/DESKTOP.md](docs/DESKTOP.md))
 - 推荐使用 Obsidian 浏览和查看 Vault 知识库，但非强制要求 — 所有文件均为标准 Markdown 与 SQLite 数据库。
 
 ---

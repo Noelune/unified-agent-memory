@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Compatibility — dsh `0.2.1-rc.3` 声明兼容（零差异重发布，无需适配）
+
+dsh 在 npm `next` 通道发布了 `0.2.1-rc.3`。对插件运行时触达的全部宿主包（`dsh` 主包、`dsh-tools`、`dsh-host-webserver`、`dsh-plugin-manager`、`dsh-user-approval`）做了 tarball 级 diff：除主包 `package.json` 里 monorepo 内部依赖的版本号批量对齐外，**所有 `lib/` 字节级相同**——这是一次 lockstep 重发布，没有 API 或行为变化。
+
+- `dshReleases` 声明表加 `"0.2.1-rc.3": "compatible"`（build 重新生成 manifest）。
+- peer 范围 `>=0.2.0-rc.1 <0.3.0-0` 本就覆盖 rc.3，宿主兼容门无需修改。
+- devDependencies 维持锁在 rc.2：tarball 字节相同意味着类型基线不可能漂移，而升级它们需要把 `dsh-tools` 的十条精确版本 peer 链整个钉进 devDependencies——字节相同的前提下只有成本没有收益。
+- 验证记录见 [docs/VALIDATION-REPORT.md](docs/VALIDATION-REPORT.md) 的 2026-10-24 节；各文档的版本行同步更新。
+
 ### Added — 更新行为的通用清理方案：退役清单 + 垃圾规则（数据驱动）
 
 **判定机制补全。** 此前更新判定（`upgrade.json` 记录的 version/corePath 对比当前构建）和幂等 reconcile 已经存在，但 reconcile 只做"补缺、重写"，**从不删除**——正确地不碰用户文件，错误地也不碰旧版本遗留：`deploy.py` 每次实际变更写一个 `.bak-<时间戳>` 且从不回收（每个涉及托管段改动的版本累积一个/文件）；两处原子写的 temp（`.tmp-deploy` / `.tmp-upgrade`）崩溃残留永久留存；0.8 前的固定名 `index.db` 无人认领。今后任何"某版本改名/删除了文件"的场景都需要临时写迁移代码。

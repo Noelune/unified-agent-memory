@@ -348,3 +348,46 @@ translating `VaultMissing`, (5) `VaultMissing` stops deriving from
   directory to read a log line was not worth the risk.
 
 
+
+---
+
+## Re-validation (2026-10-24): DSH 0.2.1-rc.3 — version-aligned re-release, zero delta
+
+Trigger: the Desktop client moved to `dsh` `0.2.1-rc.3` (published on the npm
+`next` dist-tag; `latest` remains `0.2.1-rc.2`).
+Question asked: does the plugin need adaptation, and what must be re-declared?
+
+### Method
+
+Tarball-level diff of every package the plugin touches at runtime, rc.2 vs rc.3:
+
+| Package | Diff |
+| --- | --- |
+| `@deepseek-ai/dsh` | `package.json` only (all intra-monorepo deps bumped rc.2 → rc.3); `lib/` byte-identical |
+| `@deepseek-ai/dsh-tools` | byte-identical |
+| `@deepseek-ai/dsh-host-webserver` | byte-identical |
+| `@deepseek-ai/dsh-plugin-manager` | `package.json` version strings only; `lib/` byte-identical |
+| `@deepseek-ai/dsh-user-approval` | `package.json` version strings only; `lib/` byte-identical |
+
+`0.2.1-rc.3` is a lockstep re-release of the monorepo, not an API or behaviour
+change: no adaptation is required, and the plugin's peer range
+(`>=0.2.0-rc.1 <0.3.0-0`) already covers it, so the host compatibility gate
+admits it without edits.
+
+### Declaration changes
+
+- `package.json` `dshReleases` (regenerated into `dsh.plugin.json` by the build):
+  `"0.2.1-rc.3": "compatible"` added.
+- DevDependencies stay pinned at `0.2.1-rc.2`: the tarballs are byte-identical,
+  so the type baseline cannot drift, and upgrading them would require pinning
+  the whole `dsh-tools` peer chain (ten exact-version packages) into
+  `devDependencies` — cost without a correctness benefit while the bytes match.
+
+### Checks run for this pass
+
+| Check | Result |
+| --- | --- |
+| `npm run build` | manifest regenerated with the rc.3 row, bundles unchanged |
+| `npm run drift:check` | all JS-side drift checks passed |
+| `npm run test:js` | 39 files, 879 tests, all passed |
+| `npm run typecheck` | exit `0` |

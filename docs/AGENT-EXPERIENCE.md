@@ -6,7 +6,7 @@ This guide records portable operating practices for five Agent runtimes. It does
 
 | Runtime | Public integration boundary | Version note |
 |---|---|---|
-| DSH | Host plugin tools plus optional loopback status UI | Verified targets: `0.2.0-rc.2` and `0.2.1-rc.2` (Web + Desktop); `0.1.5-rc.2` stays inside the declared peer range but was not re-tested. Since `0.2.0` the host validates `@deepseek-ai/dsh*` peer ranges before loading and skips a non-matching bundle wholesale |
+| DSH | Host plugin tools plus optional loopback status UI | Verified targets: `0.2.0-rc.2`, `0.2.1-rc.2` and `0.2.1-rc.3` (Web + Desktop); `0.1.5-rc.2` stays inside the declared peer range but was not re-tested. Since `0.2.0` the host validates `@deepseek-ai/dsh*` peer ranges before loading and skips a non-matching bundle wholesale |
 | Codex | Global instruction file plus `memory search/show` or direct canonical reads | Keep the core and instruction section versioned together |
 | Claude Code | Global instruction file plus the same read-only canonical boundary | Preserve unrelated user sections and use a marker-delimited managed section |
 | Hermes | Runtime behavior file plus its native recall mechanism or core CLI | The scheduler/promoter remains the single canonical writer |

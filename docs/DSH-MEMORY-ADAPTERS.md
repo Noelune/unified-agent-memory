@@ -14,7 +14,8 @@ when asked" and "the agent already knows". See
 
 ## Compatibility target
 
-The primary host targets are DSH `0.2.0-rc.2` and DSH `0.2.1-rc.2` (both the
+The primary host targets are DSH `0.2.0-rc.2`, `0.2.1-rc.2` and `0.2.1-rc.3`
+(both the
 CLI/Web profile and the Desktop app's own profile), with Node.js `>=20`. Since
 DSH `0.2.0` the host validates the plugin's `@deepseek-ai/dsh*` peer ranges
 before importing it and skips a non-matching bundle entirely, so the two version

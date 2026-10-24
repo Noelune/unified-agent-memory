@@ -303,7 +303,8 @@ and moved install directories all follow automatically. Design notes:
 [docs/superpowers/specs/2026-10-20-plugin-upgrade-design.md](superpowers/specs/2026-10-20-plugin-upgrade-design.md).
 
 - Core CLI is versioned; check CHANGELOG.md for changes.
-- The DSH plugin targets DSH `0.2.0-rc.2` and `0.2.1-rc.2` (CLI/Web and
+- The DSH plugin targets DSH `0.2.0-rc.2`, `0.2.1-rc.2` and `0.2.1-rc.3`
+  (CLI/Web and
   Desktop); `0.1.5-rc.2` remains inside the declared peer range but is no longer
   re-tested. Since DSH `0.2.0` the host validates the plugin's
   `@deepseek-ai/dsh*` peer ranges *before* importing it and skips a bundle whose
