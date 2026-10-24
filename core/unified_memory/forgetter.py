@@ -25,6 +25,7 @@ import argparse
 import math
 import platform
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -36,10 +37,12 @@ from .common import (
     atomic_write,
     bare_fact_line,
     canonical_dir,
+    core_source_dir,
     ensure_vault,
     file_lock,
     forget_dir,
     is_versioned,
+    mark_schedule_run,
     parse_stamp,
     read_maybe,
     resolve_vault,
@@ -218,18 +221,26 @@ def demote(vault: Path, dry_run: bool = True) -> list[str]:
             atomic_write(target, old + additions)
             moved += len(lines)
     print(f"demoted {moved} line(s) to {out_dir} (reversible — nothing was deleted)")
+    # A completed apply counts as this week's forgetting run for catch-up
+    # purposes, no matter which entry point fired it (CLI, OS cron, dsh plugin).
+    mark_schedule_run(vault, "forget")
     return [line for _, line in candidates]
 
 
 def register_cron(vault: Path) -> None:
     python = str(Path(sys.executable).resolve())
     system = platform.system()
+    # From a source checkout the scheduled interpreter does not need a prior
+    # pip install: bake the core's own directory into PYTHONPATH.
+    core = core_source_dir()
     if system == "Windows":
         bat = forget_dir(vault).parent / "forget_weekly.bat"
         log = vault / "forget_weekly.log"
+        pyline = f"set \"PYTHONPATH={core};%PYTHONPATH%\"\r\n" if core else ""
         content = (
             "@echo off\r\n"
             f"chcp 65001 >nul\r\n"
+            f"{pyline}"
             f"\"{python}\" -m unified_memory.forgetter --vault \"{vault}\" --apply >> \"{log}\" 2>&1\r\n"
             "exit /b %errorlevel%\r\n"
         )
@@ -240,10 +251,27 @@ def register_cron(vault: Path) -> None:
         )
         print("scheduled weekly reversible forget run (Mon 04:00) via Windows Task Scheduler")
     else:
-        print(
-            "add a weekly cron line yourself, e.g.:\n"
-            f"  0 4 * * 1 {python} -m unified_memory.forgetter --vault {vault}\n"
+        # Install for real, mirroring promoter.register_cron's POSIX flow so
+        # `setup.py cron` is out-of-the-box for BOTH jobs on every platform.
+        prefix = f"PYTHONPATH={shlex.quote(str(core))} " if core else ""
+        cron = "\n".join(
+            [
+                "# unified-agent-memory weekly forgetting (added by forgetter --cron)",
+                f"0 4 * * 1 {prefix}{python} -m unified_memory.forgetter --vault {shlex.quote(str(vault))} --apply >> {shlex.quote(str(vault / 'forget_weekly.log'))} 2>&1",
+                "",
+            ]
         )
+        existing = ""
+        crontab_path = Path.home() / ".crontab"
+        if crontab_path.exists():
+            existing = crontab_path.read_text(encoding="utf-8")
+        if "unified_memory.forgetter" in existing:
+            print("cron entry already present — nothing changed")
+            return
+        crontab_path.write_text(existing + cron, encoding="utf-8")
+        subprocess.run(["crontab", str(crontab_path)], check=False)
+        print("scheduled weekly forgetting (Mon 04:00) via crontab")
+        print(f"entries written to {crontab_path}")
 
 
 def main(argv: list[str] | None = None) -> None:

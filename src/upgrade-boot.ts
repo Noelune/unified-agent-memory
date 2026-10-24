@@ -41,6 +41,8 @@ import { planUpgrade, planNeedsAttention, readUpgradeState, summarizePlan, upgra
 import type { UpgradePlan } from './upgrade.ts'
 import { runUpgrade } from './upgrade-run.ts'
 import type { UpgradeResult } from './upgrade-run.ts'
+import { runCleanup } from './upgrade-cleanup.ts'
+import type { CleanupResult } from './upgrade-cleanup.ts'
 import { detectInstructionTargets } from './onboarding.ts'
 
 /** Where this build's files are. `lib/` sits beside `core/` in the package. */
@@ -52,6 +54,8 @@ export interface UpgradeReport {
   plan: UpgradePlan
   /** Null while the reconcile has not finished (or was skipped). */
   result: UpgradeResult | null
+  /** Hygiene sweep outcome; null before the sweep has run. */
+  cleanup: CleanupResult | null
 }
 
 let report: UpgradeReport | null = null
@@ -60,12 +64,36 @@ let report: UpgradeReport | null = null
 export function getUpgradeReport(): UpgradeReport | null {
   return report === null
     ? null
-    : { plan: report.plan, result: report.result === null ? null : { ...report.result, steps: [...report.result.steps] } }
+    : {
+        plan: report.plan,
+        result: report.result === null ? null : { ...report.result, steps: [...report.result.steps] },
+        cleanup: report.cleanup,
+      }
 }
 
 /** Testing seam: forget the report so a test can observe a fresh pass. */
 export function _resetUpgradeForTesting(): void {
   report = null
+}
+
+/**
+ * The hygiene sweep, kept off the upgrade's critical path.
+ *
+ * It runs even when the plan is clean — backups and crash temps accumulate
+ * *during* a version's life, not only across versions — but its outcome never
+ * gates the version record: a locked backup on OneDrive must not re-run the
+ * instruction deploy on every boot. Failure information stays in the report.
+ */
+function sweepCleanup(cfg: PluginConfig, home: string): CleanupResult {
+  try {
+    return runCleanup({
+      home,
+      vaultPath: cfg.vaultPath && cfg.vaultPath !== '(not set)' ? cfg.vaultPath : null,
+      instructionFiles: detectInstructionTargets(home).map((t) => t.path),
+    })
+  } catch {
+    return { removed: [], failed: [], freedBytes: 0 }
+  }
 }
 
 /** Build the probe from a config, or null when the pieces are not on disk. */
@@ -143,14 +171,19 @@ export async function reconcile(cfg: PluginConfig, home: string = homedir()): Pr
   if (probe === null) return null
 
   const plan = planUpgrade(probe)
-  report = { plan, result: null }
-  if (plan.clean) return report
+  report = { plan, result: null, cleanup: null }
+  if (plan.clean) {
+    // Nothing to reconcile — the sweep still runs: backups and crash temps
+    // accumulate during a version's life, not only across versions.
+    report.cleanup = sweepCleanup(cfg, home)
+    return report
+  }
 
   // A first run on a machine that has never been set up has nothing to
   // reconcile: no vault, no recorded version, no shim, and writing any of them
   // now would pre-empt `memory_setup`'s consent flow. Let setup own that.
   if (plan.fromVersion === null && probe.vaultPath === null && !existsSync(join(home, '.unified-memory'))) {
-    report = { plan, result: { ok: true, steps: [{ name: 'state', ok: true, detail: '尚未安装，交由 memory_setup 处理' }] } }
+    report = { plan, result: { ok: true, steps: [{ name: 'state', ok: true, detail: '尚未安装，交由 memory_setup 处理' }] }, cleanup: null }
     return report
   }
 
@@ -176,11 +209,12 @@ export async function reconcile(cfg: PluginConfig, home: string = homedir()): Pr
     // and the transition the user actually went through would be erased from
     // the only place that ever showed it.
     const fresh = replan(cfg, home)
-    report = { plan: fresh === null ? plan : { ...fresh, fromVersion: plan.fromVersion }, result }
+    report = { plan: fresh === null ? plan : { ...fresh, fromVersion: plan.fromVersion }, result, cleanup: null }
   } catch {
     // The runner reports per-step failures itself; this catch is for a throw
     // it did not anticipate, which must not reach the host.
   }
+  report.cleanup = sweepCleanup(cfg, home)
   return report
 }
 

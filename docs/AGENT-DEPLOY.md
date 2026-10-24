@@ -92,8 +92,8 @@ Obsidian canonical 笔记由**晋升机制（promoter）统一维护**（含主 
 - 未装 core：直接用文件系统读取 `<VAULT>/50-Agent-Context/` 下对应文件。
 - 写：只走规则 7 的提交区，无其他写通道。
 
-**规则 9｜晋升机制**
-`python -m unified_memory.promoter --review` 生成待晋升清单，`--apply` 执行，`--auto` 全自动（默认人工确认，全自动需显式开启）；冲突需 `adjudicate` 人工裁决。**每日晋升由主 Agent 负责**（部署环境里任一有调度能力的 Agent：Hermes 或 dsh/Codex/Claude Code 中带 cron 者），其他 Agent 无需自建。主 Agent 的每日晋升任务必须**先 `--review` 审核待晋升清单、裁决冲突，再 `--apply`**，不得盲目 `--auto`（除非你明确接受全自动）；错过定时则下次启动补跑，提交永不丢失。
+**规则 9｜晋升机制与调度**
+`python -m unified_memory.promoter --review` 生成待晋升清单，`--apply` 执行，`--auto` 全自动（默认人工确认，全自动需显式开启）；冲突需 `adjudicate` 人工裁决。**生命周期调度由 dsh 默认主导**（本项目主要服务 dsh 用户，不依赖 Hermes）：`setup.py cron` 一次性注册每日晋升（03:00）与每周遗忘（周一 04:00）两个系统任务；**错过补跑已内置**——每次成功的生命周期运行都会在 `50-Agent-Context/调度状态.json` 盖章，dsh 插件在启动时（及每小时）用 `python -m unified_memory.catchup` 补跑过期任务，其他环境也可手动跑同一命令。其他 Agent 无需自建调度；若部署里另有 Hermes 等带调度运行时且用户偏好，可移交给它。主 Agent 的每日晋升任务必须**先 `--review` 审核待晋升清单、裁决冲突，再 `--apply`**，不得盲目 `--auto`（除非你明确接受全自动）；错过定时则下次上线补跑，提交永不丢失。
 
 ---
 
@@ -170,7 +170,7 @@ Obsidian canonical 笔记由**晋升机制（promoter）统一维护**（含主 
 - 完整读完本文档。
 - 解析 `<VAULT>`（1.1）与 `<HOME>`（1.2），记录到工作笔记。
 - **部署决策**（能从环境推断就用默认值，不能推断才向用户确认，一次问完）：
-  1. **主 Agent**（负责每日晋升 cron）：本机存在 Hermes 或同类带调度能力的运行时则默认它；否则默认你自己（dsh）。
+  1. **主 Agent**（负责每日晋升 cron）：默认你自己（dsh）——插件已内置错过补跑（启动时 + 每小时调用 `unified_memory.catchup`），`setup.py cron` 也会注册两个系统级定时任务（每日晋升 03:00、每周遗忘周一 04:00）；仅当本机存在 Hermes 等带调度运行时**且用户明确偏好**时才移交。
   2. **索引位置**：默认本地（`~/.unified-memory/index-<vault-hash>.db`，SQLite FTS5，按 Vault 隔离）。旧固定路径 `index.db` 不再读取；确认没有旧版本进程使用后可手动删除。
   3. **晋升模式**：默认人工确认（`--review` → `--apply`）；全自动需用户显式同意。
   4. **接入哪些 Agent**：默认全部已检测到的（dsh / Codex / Claude Code / Hermes 或同类），检测不到的不写。
@@ -185,6 +185,7 @@ Obsidian canonical 笔记由**晋升机制（promoter）统一维护**（含主 
   - 存在 → 继续。
   - 不存在 → 创建 vault：有 `setup.py`（git clone 安装）用 `python <repo>/setup/setup.py init --vault <VAULT>`；npm-only 用 `python -m unified_memory.memory init --vault <VAULT>`（捆绑 core）。会自动创建 vault 模板与 canonical 笔记骨架，再检查。
 - 检查插件配置里 `vaultPath` 是否已指向 `<VAULT>`；未设置则提示用户设置（或在部署汇报中说明需设置的环境变量 `UNIFIED_MEMORY_VAULT`）。
+- 按决策 1/3 注册生命周期调度：全自动模式且有 `setup.py` 时运行 `python setup/setup.py cron --vault <VAULT>`（一次性注册每日晋升 03:00 + 每周遗忘周一 04:00）；人工确认模式不注册 `--auto` 任务，由主 Agent 按行为规则每日驱动 `--review → --apply`。两种模式的错过补跑都由插件启动时的 `unified_memory.catchup` 兜底。
 
 ### Step 3 逐个写入/更新全局提示词（核心步骤）
 按第 3 节规格，对 **dsh → Codex → Claude Code → Hermes（或同类）** 顺序执行（先写你自己，再写其他，Hermes 最后）：

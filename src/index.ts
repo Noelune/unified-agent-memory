@@ -78,6 +78,7 @@ import { STATS_PATH, buildStatsArgs, shapeStatsResult } from './route-stats.ts'
 import { UPDATE_PATH, applyUpdate } from './route-update.ts'
 import type { PluginManagerLike } from './route-update.ts'
 import { startUpgradeReconcile, upgradeInfo } from './upgrade-boot.ts'
+import { startMemoryCatchup } from './catchup-boot.ts'
 import type { PluginConfig } from './types.ts'
 import type { StatusStats } from './status-payload.ts'
 export const name = 'dsh-unified-agent-memory'
@@ -225,6 +226,12 @@ export function apply(ctx: Context, config: Record<string, unknown> = {}): void 
   // replaced by npm. Doing this on a timer keeps the boot path as fast as it
   // was, and a failure here cannot cost the user their tools.
   startUpgradeReconcile(cfg)
+
+  // ---- Catch up on missed lifecycle runs (promotion/forgetting) ----
+  // dsh is the lifecycle owner: when the OS schedules fired while this app was
+  // not running, replay them now and on an hourly re-check. Nothing due means
+  // nothing runs, so the cost of an idle check is one JSON read in the core.
+  startMemoryCatchup(cfg)
 
   // ---- HTTP status route consumed by the browser client half ----
   // client-ui.js polls it for configuration and health data. register() returns

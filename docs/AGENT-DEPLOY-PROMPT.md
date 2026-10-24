@@ -57,17 +57,18 @@ Q4. **Agents to connect** — which integrations should be installed?
      (graceful degradation). Never store the server password in the vault or
      config — point the user at their OS secret store.
 4. Scheduling per Q1 + Q3:
-   - If a main agent was chosen AND Q3 is fully automatic: register a
-     **daily promotion cron** on that agent running the full lifecycle:
-     `promoter --auto`, surface conflicts for adjudication, canonical
-     hygiene, and the weekly forgetting scan. Enable **missed-run recovery**
-     so a run due while the agent was offline fires immediately on the
-     agent's next startup:
-       - systemd timer: `Persistent=true`
-       - Windows Task Scheduler: check "Run task as soon as possible after
-         a scheduled start is missed"
-       - an agent runtime's built-in scheduler: run the promotion right at
-         startup when the previous run was missed
+   - If a main agent was chosen AND Q3 is fully automatic: register BOTH
+     lifecycle schedules with one command (where `setup.py` is available):
+       `python setup/setup.py cron --vault <VAULT>`
+     — daily promotion at 03:00 (`promoter --auto`) and weekly forgetting
+     Monday 04:00 (`forgetter --apply`). Surface conflicts for adjudication
+     after each run. **Missed-run recovery is built in**: every successful
+     run stamps `50-Agent-Context/调度状态.json`, and `python -m
+     unified_memory.catchup` replays whatever is overdue — the dsh plugin
+     does this automatically at startup and hourly, so a schedule that fired
+     while the agent was offline is caught up on its next startup. On
+     schedulers without the plugin, run the same catch-up command at startup
+     (or use `Persistent=true` on systemd timers).
      Goal: promotion is delayed at worst, never skipped.
    - If Q3 is human-confirmed: leave the default `--review` → `--apply`
      flow. Do NOT enable `--auto`.

@@ -12,10 +12,11 @@ any runtime with a scheduler).
    canonical notes (read-only) so the model starts from the vault's truth.
 2. **Daily promotion (agent-owned)** — designate **one cron-capable agent** as
    the promotion owner: it runs `promoter --review`, adjudicates conflicts,
-   then `--apply`. Hermes can do this via its own scheduler; if you use
-   another agent, give that agent an explicit scheduled daily task with the
-   same steps. (A bare system cron calling `daily_cron.py` is only a fallback
-   when no agent has a scheduler.)
+   then `--apply`. **dsh fills this role by default** (its plugin replays
+   missed runs at startup via `unified_memory.catchup`); Hermes can take it
+   via its own scheduler, and any other agent works with an explicit
+   scheduled daily task using the same steps. (A bare system cron calling
+   `daily_cron.py` is only a fallback when no agent has a scheduler.)
 3. **Tools** — expose `memory_search` / `memory_show` / `memory_submit`
    the same way the dsh plugin does.
 

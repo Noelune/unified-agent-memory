@@ -103,19 +103,29 @@ deployer reads the task book and writes each file itself.
 python setup/setup.py selfcheck
 ```
 
-### 5. (Recommended) daily promotion is owned by a cron-capable agent
+### 5. (Recommended) lifecycle schedules — owned by dsh, out of the box
 
-Do **not** rely on a bare system cron. Designate one agent in your deployment
-that has a scheduler (dsh / Codex / Claude Code / Hermes) as the promotion
-owner and give it a scheduled daily task: `promoter --review` → adjudicate →
-`--apply` (see *Full mode* below). Only when **no** agent has a scheduler,
-fall back to the script:
+The two lifecycle jobs are **daily promotion (03:00)** and **weekly forgetting
+(Monday 04:00)**. Register both with one command:
 
 ```sh
 python setup/setup.py cron --vault ~/Documents/AgentMemory
-# Linux/macOS: crontab entry · Windows: Task Scheduler (schtasks)
+# Linux/macOS: crontab entries · Windows: Task Scheduler (schtasks)
 # Equivalent manual flow: promoter --review → --apply (default, human-confirmed)
 ```
+
+**dsh owns the lifecycle by default** (this project's primary audience runs
+dsh; Hermes is not required). The dsh plugin additionally performs
+**missed-run recovery**: when a schedule fired while dsh was not running, the
+plugin replays the overdue job at its next startup (and re-checks hourly), so
+submissions are promoted late rather than never. The run stamps live in
+`50-Agent-Context/调度状态.json` inside the vault, which keeps a synced fleet
+from double-running.
+
+The OS schedules are the timer; dsh is the owner that catches what the timer
+missed. In human-confirmed promotion mode, prefer having dsh drive
+`promoter --review` → adjudicate → `--apply` as its daily task instead of the
+registered `--auto` script (see *Full mode* below).
 
 ### What a working round trip looks like
 
@@ -152,16 +162,16 @@ and `--older-than N` to change the orphan-index age threshold.
 
 ## Full mode (advanced, optional)
 
-### Daily promotion — owned by a cron-capable AGENT, not a bare script
+### Daily promotion — owned by dsh by default, not a bare script
 
-The daily promotion should be **run by an agent in your deployment that has a
-scheduler** (dsh, Codex, Claude Code, Hermes, or any agent runtime with cron),
-**not** by a dumb `cron` that fires a Python script. The promoter needs
-judgment: review the pending list before promoting, adjudicate conflicts,
-decide on ambiguous facts, and handle failures — that is agent work.
+The daily promotion should be **run by an agent that has a scheduler**, not by
+a dumb `cron` that fires a Python script. The promoter needs judgment: review
+the pending list before promoting, adjudicate conflicts, decide on ambiguous
+facts, and handle failures — that is agent work.
 
-Pick **one agent with a built-in scheduler as the promotion owner** and give
-it an explicit daily task (e.g. a scheduled prompt or a behavior rule):
+**dsh is the default owner** — this project ships as a dsh plugin and its
+users do not necessarily run anything else. Give it an explicit daily task
+(e.g. a scheduled prompt or a behavior rule):
 
 1. Run `python -m unified_memory.promoter --review --vault <vault>` and **read
    the pending list** — do not blindly `--auto`.
@@ -170,21 +180,23 @@ it an explicit daily task (e.g. a scheduled prompt or a behavior rule):
    each conflict.
 3. Apply the reviewed promotion (`--apply`), run canonical hygiene, and the
    weekly forgetting scan.
-4. Implement **missed-run recovery**: if the scheduled time passes while the
-   agent is not running, fire the promotion on its next startup — submissions
-   are then promoted late, never lost.
+4. **Missed-run recovery is built in**: every successful lifecycle run stamps
+   its date into `50-Agent-Context/调度状态.json`, and `python -m
+   unified_memory.catchup` replays whatever is overdue — the dsh plugin calls
+   it automatically at startup and hourly. Submissions are promoted late,
+   never lost.
 
-Hermes users can point their existing daily dream-cron at the promoter; if
-Hermes is not present, **the same role goes to whichever of dsh / Codex /
-Claude Code has a scheduler**. The promoter itself is scheduler-agnostic — it
-only needs the vault path. A bare system cron calling the script is a fallback
-only when **no** agent in the deployment has a scheduler.
+Hermes users can alternatively point their existing daily dream-cron at the
+promoter, and Codex / Claude Code schedulers work the same way. The promoter
+itself is scheduler-agnostic — it only needs the vault path. The bare system
+cron registered by `setup.py cron` (running `--auto`) is the fully-automatic
+fallback; prefer the agent-driven review flow in human-confirmed mode.
 
-### Scripts (fallback, when no cron-capable agent exists)
+### Scripts (generic lifecycle drivers)
 
 `integrations/hermes/` ships three runnable, dependency-free scripts that let
-an agent runtime (or, as a last resort, a bare system cron) drive the full
-lifecycle:
+any agent runtime (or, as a last resort, a bare system cron) drive the full
+lifecycle — despite the directory name they are runtime-agnostic:
 
 - `inject_context.py` — print a compact, redacted pack of the canonical notes
   for pre-turn injection (adapt the hook to your runtime's API).
@@ -194,8 +206,14 @@ lifecycle:
 - `archive_session.py` — append a redacted session summary to
   `50-Agent-Context/会话归档/`.
 
-All three take `--vault` or `UNIFIED_MEMORY_VAULT`. Example hook wiring is in
-`integrations/hermes/README.md` — the pattern works for any Python-based agent.
+For missed runs prefer the built-in `python -m unified_memory.catchup`
+(`--check` to inspect, default runs the overdue jobs) over re-wiring
+`daily_cron.py`; it shares the same state stamps as the OS schedules and the
+dsh plugin.
+
+All three scripts take `--vault` or `UNIFIED_MEMORY_VAULT`. Example hook
+wiring is in `integrations/hermes/README.md` — the pattern works for any
+Python-based agent.
 
 ### Remote index server (optional)
 

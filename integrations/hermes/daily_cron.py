@@ -16,7 +16,9 @@ into the same day's pending list / canonical notes.
 Schedule it however you like (system cron / Windows Task Scheduler / your
 agent runtime's scheduler). With an agent-runtime scheduler, enable
 missed-run recovery so a run that was due while the agent was offline fires
-on its next startup.
+on its next startup. The core ships that recovery as a module — point your
+scheduler (or the dsh plugin's built-in startup hook) at
+`python -m unified_memory.catchup` instead of hand-rolling it.
 
 Usage:
     python integrations/hermes/daily_cron.py [--vault <path>] [--auto] [--repair] [--forget] [--no-digest]

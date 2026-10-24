@@ -39,9 +39,11 @@ from .common import (
     atomic_write,
     canonical_dir,
     canonical_path,
+    core_source_dir,
     ensure_vault,
     fact_lines,
     file_lock,
+    mark_schedule_run,
     processed_dir,
     read_maybe,
     redact,
@@ -575,6 +577,9 @@ def apply_pending(vault: Path, verbose: bool = True) -> int:
         promoted = promote(vault, entries, locked=True)
         archive_sources(vault, sources, locked=True)
     _refresh_index(vault)
+    # A completed apply counts as today's promotion run for catch-up purposes,
+    # no matter which entry point fired it (CLI, OS cron, dsh plugin).
+    mark_schedule_run(vault, "promote")
     if not entries:
         if verbose:
             print("pending list is empty — reviewed inbox files archived")
@@ -637,6 +642,7 @@ def auto_promote(vault: Path, verbose: bool = True) -> int:
         promoted = promote(vault, result["pending"], locked=True)
         archive_sources(vault, {name for name in result["source_files"] if name}, locked=True)
     _refresh_index(vault)
+    mark_schedule_run(vault, "promote")
     if verbose:
         print(f"auto-promoted {len(promoted)} fact(s) ({result['duplicates']} duplicate(s) skipped)")
         for line in promoted:
@@ -859,12 +865,18 @@ def register_cron(vault: Path) -> None:
     promoter = str(Path(sys.executable).resolve())
     module = str(Path(__file__).resolve())
     system = platform.system()
+    # From a source checkout the scheduled interpreter does not need a prior
+    # pip install: bake the core's own directory into PYTHONPATH. Installed
+    # layouts (site-packages) have no source core and keep plain imports.
+    core = core_source_dir()
     if system == "Windows":
         bat = situation_dir(vault).parent / "promote_daily.bat"
         # UTF-8 BOM so cmd.exe/PowerShell 5.1 read non-ASCII paths correctly.
+        pyline = f"set \"PYTHONPATH={core};%PYTHONPATH%\"\r\n" if core else ""
         content = (
             "@echo off\r\n"
             f"chcp 65001 >nul\r\n"
+            f"{pyline}"
             f"\"{promoter}\" -m unified_memory.promoter --auto --vault \"{vault}\"\r\n"
         )
         bat.write_bytes(b"\xef\xbb\xbf" + content.encode("utf-8"))
@@ -876,10 +888,11 @@ def register_cron(vault: Path) -> None:
         print(f"scheduled daily promotion at 03:00 via Windows Task Scheduler ({task})")
         print(f"script: {bat}")
     else:
+        prefix = f"PYTHONPATH={shlex_quote(str(core))} " if core else ""
         cron = "\n".join(
             [
                 "# unified-agent-memory daily promotion (added by promoter --cron)",
-                f"0 3 * * * {promoter} -m unified_memory.promoter --auto --vault {shlex_quote(str(vault))} >> {shlex_quote(str(vault / 'promote.log'))} 2>&1",
+                f"0 3 * * * {prefix}{promoter} -m unified_memory.promoter --auto --vault {shlex_quote(str(vault))} >> {shlex_quote(str(vault / 'promote.log'))} 2>&1",
                 "",
             ]
         )

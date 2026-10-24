@@ -140,9 +140,20 @@ layout; the index/model layer organizes content across layers.
 
 ## Interfaces
 
-- **CLI** — `memory init|use|search|show|submit|status|embed|digest|graph|doctor|gc`
+- **CLI** — `memory init|use|search|show|submit|status|embed|digest|graph|doctor|gc`;
+  lifecycle CLIs `promoter` / `forgetter` / `catchup` (missed-run recovery)
 - **dsh plugin** — `memory_search` (`hybrid` 开启三流融合检索；可选 `format`/`budget` 控制输出形态与预算),
-  `memory_show`, `memory_submit`, `memory_status`
+  `memory_show`, `memory_submit`, `memory_status`; startup + hourly
+  `unified_memory.catchup` replay of missed schedule runs
+- **Update scheme** — boot-time reconcile (`upgrade.json` state vs this build:
+  install when nothing recorded, repair when drifted, refresh when the version
+  changed; idempotent, per-artifact) plus a declarative cleanup sweep
+  (`upgrade-cleanup.ts`: retired-artifact list + generated-shape garbage
+  rules, e.g. deploy backups keep newest 3); retiring a file in a future
+  release is one data row, never new migration code
+- **OS schedules** — `setup.py cron` registers daily promotion (03:00) and
+  weekly forgetting (Mon 04:00); successful runs stamp
+  `50-Agent-Context/调度状态.json`, shared across a synced fleet
 - **Hermes integration** — `daily_cron.py` (promote/repair/forget),
   `archive_session.py`, `inject_context.py`
 - **Remote index** (optional) — HTTP server exposing the same index with Bearer

@@ -13,7 +13,7 @@ checkout — the paths are identical.
 | Command | What it does |
 |---|---|
 | `python setup/setup.py init --vault <path>` | Creates the vault from `vault-template/`, writes `~/.unified-memory.yaml`, and copies `AGENTS.md` / `CLAUDE.md` next to the vault. Idempotent with `--force` to overwrite. |
-| `python setup/setup.py cron --vault <path>` | Registers the daily promotion job with the OS scheduler (crontab / Task Scheduler). A fallback for deployments where **no** agent has a scheduler. |
+| `python setup/setup.py cron --vault <path>` | Registers **both** lifecycle jobs with the OS scheduler: daily promotion at 03:00 and weekly forgetting Monday 04:00 (crontab / Task Scheduler). The generated scripts carry their own `PYTHONPATH`, so the scheduled interpreter needs no prior `pip install`. Missed runs are caught up by the dsh plugin at startup, or manually via `python -m unified_memory.catchup`. |
 | `python setup/setup.py selfcheck` | Verifies the vault, the index and the plugin's view of both. |
 | `python setup/setup.py agents` | **Deprecated and intentionally inert.** Prints guidance; global-instruction wiring is agent-driven. |
 

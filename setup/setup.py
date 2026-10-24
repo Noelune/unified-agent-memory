@@ -4,7 +4,9 @@
     python setup/setup.py init --vault <path>   create vault + config + agent files
     python setup/setup.py deploy preview --home <agent-home>   preview safe prompt deployment
     python setup/setup.py deploy apply --home <agent-home>     apply with backup and rollback
-    python setup/setup.py cron [--vault <path>] register daily promotion
+    python setup/setup.py cron [--vault <path>] register BOTH lifecycle jobs:
+                                       daily promotion (03:00) and weekly
+                                       forgetting (Mon 04:00)
     python setup/setup.py selfcheck             verify the deployment
 
 The core is dependency-free; install it once with:
@@ -20,7 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "core"))
 
 from deploy import main as deploy_main
-from unified_memory import memory as mem_mod  # noqa: E402
+from unified_memory import forgetter, memory as mem_mod  # noqa: E402
 from unified_memory import promoter  # noqa: E402
 from unified_memory.common import resolve_vault  # noqa: E402
 
@@ -61,14 +63,19 @@ def cmd_init(args: argparse.Namespace) -> None:
     print("     and set vaultPath (env UNIFIED_MEMORY_VAULT) to this vault.")
     print("  2. Wire agents: let DSH follow docs/AGENT-DEPLOY.md end-to-end")
     print("     (agent-driven; `setup agents` is deprecated and does nothing).")
-    print("  3. Optional daily promotion:")
+    print("  3. Lifecycle schedules (recommended):")
     print("       python setup/setup.py cron --vault <path>")
-    print("     or manually: python -m unified_memory.promoter --review / --apply")
+    print("     registers daily promotion (03:00) + weekly forgetting (Mon 04:00);")
+    print("     missed runs are caught up when dsh next comes online.")
 
 
 def cmd_cron(args: argparse.Namespace) -> None:
     vault = Path(args.vault) if args.vault else resolve_vault()
     promoter.register_cron(vault)
+    forgetter.register_cron(vault)
+    print()
+    print("missed-run recovery: the dsh plugin runs overdue jobs at startup;")
+    print("anywhere else, run:  python -m unified_memory.catchup")
 
 
 def cmd_selfcheck(args: argparse.Namespace) -> None:
@@ -124,7 +131,7 @@ def main() -> None:
     p_agents.add_argument("--vault", default=None)
     p_agents.add_argument("--dry-run", action="store_true")
     p_agents.set_defaults(fn=cmd_agents)
-    p_cron = sub.add_parser("cron", help="register daily promotion")
+    p_cron = sub.add_parser("cron", help="register daily promotion + weekly forgetting")
     p_cron.add_argument("--vault", default=None)
     p_cron.set_defaults(fn=cmd_cron)
     p_deploy = sub.add_parser("deploy", help="preview/apply/rollback allowlisted agent instruction updates")

@@ -377,6 +377,12 @@ export interface RunCoreOptions {
    * report.
    */
   keepOutputOnFailure?: boolean
+  /**
+   * The `python -m` module to invoke. Defaults to the `memory` CLI, which is
+   * what every tool call wants; the catch-up boot pass targets its sibling
+   * `unified_memory.catchup` entry point instead.
+   */
+  module?: string
 }
 
 /**
@@ -407,7 +413,7 @@ export function runCore(
 
     const child = execFile(
       cfg.pythonPath,
-      ['-m', 'unified_memory.memory', ...args],
+      ['-m', opts.module ?? 'unified_memory.memory', ...args],
       { env, timeout: timeoutMs, maxBuffer: MAX_OUTPUT, windowsHide: true, signal: opts.signal },
       (err, stdout, stderr) => {
         if (err) {

@@ -4,6 +4,31 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added — 更新行为的通用清理方案：退役清单 + 垃圾规则（数据驱动）
+
+**判定机制补全。** 此前更新判定（`upgrade.json` 记录的 version/corePath 对比当前构建）和幂等 reconcile 已经存在，但 reconcile 只做"补缺、重写"，**从不删除**——正确地不碰用户文件，错误地也不碰旧版本遗留：`deploy.py` 每次实际变更写一个 `.bak-<时间戳>` 且从不回收（每个涉及托管段改动的版本累积一个/文件）；两处原子写的 temp（`.tmp-deploy` / `.tmp-upgrade`）崩溃残留永久留存；0.8 前的固定名 `index.db` 无人认领。今后任何"某版本改名/删除了文件"的场景都需要临时写迁移代码。
+
+**现在删除也声明为数据。** 新增 `src/upgrade-cleanup.ts`：`RETIRED_PATHS`（退役工件——旧版本写过、本版本不再拥有的确切路径）与 `GARBAGE_RULES`（本项目生成的文件名形态 + 保留策略）。未来的版本要废弃或改名一个工件，**加一行数据即完成迁移**，不写新的更新方案；reconcile 每次启动幂等地应用。规则集：托管段备份每文件保留最近 3 份（mtime 平手时按文件名时间戳决胜，确定性不抖动）；超 24h 的 `.tmp-deploy` / `.tmp-upgrade` 清除；legacy `index.db` 仅当哈希分库后继（`index-<16hex>.db`）已在盘且自身超 30 天时回收；vault 内只扫 `50-Agent-Context/` 下的**点文件 temp**（`.<名>.<8hex>.tmp`），用户笔记与冲突副本永不可能匹配。两条安全底线：只删本项目自己生成的形态；canonical 内容永不进删除范围。
+
+**接入点**：`reconcile()` 在 plan 为 clean 时也跑清理（备份和崩溃残留在一个版本的生命周期内就会积累，不必等下一次版本升级），但清理结果**永不阻断版本记录**——OneDrive 锁住的备份只进 `failed` 清单，不会让下次启动重跑整套 reconcile。
+
+### Added — 每周遗忘开箱即用，错过定时由 dsh 上线补跑
+
+**`setup.py cron` 现在注册两个任务，不是一个。** 每日晋升（03:00 `promoter --auto`）之外，每周遗忘（周一 04:00 `forgetter --apply`）也一次注册到位；Linux/macOS 上 forgetter 不再只是打印一行建议让你自己抄，而是和 promoter 走同一套 `~/.crontab` + `crontab` 安装流程（幂等，重复执行不会堆条目）。
+
+**错过补跑（missed-run recovery）落成了代码。** 此前它是文档里的一条行为要求（"错过定时则下次启动补跑"），各部署自己实现；现在核心自带 `python -m unified_memory.catchup`：每次成功的生命周期运行——无论从 OS cron、dsh 插件还是手动 `--apply` 触发——都会在 `50-Agent-Context/调度状态.json` 盖章，补跑命令对比日程锚点（当天 03:00 / 本周一 04:00）重放恰好过期的那个任务。状态文件放在 vault 里跟着同步走：一台机器的 cron 已经跑过，另一台机器的补跑看到同一天的章就不会重复执行。`--check` 只读报告，默认执行；`--json` 供调度方消费。
+
+**dsh 插件在启动时和每小时调用一次补跑。** 本项目的主要用户跑 dsh、不一定有 Hermes，所以生命周期所有权的默认值从"任一带调度的 Agent"收紧为 dsh：插件新增 `catchup-boot`（仿照 `upgrade-boot` 的 fire-and-forget 模式），`runCore` 增加 `module` 选项以指向 `unified_memory.catchup` 入口。桌面应用一开几天、跨过 03:00 的场景由每小时复查覆盖；vault 未配置时跳过，测试进程里跳过。
+
+**注册出的调度脚本自带 `PYTHONPATH`。** 从源码仓库注册时，生成的 `.bat`/crontab 行把 core 目录写进 `PYTHONPATH`：此前用一个从未 `pip install -e ./core` 的解释器注册，任务会在 03:00 静默死于 `ModuleNotFoundError`（端到端实测复现）。site-packages 安装布局不受影响。
+
+文档同步改写为 dsh 主导的叙事：`README` 决策表第 1 条默认主控 Agent 由"优先 Hermes"改为"默认 dsh（内置补跑）"；`DEPLOY.md` 部署第 5 步与 Full mode、`AGENT-DEPLOY.md` 规则 9 与 Step 0/2、`AGENT-DEPLOY-PROMPT.md` 调度步骤、`setup/README.md`、`integrations/hermes/README.md` 全部对齐。
+
+### Verified
+
+- 核心 389 + setup 32 个既有测试全绿；新增 `core/tests/test_catchup.py`（15 例：锚点计算、due 判定、补跑执行/跳过/失败隔离、盖章、POSIX crontab 安装幂等）与 `test/catchup-boot.test.ts`（4 例：立即触发、无 vault 跳过、单次守卫、失败留痕）。
+- Windows 端到端：临时 vault 上 `setup.py init → cron` 真实注册两个 schtasks 任务，提交区写入一条事实后 `catchup --check`（both due）→ `--run`（晋升 1 条、盖章）→ 复查（both not due）；`forget_weekly.bat` 在未安装 core 的解释器下经自带 `PYTHONPATH` 执行成功（exit 0）。测试任务与临时目录已清理。
+
 ## [0.8.8] — 2026-10-23
 
 ### Fixed — 两个进门就绊人的小地方
