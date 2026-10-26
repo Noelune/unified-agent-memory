@@ -158,7 +158,7 @@ class IndexTest(unittest.TestCase):
     def test_cjk_bigram_search_matches_a_two_char_query(self):
         self._append("env", "\n- 记忆索引保存在本地 SQLite\n")
         index.update_index(self.vault)
-        rows = index.bm25_bigram_search(self.vault, "记忆", limit=5)
+        rows = index.lexical_search(self.vault, "记忆", limit=5)
         self.assertTrue(any("记忆索引" in row["line"] for row in rows))
 
     def test_fts_search_returns_the_matched_line(self):
@@ -209,8 +209,7 @@ class UnclassifiedNoteTest(unittest.TestCase):
             "# 未归类事实\n\n- 备用域名指向 mirror 节点\n", encoding="utf-8"
         )
         index.update_index(self.vault)
-        self.assertTrue(index.bm25_memory_search(self.vault, "备用域名", limit=5))
-        self.assertTrue(index.trigram_memory_search(self.vault, "备用域名", limit=5))
+        self.assertTrue(index.lexical_search(self.vault, "备用域名", limit=5))
         self.assertTrue(index.fts_search(self.vault, "备用域名", 5)["results"])
 
     def test_workflow_notes_are_not_indexed(self):

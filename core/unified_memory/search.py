@@ -1,25 +1,26 @@
 # -*- coding: utf-8 -*-
 """search — hybrid retrieval over the memory database.
 
-Five retrieval streams are fused with weighted Reciprocal Rank Fusion (RRF),
-borrowed from rohitg00/agentmemory:
+Three retrieval streams are fused with weighted Reciprocal Rank Fusion (RRF):
 
-  1. BM25 per memory line  (index.bm25_memory_search)
-  2. CJK bigram BM25       (index.bm25_bigram_search — Chinese substring recall)
-  3. Cosine over semantic vectors (embed.vector_search, SiliconFlow)
-  4. Entity-graph expansion (graph.py, optional — skipped when the graph is
+  1. Lexical BM25          (index.lexical_search over fts_lex — ASCII words +
+                           CJK bigrams, one table for both languages)
+  2. Cosine over semantic vectors (embed.vector_search, SiliconFlow)
+  3. Entity-graph expansion (graph.py, optional — skipped when the graph is
      empty or disabled)
-  5. Trigram substring match (index.trigram_memory_search, optional — skipped
-     when the trigram table/tokenizer is unavailable)
+
+The batch-A convergence replaced the old five inline streams: unicode61 BM25
+returned zero hits on every pure-Chinese query while holding the top weight,
+and the trigram/bigram tables overlapped each other, so the same signal voted
+twice (RRF's benefit comes from DIVERSE retrievers, not stacked copies).
 
 The fused ranking is then:
   - diversified (at most ``max_per_doc`` results from one canonical note), and
   - formatted under a token/character budget (full / compact / narrative).
 
 Every code path degrades gracefully: with no embedding key the vector stream is
-empty and the result is a pure BM25 ranking; without a graph it is a BM25 +
-vector ranking; without the trigram table it is a three-stream ranking. Nothing
-here ever raises for provider unavailability.
+empty and the result is a pure lexical ranking; without a graph it is a
+lexical + vector ranking. Nothing here ever raises for provider unavailability.
 """
 from __future__ import annotations
 
@@ -29,7 +30,7 @@ from . import embed, index
 from .common import encode_untrusted, redact
 
 RRF_K = 60
-DEFAULT_WEIGHTS = (1.0, 1.0, 0.8, 0.9, 1.0)  # bm25, vector, graph, trigram, bigram
+DEFAULT_WEIGHTS = (1.0, 1.0, 0.9)  # lexical, vector, graph
 MAX_PER_DOC = 3
 FORMATS = ("full", "compact", "narrative")
 
@@ -75,7 +76,7 @@ def hybrid_search(
     format_: str = "full",
     budget: int | None = None,
 ) -> dict:
-    """Fuse BM25 + vector + graph + trigram into a diversified, budget-capped
+    """Fuse lexical + vector + graph into a diversified, budget-capped
     result set.
 
     Returns {"ok", "query", "count", "results", "streams"} where each result
@@ -99,7 +100,7 @@ def hybrid_search(
     query = query.strip()
     pool = max(limit * 3, 20)
 
-    bm25 = index.bm25_memory_search(vault, query, limit=pool)
+    lexical = index.lexical_search(vault, query, limit=pool)
 
     vec: list[dict] = []
     query_vec = embed.embed_query_cached(vault, query)
@@ -114,17 +115,11 @@ def hybrid_search(
     except Exception:  # noqa: BLE001 — graph is optional, never fatal
         graph = []
 
-    tri = index.trigram_memory_search(vault, query, limit=pool)
-    # CJK bigram BM25: the default FTS tokenizer cannot match a Chinese
-    # substring, so without this stream Chinese queries were carried entirely
-    # by the unranked trigram/fallback scan.
-    bigram = index.bm25_bigram_search(vault, query, limit=pool)
-
-    fused = rrf_fuse([bm25, vec, graph, tri, bigram])
+    fused = rrf_fuse([lexical, vec, graph])
     # Diversify: at most MAX_PER_DOC from one note.
     seen_docs: dict[str, int] = {}
     selected: list[tuple[str, float]] = []
-    doc_by_id = _doc_map(bm25, vec, graph, tri, bigram)
+    doc_by_id = _doc_map(lexical, vec, graph)
     for mid, score in fused:
         doc = doc_by_id.get(mid, "")
         if seen_docs.get(doc, 0) >= MAX_PER_DOC:
@@ -167,11 +162,9 @@ def hybrid_search(
         "count": len(results),
         "results": results,
         "streams": {
-            "bm25": len(bm25),
+            "lexical": len(lexical),
             "vector": len(vec),
             "graph": len(graph),
-            "trigram": len(tri),
-            "bigram": len(bigram),
         },
     }
 

@@ -14,7 +14,7 @@ import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
-SCHEMA_VERSION = "6"
+SCHEMA_VERSION = "7"
 _TARGET = int(SCHEMA_VERSION)
 
 
@@ -29,21 +29,6 @@ def index_db_for(vault: Path) -> Path:
     return memory.INDEX_DB.with_name(f"index-{key}.db")
 
 
-def probe_trigram(conn: sqlite3.Connection) -> bool:
-    """Return True when this SQLite build has the trigram FTS5 tokenizer.
-
-    Probed on a throwaway in-memory table so a failure never touches the real
-    index. Older builds raise ``no such tokenizer: trigram``; we turn that into
-    a plain False so callers can degrade instead of crashing.
-    """
-    try:
-        conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS _trigram_probe USING fts5(x, tokenize='trigram')")
-        conn.execute("DROP TABLE IF EXISTS _trigram_probe")
-        return True
-    except sqlite3.Error:
-        return False
-
-
 def _ensure_schema(conn: sqlite3.Connection) -> None:
     """Create every table (idempotent). docs/fts reuse the legacy layout so the
     existing CLI/tests and the remote index server keep working."""
@@ -56,33 +41,15 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(path UNINDEXED, title, content)"
     )
-    # Per-line FTS (memory granularity) for hybrid retrieval. Best-effort:
-    # when FTS5 is unavailable the per-line BM25 search falls back to a Python
-    # substring scan and this table simply never gets populated.
+    # THE lexical table (memory granularity): stores a bigram rendering of
+    # each line (cjk_tokens emits ASCII words lowercased + overlapping CJK
+    # bigrams), so Chinese and English share one ranked FTS5 index. The old
+    # trio — fts_mem (unicode61, zero hits on Chinese), fts_mem_tri
+    # (trigram), fts_mem_bigram — is collapsed into this one table; the v7
+    # migration backfills it and drops the old ones.
     try:
         conn.execute(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS fts_mem USING fts5(memory_id UNINDEXED, line)"
-        )
-    except sqlite3.Error:
-        pass
-    # Trigram FTS (CJK substring recall). Best-effort: when the tokenizer is
-    # unavailable the table is simply never created and trigram_memory_search
-    # returns an empty stream. NOTE: existing fts/fts_mem tables carry no
-    # tokenizer clause (FTS5 default); this is a NEW table so we can pin the
-    # tokenizer at CREATE time without rebuilding anything.
-    if probe_trigram(conn):
-        conn.execute(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS fts_mem_tri USING fts5(memory_id UNINDEXED, line, tokenize='trigram')"
-        )
-    # CJK bigram FTS: the default unicode61 tokenizer treats a whole Chinese
-    # run as one token, so BM25 misses 记忆/路径/环境-style queries entirely.
-    # This table stores an overlapping-bigram rendering of each line (ASCII
-    # words lowercased), which gives Chinese the same ranked lexical recall
-    # English already had. Best-effort like fts_mem_tri: absent table = the
-    # stream simply contributes nothing.
-    try:
-        conn.execute(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS fts_mem_bigram USING fts5(memory_id UNINDEXED, tokens)"
+            "CREATE VIRTUAL TABLE IF NOT EXISTS fts_lex USING fts5(memory_id UNINDEXED, tokens)"
         )
     except sqlite3.Error:
         pass
@@ -278,10 +245,35 @@ def _migrate_to_v6(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE audit ADD COLUMN entry_hash TEXT")
 
 
+def _migrate_to_v7(conn: sqlite3.Connection) -> None:
+    """v6 -> v7: collapse the three lexical FTS tables into one.
+
+    fts_mem (unicode61) returned ZERO hits for every pure-Chinese query while
+    holding the top RRF weight; fts_mem_tri and fts_mem_bigram overlapped each
+    other. cjk_tokens already emits ASCII words AND Chinese bigrams, so one
+    table (fts_lex) serves both languages. The old tables are pure derived
+    data: backfill fts_lex from memories, then drop them.
+    """
+    # Lazy import: schema sits below index in the package graph, and index
+    # imports schema at module load.
+    from .index import cjk_tokens
+
+    conn.execute("DELETE FROM fts_lex")
+    rows = conn.execute("SELECT id, line FROM memories").fetchall()
+    conn.executemany(
+        "INSERT INTO fts_lex (memory_id, tokens) VALUES (?, ?)",
+        [(row["id"], " ".join(cjk_tokens(row["line"]))) for row in rows],
+    )
+    conn.execute("DROP TABLE IF EXISTS fts_mem_tri")
+    conn.execute("DROP TABLE IF EXISTS fts_mem_bigram")
+    conn.execute("DROP TABLE IF EXISTS fts_mem")
+
+
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     4: _migrate_to_v4,
     5: _migrate_to_v5,
     6: _migrate_to_v6,
+    7: _migrate_to_v7,
 }
 
 

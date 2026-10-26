@@ -125,18 +125,13 @@ def _cross_doc_hit(vault: Path, fact: str, target: Path) -> tuple[str, str] | No
     Returns (candidate_doc_name, candidate_line) or None.
     """
     candidates: dict[str, str] = {}
-    for lookup in (
-        index_mod.bm25_bigram_search,
-        index_mod.trigram_memory_search,
-        index_mod.bm25_memory_search,
-    ):
-        try:
-            rows = lookup(vault, fact, limit=20)
-        except Exception:  # noqa: BLE001 — a broken stream must not stop review
-            rows = []
-        for row in rows:
-            if row["doc"] != str(target) and row["line"] != fact:
-                candidates.setdefault(row["line"], Path(row["doc"]).name)
+    try:
+        rows = index_mod.lexical_search(vault, fact, limit=20)
+    except Exception:  # noqa: BLE001 — a broken stream must not stop review
+        rows = []
+    for row in rows:
+        if row["doc"] != str(target) and row["line"] != fact:
+            candidates.setdefault(row["line"], Path(row["doc"]).name)
     for line, doc_name in candidates.items():
         status, _hit = classify_against(fact, [line])
         if status == "conflict":

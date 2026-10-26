@@ -61,7 +61,8 @@ class HybridSearchTest(unittest.TestCase):
             encoding="utf-8",
         )
         result = search.hybrid_search(self.vault, "记忆", limit=5)
-        self.assertGreater(result["streams"]["bigram"], 0)
+        # The one lexical table covers Chinese via bigram tokens (batch A).
+        self.assertGreater(result["streams"]["lexical"], 0)
         self.assertTrue(any("记忆索引" in r["line"] for r in result["results"]))
 
     def test_search_never_calls_the_embedding_provider_for_maintenance(self):
