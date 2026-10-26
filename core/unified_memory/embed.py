@@ -23,6 +23,7 @@ import array
 import hashlib
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.request
@@ -38,8 +39,11 @@ BATCH_SIZE = 32  # SiliconFlow accepts up to 32 inputs per call
 TIMEOUT_S = 15  # batch embedding (memory embed / memory sync)
 # The recall hot path must not inherit the batch timeout: one query vector that
 # takes 15 s turns every turn into a 15 s stall. Retrieval uses a short budget
-# and simply runs without the vector stream when the provider is slow.
-QUERY_TIMEOUT_S = 0.8
+# — 0.12 s, tuned so the WORST case (timeout + local streaming) stays near
+# 150 ms — and simply runs without the vector stream when the provider is
+# slower. Baseline before this change: a cold query embed took 477 ms, 85% of
+# a 560 ms median recall (batch A measurements).
+QUERY_TIMEOUT_S = 0.12
 # Circuit breaker: after this many consecutive failures the provider is treated
 # as down for a cooldown window, so a broken network costs one timeout per
 # window instead of one per query.
@@ -243,7 +247,29 @@ QUERY_CACHE_TTL_DAYS = 7
 
 
 def _cache_key(text: str) -> str:
-    return hashlib.sha256((text or "").strip().lower().encode("utf-8")).hexdigest()
+    """Cache key over the query's CONCEPT bag, not its exact string.
+
+    Exact-string keys almost never hit: natural-language queries rarely repeat
+    verbatim (23 cached entries after weeks of use). The key is the sorted bag
+    of CJK characters plus the sorted set of ASCII words — the same topic
+    reworded or reordered collapses to one key, different topics do not. A
+    character bag can theoretically collide on anagrams; for a cache that is
+    the harmless direction. The model id is part of the key so switching
+    embedding models can never compare vectors across spaces.
+    """
+    from .index import cjk_tokens
+
+    tokens = cjk_tokens(text or "")
+    ascii_words = sorted({t for t in tokens if t[0].isascii()})
+    # Character bag from the RAW CJK runs, not from the bigram tokens: the
+    # overlapping bigrams duplicate characters and would make the bag depend
+    # on word order again.
+    runs = re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff]+", text or "")
+    cjk_chars = sorted(ch for run in runs for ch in run)
+    basis = " ".join(ascii_words) + "|" + "".join(cjk_chars)
+    return hashlib.sha256(
+        (EMBED_MODEL + "\x1f" + basis).encode("utf-8")
+    ).hexdigest()
 
 
 def embed_query_cached(vault: Path, text: str) -> list[float] | None:
@@ -279,8 +305,8 @@ def embed_query_cached(vault: Path, text: str) -> list[float] | None:
         conn = index.get_conn(vault)
         try:
             conn.execute(
-                "INSERT OR REPLACE INTO query_cache (query_hash, vector, at) VALUES (?, ?, ?)",
-                (key, vector_to_blob(vector), time.strftime("%Y-%m-%dT%H:%M:%S")),
+                "INSERT OR REPLACE INTO query_cache (query_hash, vector, at, model_id) VALUES (?, ?, ?, ?)",
+                (key, vector_to_blob(vector), time.strftime("%Y-%m-%dT%H:%M:%S"), EMBED_MODEL),
             )
             conn.commit()
         finally:

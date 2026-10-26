@@ -1,0 +1,1109 @@
+{
+  "generated_at": "2026-10-27T05:05:48",
+  "fixture": {
+    "aggregate": {
+      "queries": 16,
+      "recall@5": 0.9167,
+      "recall@10": 0.9167,
+      "mrr": 0.9167,
+      "ndcg@10": 0.9167,
+      "abstain_accuracy": 0.75,
+      "update_top1_ok": 1.0,
+      "empty_result_rate": 0.25,
+      "latency_p50_ms": 25.1,
+      "latency_p95_ms": 34.5
+    },
+    "items": [
+      {
+        "query": "typecheck",
+        "docs": [
+          "工程执行规则.md"
+        ],
+        "category": "exact",
+        "count": 2,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 28.6
+      },
+      {
+        "query": "203.0.113.10",
+        "docs": [
+          "常用路径与环境.md"
+        ],
+        "category": "exact",
+        "count": 1,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 23.8
+      },
+      {
+        "query": "backups",
+        "docs": [
+          "常用路径与环境.md"
+        ],
+        "category": "exact",
+        "count": 1,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 27.0
+      },
+      {
+        "query": "备份目录",
+        "docs": [
+          "常用路径与环境.md"
+        ],
+        "category": "cjk_substring",
+        "count": 1,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 23.7
+      },
+      {
+        "query": "结论先行",
+        "docs": [
+          "我的偏好摘要.md"
+        ],
+        "category": "cjk_substring",
+        "count": 2,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 23.4
+      },
+      {
+        "query": "回归测试",
+        "docs": [
+          "工程执行规则.md"
+        ],
+        "category": "cjk_substring",
+        "count": 2,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 34.5
+      },
+      {
+        "query": "怎么部署上线",
+        "docs": [
+          "工程执行规则.md"
+        ],
+        "category": "paraphrase",
+        "count": 0,
+        "recall@5": 0.0,
+        "recall@10": 0.0,
+        "mrr": 0.0,
+        "ndcg@10": 0.0,
+        "top1_ok": null,
+        "latency_ms": 15.3
+      },
+      {
+        "query": "回答风格上有什么要求",
+        "docs": [
+          "我的偏好摘要.md"
+        ],
+        "category": "paraphrase",
+        "count": 2,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 27.1
+      },
+      {
+        "query": "同步端口",
+        "docs": [
+          "常用路径与环境.md"
+        ],
+        "category": "update",
+        "must_contain": "9443",
+        "count": 1,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": true,
+        "latency_ms": 25.2
+      },
+      {
+        "query": "部署脚本放在哪里",
+        "expect_empty": true,
+        "category": "update",
+        "count": 0,
+        "abstain_correct": true,
+        "latency_ms": 13.4
+      },
+      {
+        "query": "统一记忆系统",
+        "docs": [
+          "工程执行规则.md",
+          "常用路径与环境.md"
+        ],
+        "category": "cross_doc",
+        "count": 2,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 25.1
+      },
+      {
+        "query": "备份路径",
+        "docs": [
+          "常用路径与环境.md"
+        ],
+        "category": "synonym",
+        "count": 1,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 26.0
+      },
+      {
+        "query": "主模型",
+        "docs": [
+          "常用路径与环境.md"
+        ],
+        "category": "synonym",
+        "count": 1,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 29.2
+      },
+      {
+        "query": "量子色动力学的耦合常数是多少",
+        "expect_empty": true,
+        "category": "abstain",
+        "count": 0,
+        "abstain_correct": true,
+        "latency_ms": 14.6
+      },
+      {
+        "query": "用户的小学班主任叫什么",
+        "expect_empty": true,
+        "category": "abstain",
+        "count": 2,
+        "abstain_correct": false,
+        "latency_ms": 28.5
+      },
+      {
+        "query": "巴西利亚的年平均降雨量",
+        "expect_empty": true,
+        "category": "abstain",
+        "count": 0,
+        "abstain_correct": true,
+        "latency_ms": 13.8
+      }
+    ]
+  },
+  "real": {
+    "aggregate": {
+      "queries": 64,
+      "recall@5": 0.9492,
+      "recall@10": 1.0,
+      "mrr": 0.8629,
+      "ndcg@10": 0.9047,
+      "abstain_accuracy": 0.4,
+      "update_top1_ok": null,
+      "empty_result_rate": 0.0312,
+      "latency_p50_ms": 31.1,
+      "latency_p95_ms": 36.8
+    },
+    "items": [
+      {
+        "query": "agents",
+        "docs": [
+          "Codex-Claude-Hermes协作规则.md"
+        ],
+        "category": "derived",
+        "count": 9,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 31.4
+      },
+      {
+        "query": "conflict",
+        "docs": [
+          "Codex-Claude-Hermes协作规则.md"
+        ],
+        "category": "derived",
+        "count": 3,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 31.3
+      },
+      {
+        "query": "index.indexed_files",
+        "docs": [
+          "README.md"
+        ],
+        "category": "derived",
+        "count": 9,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 35.7
+      },
+      {
+        "query": "resolve_canonical_note",
+        "docs": [
+          "README.md"
+        ],
+        "category": "derived",
+        "count": 6,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 33.0
+      },
+      {
+        "query": "canonical",
+        "docs": [
+          "README.md"
+        ],
+        "category": "derived",
+        "count": 10,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 0.5,
+        "ndcg@10": 0.6309,
+        "top1_ok": null,
+        "latency_ms": 29.9
+      },
+      {
+        "query": "yyyymmdd",
+        "docs": [
+          "README.md"
+        ],
+        "category": "derived",
+        "count": 4,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 32.7
+      },
+      {
+        "query": "label",
+        "docs": [
+          "README.md"
+        ],
+        "category": "derived",
+        "count": 4,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 30.9
+      },
+      {
+        "query": "python",
+        "docs": [
+          "README.md"
+        ],
+        "category": "derived",
+        "count": 10,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 0.5,
+        "ndcg@10": 0.6309,
+        "top1_ok": null,
+        "latency_ms": 32.1
+      },
+      {
+        "query": "库内",
+        "docs": [
+          "README.md"
+        ],
+        "category": "derived",
+        "count": 4,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 30.7
+      },
+      {
+        "query": "dark",
+        "docs": [
+          "UI审美准则.md"
+        ],
+        "category": "derived",
+        "count": 1,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 31.3
+      },
+      {
+        "query": "unified-agent-memory",
+        "docs": [
+          "UI审美准则.md"
+        ],
+        "category": "derived",
+        "count": 10,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 0.2,
+        "ndcg@10": 0.4307,
+        "top1_ok": null,
+        "latency_ms": 30.7
+      },
+      {
+        "query": "vitest",
+        "docs": [
+          "UI审美准则.md"
+        ],
+        "category": "derived",
+        "count": 7,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 0.2,
+        "ndcg@10": 0.4307,
+        "top1_ok": null,
+        "latency_ms": 29.5
+      },
+      {
+        "query": "hook",
+        "docs": [
+          "UI审美准则.md"
+        ],
+        "category": "derived",
+        "count": 10,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 0.3333,
+        "ndcg@10": 0.5,
+        "top1_ok": null,
+        "latency_ms": 33.8
+      },
+      {
+        "query": "stats.build",
+        "docs": [
+          "UI审美准则.md"
+        ],
+        "category": "derived",
+        "count": 10,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 31.1
+      },
+      {
+        "query": "r.ok",
+        "docs": [
+          "UI审美准则.md"
+        ],
+        "category": "derived",
+        "count": 1,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 24.0
+      },
+      {
+        "query": "classname",
+        "docs": [
+          "UI审美准则.md"
+        ],
+        "category": "derived",
+        "count": 5,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 0.5,
+        "ndcg@10": 0.6309,
+        "top1_ok": null,
+        "latency_ms": 33.0
+      },
+      {
+        "query": "update-info.json",
+        "docs": [
+          "UI审美准则.md"
+        ],
+        "category": "derived",
+        "count": 10,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 31.8
+      },
+      {
+        "query": "dpapi",
+        "docs": [
+          "UI审美准则.md"
+        ],
+        "category": "derived",
+        "count": 3,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 34.0
+      },
+      {
+        "query": "start-napcat.cmd",
+        "docs": [
+          "UI审美准则.md"
+        ],
+        "category": "derived",
+        "count": 5,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 32.7
+      },
+      {
+        "query": "memory_search",
+        "docs": [
+          "工具可用性检查.md"
+        ],
+        "category": "derived",
+        "count": 3,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 29.0
+      },
+      {
+        "query": "memory_show",
+        "docs": [
+          "工具可用性检查.md"
+        ],
+        "category": "derived",
+        "count": 2,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 28.5
+      },
+      {
+        "query": "memory_submit",
+        "docs": [
+          "工具可用性检查.md"
+        ],
+        "category": "derived",
+        "count": 2,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 27.8
+      },
+      {
+        "query": "memory_status",
+        "docs": [
+          "工具可用性检查.md"
+        ],
+        "category": "derived",
+        "count": 4,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 29.4
+      },
+      {
+        "query": "issue",
+        "docs": [
+          "工具可用性检查.md"
+        ],
+        "category": "derived",
+        "count": 6,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 28.9
+      },
+      {
+        "query": "dsh-unified-agent-memory",
+        "docs": [
+          "工具可用性检查.md"
+        ],
+        "category": "derived",
+        "count": 9,
+        "recall@5": 0.0,
+        "recall@10": 1.0,
+        "mrr": 0.1667,
+        "ndcg@10": 0.5,
+        "top1_ok": null,
+        "latency_ms": 31.5
+      },
+      {
+        "query": "vault",
+        "docs": [
+          "工具可用性检查.md"
+        ],
+        "category": "derived",
+        "count": 10,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 0.5,
+        "ndcg@10": 0.6309,
+        "top1_ok": null,
+        "latency_ms": 31.7
+      },
+      {
+        "query": "修复",
+        "docs": [
+          "工具可用性检查.md"
+        ],
+        "category": "derived",
+        "count": 9,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 0.2,
+        "ndcg@10": 0.5,
+        "top1_ok": null,
+        "latency_ms": 32.9
+      },
+      {
+        "query": "游仓",
+        "docs": [
+          "工具可用性检查.md"
+        ],
+        "category": "derived",
+        "count": 2,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 30.5
+      },
+      {
+        "query": "键验",
+        "docs": [
+          "工具可用性检查.md"
+        ],
+        "category": "derived",
+        "count": 2,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 26.9
+      },
+      {
+        "query": "verify",
+        "docs": [
+          "工程执行规则.md"
+        ],
+        "category": "derived",
+        "count": 6,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 40.9
+      },
+      {
+        "query": "before",
+        "docs": [
+          "工程执行规则.md"
+        ],
+        "category": "derived",
+        "count": 2,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 35.4
+      },
+      {
+        "query": "json-contract",
+        "docs": [
+          "工程执行规则.md"
+        ],
+        "category": "derived",
+        "count": 6,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 31.1
+      },
+      {
+        "query": "worldcodes-zhongzhuan",
+        "docs": [
+          "工程执行规则.md"
+        ],
+        "category": "derived",
+        "count": 4,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 30.6
+      },
+      {
+        "query": "v0.8.5",
+        "docs": [
+          "工程执行规则.md"
+        ],
+        "category": "derived",
+        "count": 2,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 27.9
+      },
+      {
+        "query": "用户",
+        "docs": [
+          "工程执行规则.md"
+        ],
+        "category": "derived",
+        "count": 10,
+        "recall@5": 0.0,
+        "recall@10": 1.0,
+        "mrr": 0.1667,
+        "ndcg@10": 0.4307,
+        "top1_ok": null,
+        "latency_ms": 32.2
+      },
+      {
+        "query": "zhaowei",
+        "docs": [
+          "工程执行规则.md"
+        ],
+        "category": "derived",
+        "count": 8,
+        "recall@5": 0.0,
+        "recall@10": 1.0,
+        "mrr": 0.1429,
+        "ndcg@10": 0.4307,
+        "top1_ok": null,
+        "latency_ms": 30.3
+      },
+      {
+        "query": "忆晋",
+        "docs": [
+          "工程执行规则.md"
+        ],
+        "category": "derived",
+        "count": 9,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 31.7
+      },
+      {
+        "query": "embedding-coverage",
+        "docs": [
+          "工程执行规则.md"
+        ],
+        "category": "derived",
+        "count": 9,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 0.5,
+        "ndcg@10": 0.6309,
+        "top1_ok": null,
+        "latency_ms": 30.7
+      },
+      {
+        "query": "lead",
+        "docs": [
+          "工程执行规则.md"
+        ],
+        "category": "derived",
+        "count": 6,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 31.7
+      },
+      {
+        "query": "unified_memory_vault",
+        "docs": [
+          "常用路径与环境.md"
+        ],
+        "category": "derived",
+        "count": 2,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 29.5
+      },
+      {
+        "query": "unified_memory_python",
+        "docs": [
+          "常用路径与环境.md"
+        ],
+        "category": "derived",
+        "count": 3,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 28.3
+      },
+      {
+        "query": "unified_memory_corepath",
+        "docs": [
+          "常用路径与环境.md"
+        ],
+        "category": "derived",
+        "count": 4,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 30.0
+      },
+      {
+        "query": "unified_memory_remote_url",
+        "docs": [
+          "常用路径与环境.md"
+        ],
+        "category": "derived",
+        "count": 3,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 29.1
+      },
+      {
+        "query": "unified_memory_remote_token",
+        "docs": [
+          "常用路径与环境.md"
+        ],
+        "category": "derived",
+        "count": 2,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 30.4
+      },
+      {
+        "query": "open",
+        "docs": [
+          "常用路径与环境.md"
+        ],
+        "category": "derived",
+        "count": 5,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 31.5
+      },
+      {
+        "query": "proxyenable",
+        "docs": [
+          "常用路径与环境.md"
+        ],
+        "category": "derived",
+        "count": 2,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 26.7
+      },
+      {
+        "query": "尾时",
+        "docs": [
+          "常用路径与环境.md"
+        ],
+        "category": "derived",
+        "count": 8,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 32.2
+      },
+      {
+        "query": "jsdom",
+        "docs": [
+          "常用路径与环境.md"
+        ],
+        "category": "derived",
+        "count": 3,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 32.5
+      },
+      {
+        "query": "typecheck",
+        "docs": [
+          "常用路径与环境.md"
+        ],
+        "category": "derived",
+        "count": 6,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 31.7
+      },
+      {
+        "query": "prefers",
+        "docs": [
+          "我的偏好摘要.md"
+        ],
+        "category": "derived",
+        "count": 1,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 30.8
+      },
+      {
+        "query": "wants",
+        "docs": [
+          "我的偏好摘要.md"
+        ],
+        "category": "derived",
+        "count": 1,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 30.7
+      },
+      {
+        "query": "public",
+        "docs": [
+          "我的偏好摘要.md"
+        ],
+        "category": "derived",
+        "count": 4,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 36.8
+      },
+      {
+        "query": "msys2",
+        "docs": [
+          "我的偏好摘要.md"
+        ],
+        "category": "derived",
+        "count": 8,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 31.0
+      },
+      {
+        "query": "core",
+        "docs": [
+          "我的偏好摘要.md"
+        ],
+        "category": "derived",
+        "count": 10,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 38.4
+      },
+      {
+        "query": "shell.overlay",
+        "docs": [
+          "我的偏好摘要.md"
+        ],
+        "category": "derived",
+        "count": 8,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 31.4
+      },
+      {
+        "query": "edit",
+        "docs": [
+          "我的偏好摘要.md"
+        ],
+        "category": "derived",
+        "count": 5,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 30.1
+      },
+      {
+        "query": "file_lock",
+        "docs": [
+          "我的偏好摘要.md"
+        ],
+        "category": "derived",
+        "count": 3,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 30.3
+      },
+      {
+        "query": "handledismiss",
+        "docs": [
+          "我的偏好摘要.md"
+        ],
+        "category": "derived",
+        "count": 9,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 38.5
+      },
+      {
+        "query": "argparse",
+        "docs": [
+          "我的偏好摘要.md"
+        ],
+        "category": "derived",
+        "count": 10,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "ndcg@10": 1.0,
+        "top1_ok": null,
+        "latency_ms": 33.6
+      },
+      {
+        "query": "量子色动力学的耦合常数",
+        "expect_empty": true,
+        "category": "abstain",
+        "count": 0,
+        "abstain_correct": true,
+        "latency_ms": 20.3
+      },
+      {
+        "query": "用户的小学班主任叫什么",
+        "expect_empty": true,
+        "category": "abstain",
+        "count": 10,
+        "abstain_correct": false,
+        "latency_ms": 36.8
+      },
+      {
+        "query": "巴西利亚的年平均降雨量",
+        "expect_empty": true,
+        "category": "abstain",
+        "count": 0,
+        "abstain_correct": true,
+        "latency_ms": 18.8
+      },
+      {
+        "query": "1943 年的诺曼底登陆日期",
+        "expect_empty": true,
+        "category": "abstain",
+        "count": 10,
+        "abstain_correct": false,
+        "latency_ms": 36.0
+      },
+      {
+        "query": "斐波那契数列第 88 项",
+        "expect_empty": true,
+        "category": "abstain",
+        "count": 1,
+        "abstain_correct": false,
+        "latency_ms": 28.9
+      }
+    ]
+  },
+  "latency": {
+    "note": "real embed path; network-dependent, noisy by design",
+    "p50_ms": 34.7,
+    "p95_ms": 335.7,
+    "max_ms": 1581.1
+  }
+}

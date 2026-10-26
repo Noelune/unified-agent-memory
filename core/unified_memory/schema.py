@@ -14,7 +14,7 @@ import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
-SCHEMA_VERSION = "8"
+SCHEMA_VERSION = "9"
 _TARGET = int(SCHEMA_VERSION)
 
 
@@ -80,7 +80,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     # provider round-trip is ~300 ms, so caching the query embedding locally
     # cuts hybrid-search latency roughly in half without affecting recall.
     conn.execute(
-        "CREATE TABLE IF NOT EXISTS query_cache (query_hash TEXT PRIMARY KEY, vector BLOB NOT NULL, at TEXT NOT NULL)"
+        "CREATE TABLE IF NOT EXISTS query_cache (query_hash TEXT PRIMARY KEY, vector BLOB NOT NULL, at TEXT NOT NULL, model_id TEXT NOT NULL DEFAULT '')"
     )
     conn.execute(
         "CREATE TABLE IF NOT EXISTS access_log (memory_id TEXT NOT NULL, at TEXT NOT NULL)"
@@ -278,12 +278,28 @@ def _migrate_to_v8(conn: sqlite3.Connection) -> None:
     conn.execute("DROP TABLE IF EXISTS graph_nodes")
 
 
+def _migrate_to_v9(conn: sqlite3.Connection) -> None:
+    """v8 -> v9: tag cached query vectors with the embedding model.
+
+    Vectors from two different models must never be compared: a same-dimension
+    different-model query vector would produce plausible-looking but wrong
+    rankings. The cache key already embeds the model name (batch A); the
+    column records it explicitly so old rows are distinguishable.
+    """
+    columns = {
+        row["name"] for row in conn.execute("PRAGMA table_info(query_cache)").fetchall()
+    }
+    if "model_id" not in columns:
+        conn.execute("ALTER TABLE query_cache ADD COLUMN model_id TEXT NOT NULL DEFAULT ''")
+
+
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     4: _migrate_to_v4,
     5: _migrate_to_v5,
     6: _migrate_to_v6,
     7: _migrate_to_v7,
     8: _migrate_to_v8,
+    9: _migrate_to_v9,
 }
 
 
