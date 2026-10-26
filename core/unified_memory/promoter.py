@@ -545,6 +545,7 @@ def promote(vault: Path, entries: list[dict], *, locked: bool = False) -> list[s
         grouped.setdefault(target_path(vault, doc), []).append(entry)
 
     promoted: list[str] = []
+    audited: list[tuple[str, str, str]] = []
     today = time.strftime("%Y-%m-%d")
     for target, group in grouped.items():
         existing = read_maybe(target)
@@ -572,6 +573,7 @@ def promote(vault: Path, entries: list[dict], *, locked: bool = False) -> list[s
             if old_bare:
                 supersedes.append(old_bare)
             promoted.append(line.strip())
+            audited.append((src, str(target.name), fact))
         if not additions:
             continue
         text = append_active_facts(existing, additions)
@@ -579,6 +581,10 @@ def promote(vault: Path, entries: list[dict], *, locked: bool = False) -> list[s
         for old_bare in supersedes:
             text = _move_to_superseded(text, old_bare)
         atomic_write(target, text)
+    # Audit AFTER the writes: record_audit opens its own connection, and the
+    # file writes above hold no database transaction, so chaining is safe.
+    for src, doc_name, fact in audited:
+        index_mod.record_audit(vault, src, "promote", doc_name, fact[:200])
     return promoted
 
 
@@ -885,6 +891,10 @@ def decide(vault: Path, entry: dict, choice: str, why: str = "") -> dict:
             record_adjudication(vault, entry, choice, why=why, locked=True)
             remove_conflict(vault, entry, locked=True)
             archive_settled_source(vault, entry, locked=True)
+            index_mod.record_audit(
+                vault, "adjudicator", "decide:" + choice,
+                str(entry.get("新", ""))[:120], why[:200],
+            )
         return {
             "ok": True, "reason": None, "choice": choice, "applied": True,
             "target": str(target.relative_to(vault)) if target.is_relative_to(vault) else str(target),
@@ -896,6 +906,10 @@ def decide(vault: Path, entry: dict, choice: str, why: str = "") -> dict:
         record_adjudication(vault, entry, choice, why=why, locked=True)
         remove_conflict(vault, entry, locked=True)
         archive_settled_source(vault, entry, locked=True)
+        index_mod.record_audit(
+            vault, "adjudicator", "decide:" + choice,
+            str(entry.get("新", ""))[:120], why[:200],
+        )
     return {"ok": True, "reason": None, "choice": choice, "applied": False,
             "target": None}
 

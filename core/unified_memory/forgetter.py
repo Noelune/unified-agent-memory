@@ -220,6 +220,11 @@ def demote(vault: Path, dry_run: bool = True) -> list[str]:
             additions = "\n".join(lines) + "\n"
             atomic_write(target, old + additions)
             moved += len(lines)
+        index.record_audit(
+            vault, "forgetter", "demote",
+            ", ".join(p.name for p in by_doc),
+            "; ".join(ln[:60] for _p, ln in candidates),
+        )
     print(f"demoted {moved} line(s) to {out_dir} (reversible — nothing was deleted)")
     # A completed apply counts as this week's forgetting run for catch-up
     # purposes, no matter which entry point fired it (CLI, OS cron, dsh plugin).

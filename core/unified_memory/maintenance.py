@@ -80,6 +80,15 @@ def repair_existing(vault: Path, dry_run: bool = False) -> dict:
     for name, drops in touched.items():
         print(f"  {name}: {len(drops)} line(s)")
     print(f"backup: {backup_root}")
+    if touched:
+        # Lazy import: index sits above maintenance in the package graph, and
+        # repair_existing is reachable from test harnesses that stub index.
+        from . import index as index_mod
+
+        index_mod.record_audit(
+            vault, "maintenance", "repair",
+            ", ".join(sorted(touched)), f"{removed} lines removed",
+        )
     return {
         "dry_run": False,
         "changed_count": len(touched),

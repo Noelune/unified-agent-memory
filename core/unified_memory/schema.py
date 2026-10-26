@@ -14,7 +14,7 @@ import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
-SCHEMA_VERSION = "5"
+SCHEMA_VERSION = "6"
 _TARGET = int(SCHEMA_VERSION)
 
 
@@ -119,7 +119,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         "CREATE TABLE IF NOT EXISTS access_log (memory_id TEXT NOT NULL, at TEXT NOT NULL)"
     )
     conn.execute(
-        "CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, agent TEXT NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '')"
+        "CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, agent TEXT NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', prev_hash TEXT, entry_hash TEXT)"
     )
     conn.execute(
         "CREATE TABLE IF NOT EXISTS graph_nodes (name TEXT PRIMARY KEY, kind TEXT NOT NULL DEFAULT 'concept')"
@@ -261,9 +261,27 @@ def _migrate_to_v5(conn: sqlite3.Connection) -> None:
             )
 
 
+def _migrate_to_v6(conn: sqlite3.Connection) -> None:
+    """v5 -> v6: hash-chained audit.
+
+    record_audit existed since v1 but had zero call sites, so the audit table
+    README pointed at was always empty. Wiring it up needs the chain columns;
+    existing rows predate the chain and get NULL hashes (verify treats a NULL
+    chain as "unlinked history", not as tampering).
+    """
+    columns = {
+        row["name"] for row in conn.execute("PRAGMA table_info(audit)").fetchall()
+    }
+    if "prev_hash" not in columns:
+        conn.execute("ALTER TABLE audit ADD COLUMN prev_hash TEXT")
+    if "entry_hash" not in columns:
+        conn.execute("ALTER TABLE audit ADD COLUMN entry_hash TEXT")
+
+
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     4: _migrate_to_v4,
     5: _migrate_to_v5,
+    6: _migrate_to_v6,
 }
 
 

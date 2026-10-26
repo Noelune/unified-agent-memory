@@ -179,6 +179,9 @@ def _write_digest_facts(vault: Path, facts: list[str]) -> int:
     for seq in range(1, 100):
         candidate = inbox / f"digest-{stamp}-{seq:02d}.md"
         if atomic_create(candidate, body):
+            index.record_audit(
+                vault, "digest", "digest", candidate.name, str(len(facts))
+            )
             return len(facts)
     return 0
 

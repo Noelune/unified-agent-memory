@@ -462,6 +462,7 @@ def cmd_submit(args: argparse.Namespace) -> None:
     for seq in range(1, 1000):
         candidate = inbox / f"{agent}-{stamp}-{seq:02d}.md"
         if atomic_create(candidate, body + "\n"):
+            index_mod.record_audit(vault, agent, "submit", candidate.name, lines[0][:120])
             print(f"submitted {len(lines)} fact line(s) -> {candidate}")
             print("the promoter (python -m unified_memory.promoter --review) will classify these")
             return
@@ -1031,6 +1032,42 @@ def cmd_status(args: argparse.Namespace) -> None:
         emit_json("status", data)
 
 
+def cmd_audit(args: argparse.Namespace) -> None:
+    """Read the hash-chained audit log, or verify the chain end to end."""
+    vault = resolve_vault()
+    ensure_vault(vault)
+    if getattr(args, "verify", False):
+        ok, broken = index_mod.audit_verify(vault)
+        if getattr(args, "json", False):
+            emit_json("audit", {"ok": ok, "broken_at": broken or None})
+            return
+        if ok:
+            print("audit chain OK")
+        else:
+            print(f"audit chain BROKEN: {broken}")
+            raise SystemExit(1)
+        return
+    rows = index_mod.audit_rows(vault, limit=int(getattr(args, "limit", 0) or 0))
+    agent = getattr(args, "agent", None)
+    target = getattr(args, "target", None)
+    since = getattr(args, "since", None)
+    if agent:
+        rows = [r for r in rows if r["agent"] == agent]
+    if target:
+        rows = [r for r in rows if target in r["target"]]
+    if since:
+        rows = [r for r in rows if r["at"][:10] >= since]
+    if getattr(args, "json", False):
+        emit_json("audit", {"count": len(rows), "rows": [dict(r) for r in rows]})
+        return
+    if not rows:
+        print("no audit entries")
+        return
+    for r in rows:
+        detail = (r["detail"] or "")[:80]
+        print(f"#{r['id']} {r['at']} {r['agent']} {r['action']} {r['target']} {detail}")
+
+
 def cmd_drift(args: argparse.Namespace) -> None:
     """Detect code-memory drift."""
     from . import drift as drift_mod  # lazy import — avoids yaml dependency at module load
@@ -1207,6 +1244,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_drift.add_argument("--template", "-t", action="store_true", help="check against vault-template/")
     p_drift.add_argument("--strict", action="store_true", help="treat warnings as errors")
     p_drift.set_defaults(fn=cmd_drift)
+
+    p_audit = sub.add_parser("audit", help="read or verify the hash-chained audit log")
+    p_audit.add_argument("--agent", help="filter by agent/source")
+    p_audit.add_argument("--target", help="substring filter on target")
+    p_audit.add_argument("--since", help="only entries on/after YYYY-MM-DD")
+    p_audit.add_argument("--limit", type=int, default=200, help="max entries to list")
+    p_audit.add_argument("--verify", action="store_true", help="recompute the hash chain")
+    p_audit.add_argument("--json", action="store_true", help="machine-readable output")
+    p_audit.set_defaults(fn=cmd_audit)
 
     return parser
 
