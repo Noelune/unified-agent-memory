@@ -118,6 +118,49 @@ class HybridSearchTest(unittest.TestCase):
         self.assertLessEqual(len(result["results"]), 5)
         # Budget is applied; at least one result fits in 30 "tokens" (~120 chars).
         self.assertGreater(len(result["results"]), 0)
+        self.assertIn("budget", result)
+        self.assertGreaterEqual(result["budget"]["usedTokens"], 0)
+
+    def test_budget_fill_skips_an_oversized_item(self):
+        # 10 candidates: the first is huge, the other nine are tiny. Arrival-
+        # order truncation stopped at the huge one and returned ~1 result;
+        # value fill skips it and keeps the nine.
+        results = [
+            {"doc": "a.md", "line": "x" * 800, "type": "fact", "importance": 0.5,
+             "score": 0.9, "source_agent": ""},
+        ] + [
+            {"doc": "b.md", "line": f"tiny fact {i}", "type": "fact",
+             "importance": 0.5, "score": 0.5 - i * 0.01, "source_agent": ""}
+            for i in range(9)
+        ]
+        kept, stats = search._format_results(list(results), "full", budget=100)
+        self.assertGreaterEqual(len(kept), 9)
+        self.assertEqual(stats["dropped"], 1)
+        self.assertLessEqual(stats["usedTokens"], 100)
+
+    def test_budget_order_puts_second_best_last(self):
+        results = [
+            {"doc": "a.md", "line": "alpha", "type": "fact", "importance": 0.5,
+             "score": 0.9, "source_agent": ""},
+            {"doc": "b.md", "line": "beta", "type": "fact", "importance": 0.5,
+             "score": 0.8, "source_agent": ""},
+            {"doc": "c.md", "line": "gamma", "type": "fact", "importance": 0.5,
+             "score": 0.7, "source_agent": ""},
+            {"doc": "d.md", "line": "delta", "type": "fact", "importance": 0.5,
+             "score": 0.6, "source_agent": ""},
+        ]
+        kept, _ = search._format_results(list(results), "full", budget=200)
+        self.assertEqual(kept[0]["line"], "alpha")
+        self.assertEqual(kept[-1]["line"], "beta")
+
+    def test_compact_marks_truncated_lines(self):
+        results = [
+            {"doc": "a.md", "line": "x" * 120, "type": "fact", "importance": 0.5,
+             "score": 0.9, "source_agent": ""},
+        ]
+        kept, _ = search._format_results(list(results), "compact", budget=None)
+        self.assertTrue(kept[0]["truncated"])
+        self.assertLessEqual(len(kept[0]["line"]), 78)
 
 
 class QueryCacheTest(unittest.TestCase):

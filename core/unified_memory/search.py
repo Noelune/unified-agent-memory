@@ -150,13 +150,13 @@ def hybrid_search(
         )
 
     # Optional budget/format post-processing.
-    results = _format_results(results, format_=format_, budget=budget)
+    results, budget_stats = _format_results(results, format_=format_, budget=budget)
 
     # Reinforcement: reading is a use.
     if selected:
         index.record_access(vault, [mid for mid, _ in selected])
 
-    return {
+    payload = {
         "ok": True,
         "query": query,
         "count": len(results),
@@ -167,6 +167,9 @@ def hybrid_search(
             "graph": len(graph),
         },
     }
+    if budget_stats is not None:
+        payload["budget"] = budget_stats
+    return payload
 
 
 def _doc_map(*streams: list[dict]) -> dict[str, str]:
@@ -216,25 +219,51 @@ def estimate_tokens(text: str) -> int:
     return cjk + (other + 3) // 4
 
 
-def _format_results(results: list[dict], format_: str, budget: int | None) -> list[dict]:
+def _format_results(
+    results: list[dict], format_: str, budget: int | None
+) -> tuple[list[dict], dict | None]:
+    """Format under an optional token budget. Returns (results, budget_stats).
+
+    The budgeted fill replaced the arrival-order truncation, which stopped at
+    the FIRST item that did not fit — one 200-token line starved every short
+    high-value fact behind it. Fill is now greedy by value density
+    (score per estimated token) with skip-and-continue: an item that does not
+    fit is dropped and packing continues. Final order places the best result
+    first and the second best last (Lost in the Middle, arXiv:2307.03172 —
+    long-context attention is U-shaped), so the two strongest facts sit in
+    the positions models actually read.
+    """
     if format_ not in FORMATS:
         format_ = "full"
+    truncated_any = False
     if format_ == "compact":
         for r in results:
             if len(r["line"]) > 80:
                 r["line"] = r["line"][:77] + "…"
+                r["truncated"] = True
+                truncated_any = True
     # narrative: keep lines as-is (callers may join them); full: as-is.
-    if budget:
-        used = 0
-        kept: list[dict] = []
-        for r in results:
-            cost = estimate_tokens(r["line"]) + 4  # doc/type/score overhead
-            if used + cost > budget:
-                break
-            used += cost
-            kept.append(r)
-        results = kept
-    return results
+    if not budget:
+        return results, None
+
+    scored = [
+        (r, r["score"] / max(1, estimate_tokens(r["line"]))) for r in results
+    ]
+    scored.sort(key=lambda pair: pair[1], reverse=True)
+    used = 0
+    kept: list[dict] = []
+    dropped = 0
+    for r, _density in scored:
+        cost = estimate_tokens(r["line"]) + 4  # doc/type/score overhead
+        if used + cost > budget:
+            dropped += 1
+            continue
+        used += cost
+        kept.append(r)
+    kept.sort(key=lambda r: r["score"], reverse=True)
+    if len(kept) >= 3:
+        kept = [kept[0], *kept[2:], kept[1]]
+    return kept, {"usedTokens": used, "dropped": dropped, "truncated": truncated_any}
 
 
 # --------------------------------------------------------------------------
