@@ -82,6 +82,7 @@ UNCLASSIFIED_DOC = UNCLASSIFIED_FACT_REL
 # examples, not real user facts (e.g. a URL containing "example.com").
 # Lived here until 2026-08-29; now owned by maintenance.repair_existing.
 from .maintenance import repair_existing  # noqa: F401  (re-exported API)
+from . import index as index_mod
 
 # A "supersession" fact replaces an existing one (version bump, migration,
 # deprecation). When a similar-but-different fact contains one of these cues it
@@ -106,6 +107,41 @@ def target_path(vault: Path, doc_id: str) -> Path:
         # fact instead of failing the whole apply with a KeyError.
         return situation_dir(vault) / "未归类事实.md"
     return canonical_path(vault, doc_id)
+
+
+def _cross_doc_hit(vault: Path, fact: str, target: Path) -> tuple[str, str] | None:
+    """Find an ACTIVE line in another note that contradicts ``fact``.
+
+    The target-note comparison cannot see a contradiction that lives in a
+    different canonical note: "同步端口为 9443" classified into env while the
+    old "同步端口为 8443" sat in rules was invisible forever (batch-A audit).
+    A cheap lexical recall (top-20 per stream, same streams the search path
+    uses) fetches candidates across the whole corpus; the SAME subject/value
+    rules as the target comparison decide whether a candidate is a genuine
+    contradiction. Exact matches are not conflicts — two notes holding the
+    same sentence is allowed, each keeping its provenance (occurrence
+    identity); they are simply not queued.
+
+    Returns (candidate_doc_name, candidate_line) or None.
+    """
+    candidates: dict[str, str] = {}
+    for lookup in (
+        index_mod.bm25_bigram_search,
+        index_mod.trigram_memory_search,
+        index_mod.bm25_memory_search,
+    ):
+        try:
+            rows = lookup(vault, fact, limit=20)
+        except Exception:  # noqa: BLE001 — a broken stream must not stop review
+            rows = []
+        for row in rows:
+            if row["doc"] != str(target) and row["line"] != fact:
+                candidates.setdefault(row["line"], Path(row["doc"]).name)
+    for line, doc_name in candidates.items():
+        status, _hit = classify_against(fact, [line])
+        if status == "conflict":
+            return doc_name, line
+    return None
 
 
 # --------------------------------------------------------------------------
@@ -136,9 +172,13 @@ def review(vault: Path, verbose: bool = True, only: set[str] | None = None) -> d
     inbox = canonical_dir(vault) / "Agent提交区"
     if not inbox.is_dir():
         raise SystemExit(f"inbox missing at {inbox} — run \"memory init --vault <path>\"")
+    # The cross-document pass reads the derived index; a stale index would
+    # miss candidates that a just-written note holds. Incremental and cheap.
+    index_mod.update_index(vault)
     pending: list[dict] = []
     duplicates = 0
     conflicts = 0
+    cross_conflicts = 0
     supersessions = 0
     settled = 0
     source_files: set[str] = set()
@@ -212,6 +252,15 @@ def review(vault: Path, verbose: bool = True, only: set[str] | None = None) -> d
                         }
                     )
                     continue
+            # Contradictions living in ANOTHER note are invisible to the
+            # target-note comparison above; recall candidates corpus-wide and
+            # apply the same subject/value rules before queueing.
+            cross = _cross_doc_hit(vault, clean, target)
+            if cross is not None:
+                conflicts += 1
+                cross_conflicts += 1
+                append_conflict(vault, clean, cross[1], src.name, doc_id, cross_doc=cross[0])
+                continue
             pending.append(
                 {
                     "fact": clean,
@@ -222,9 +271,10 @@ def review(vault: Path, verbose: bool = True, only: set[str] | None = None) -> d
             )
     if verbose:
         settled_note = f", {settled} already adjudicated" if settled else ""
+        cross_note = f", {cross_conflicts} cross-doc" if cross_conflicts else ""
         print(
             f"review: {len(pending)} pending, {duplicates} duplicate(s), "
-            f"{conflicts} conflict(s), {supersessions} supersession(s){settled_note}"
+            f"{conflicts} conflict(s){cross_note}, {supersessions} supersession(s){settled_note}"
         )
         for p in pending:
             mark = f" [取代→{p['supersede'][:40]}]" if p.get("supersede") else ""
@@ -233,6 +283,7 @@ def review(vault: Path, verbose: bool = True, only: set[str] | None = None) -> d
         "pending": pending,
         "duplicates": duplicates,
         "conflicts": conflicts,
+        "cross_conflicts": cross_conflicts,
         "supersessions": supersessions,
         "adjudicated": settled,
         "source_files": source_files,

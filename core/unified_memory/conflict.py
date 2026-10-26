@@ -248,7 +248,14 @@ def _parse_inline_conflict(line: str) -> dict:
     return fields
 
 
-def append_conflict(vault: Path, new_fact: str, existing_line: str, source: str, target_file: str = "") -> None:
+def append_conflict(
+    vault: Path,
+    new_fact: str,
+    existing_line: str,
+    source: str,
+    target_file: str = "",
+    cross_doc: str = "",
+) -> None:
     """Queue one conflict; never touches canonical notes.
 
     Always writes the single-line JSON shape: it is unambiguous for a machine
@@ -256,11 +263,19 @@ def append_conflict(vault: Path, new_fact: str, existing_line: str, source: str,
     emitting the human one. Duplicate suppression compares `_signature`, not
     dict equality — dict equality would stop matching the moment a reader adds
     bookkeeping keys, and the queue would grow a copy per pass.
+
+    ``cross_doc`` names the note that already holds the contradicting value
+    when the hit came from a document other than the fact's classification
+    target (batch A): the old line was invisible to the target-note-only
+    comparison, so without the field the queue showed a conflict whose "旧"
+    side could not be located by a reader.
     """
     path = situation_dir(vault) / CONFLICT_FILE
     fields = {"新": new_fact, "旧": existing_line, "来源": source}
     if target_file:
         fields["目标"] = target_file
+    if cross_doc:
+        fields["跨文档"] = cross_doc
     with file_lock(vault):
         if not path.exists():
             atomic_write(
