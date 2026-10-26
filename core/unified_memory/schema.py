@@ -96,7 +96,13 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_doc ON memories(doc)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_agent ON memories(source_agent)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_status_updated ON memories(status, updated_at)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_text_hash ON memories(text_hash)")
+    # text_hash only exists from v5 up; on an older database the column is
+    # added (and the index created) by _migrate_to_v5 a moment later, so the
+    # failure here is expected and ignored.
+    try:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_text_hash ON memories(text_hash)")
+    except sqlite3.Error:
+        pass
     conn.execute("CREATE INDEX IF NOT EXISTS idx_access_mem ON access_log(memory_id)")
 
 
@@ -177,6 +183,7 @@ def _migrate_to_v5(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE memories ADD COLUMN text_hash TEXT NOT NULL DEFAULT ''")
     if "legacy_id" not in columns:
         conn.execute("ALTER TABLE memories ADD COLUMN legacy_id TEXT")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_text_hash ON memories(text_hash)")
 
     # Collapse legacy (doc, line) duplicates before remapping, or two rows
     # would race for the same new primary key and abort the upgrade. The

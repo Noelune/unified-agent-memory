@@ -149,17 +149,70 @@ class SchemaMigrationTests(unittest.TestCase):
     def test_downgrade_is_left_alone(self) -> None:
         conn = schema.get_conn(self.vault)
         _fill_learning_data(conn)
+        # "99" is NEWER than this build: a rollback scenario. The code must
+        # not touch a database written by a newer schema.
         conn.execute(
-            "UPDATE index_meta SET value = ? WHERE key = 'schema_version'", ("9",)
+            "UPDATE index_meta SET value = ? WHERE key = 'schema_version'", ("99",)
         )
         conn.commit()
         conn.close()
         conn = schema.get_conn(self.vault)
         try:
-            self.assertEqual(schema._read_version(conn), 10)
+            self.assertEqual(schema._read_version(conn), 99)
             self.assertEqual(_counts(conn)["memories"], 100)
         finally:
             conn.close()
+
+    def test_true_v4_database_with_old_column_shape_migrates(self) -> None:
+        # Reproduces the REAL upgrade path: a database written by 0.8.8 has a
+        # memories table WITHOUT text_hash/legacy_id, and _ensure_schema's
+        # index on text_hash used to run before the column existed — every
+        # real upgrade crashed. Found by opening a copy of the live index.
+        from unified_memory import memory as memory_mod
+
+        vault = Path(self._tmp.name) / "old-vault"
+        vault.mkdir()
+        original_db = memory_mod.INDEX_DB
+        memory_mod.INDEX_DB = Path(self._tmp.name) / "base.db"
+        try:
+            db = schema.index_db_for(vault)
+            conn = sqlite3.connect(str(db))
+            conn.row_factory = sqlite3.Row
+            try:
+                conn.execute(
+                    "CREATE TABLE index_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+                )
+                conn.execute(
+                    "CREATE TABLE memories (id TEXT PRIMARY KEY, doc TEXT NOT NULL, "
+                    "line TEXT NOT NULL, type TEXT NOT NULL DEFAULT 'fact', "
+                    "importance REAL NOT NULL DEFAULT 0.5, status TEXT NOT NULL DEFAULT 'active', "
+                    "version INTEGER NOT NULL DEFAULT 1, superseded_by TEXT, "
+                    "source_agent TEXT NOT NULL DEFAULT '', project TEXT NOT NULL DEFAULT '', "
+                    "created_at TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT '', "
+                    "access_count INTEGER NOT NULL DEFAULT 0, metadata_json TEXT NOT NULL DEFAULT '{}')"
+                )
+                conn.execute(
+                    "INSERT INTO index_meta (key, value) VALUES ('schema_version', '4')"
+                )
+                conn.execute(
+                    "INSERT INTO memories (id, doc, line) VALUES ('legacy', 'note.md', 'fact one')"
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            conn = schema.get_conn(vault)
+            try:
+                self.assertEqual(schema._read_version(conn), 10)
+                row = conn.execute(
+                    "SELECT legacy_id, text_hash FROM memories WHERE legacy_id = 'legacy'"
+                ).fetchone()
+                self.assertIsNotNone(row)
+                self.assertNotEqual(row["text_hash"], "")
+            finally:
+                conn.close()
+        finally:
+            memory_mod.INDEX_DB = original_db
 
 
 if __name__ == "__main__":
