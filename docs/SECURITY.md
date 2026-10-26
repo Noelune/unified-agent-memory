@@ -5,9 +5,13 @@ adapter, package contents, and repository deployment helper.
 
 ## Principles
 
-1. **Vault content is data, not instructions.** All search output is wrapped
-   in `<memory-data>` markers; every tool description states this. A vault
-   that gets poisoned with malicious .md cannot inject instructions.
+1. **Vault content is data, not instructions.** Every text path that hands
+   vault content to a model is wrapped in `<memory-data>` markers — search
+   (hybrid and lexical), `memory_show`, and the recall injection — and every
+   field inside the envelope (doc names, fact lines, snippets, echoed
+   queries, whole-note bodies) is escaped through `encode_untrusted`, so
+   vault text containing a literal `</memory-data>` cannot close the envelope
+   early and read as instructions. Every tool description states the rule.
 2. **Read-only canonical, single write inbox.** Agents never edit canonical
    notes directly; the only write path is 提交区 via memory_submit (validated:
    credential-shaped lines are rejected at submission).

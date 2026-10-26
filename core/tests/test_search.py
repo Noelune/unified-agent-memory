@@ -100,7 +100,10 @@ class HybridSearchTest(unittest.TestCase):
             "q",
         )
         self.assertIn("<memory-data>", out)
-        self.assertIn("<REDACTED>", out)
+        # Escaped by encode_untrusted (batch A): same readable marker,
+        # no longer able to terminate a tag. The source needs the doubled
+        # backslash so the Python string value is the six characters \u003c.
+        self.assertIn("\\u003cREDACTED\\u003e", out)
         self.assertNotIn("secret-here", out)
 
     def test_format_budget_caps_results(self):

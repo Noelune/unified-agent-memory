@@ -28,6 +28,24 @@ export const TIMEOUT_MS = 25000
 const BUILTIN_DOCS = /^(index|prefs|env|rules|tools|ui|coord)$/
 
 /**
+ * Escape text that is about to travel inside a `<memory-data>` envelope.
+ *
+ * The Python core now does this for every field it renders (common.encode_untrusted);
+ * the JS side needs the same rule for the text it composes itself — today that
+ * is the echoed query in recall.ts, tomorrow any field assembled host-side.
+ * `<` cannot terminate a tag once written as `\u003c`, and a model reading the
+ * escaped form still sees the original character. Mirrors the core's rule:
+ * NUL and the other C0 controls are dropped, `\n`/`\t` survive.
+ */
+export function encodeUntrusted(text: string): string {
+  return (text ?? '')
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '')
+}
+
+/**
  * A single path segment with no suffix requirement.
  *
  * `*.md` is still the canonical spelling, but the vault links its own notes the

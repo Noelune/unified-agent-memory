@@ -156,6 +156,32 @@ def redact(text: str) -> str:
     return out
 
 
+# The one fence this project speaks. Kept next to encode_untrusted so the
+# tag and its escaping rule cannot drift apart.
+MEMORY_DATA_TAG = "memory-data"
+
+
+def encode_untrusted(text: str) -> str:
+    """Make vault text safe to place inside a ``<memory-data>`` envelope.
+
+    A fact line that itself contains ``</memory-data>`` would close the
+    envelope early and turn everything after it into model-visible
+    instructions (reproduced end to end in the batch-A audit). ``<`` and
+    ``>`` are therefore escaped to their ``\\uXXXX`` forms — the same trick
+    the JS side has used in repair-prompt.encodePayload since it was written:
+    a model reads the escaped form as the same character, but it can no
+    longer terminate a tag. NUL and the other C0 controls are dropped so a
+    crafted byte cannot forge line structure either.
+
+    Every field that reaches the envelope must pass through here: doc names,
+    fact lines, snippets, echoed queries, whole-note bodies.
+    """
+    out = (text or "").replace("<", "\\u003c").replace(">", "\\u003e")
+    return "".join(
+        ch for ch in out if ch in ("\n", "\t") or (ch >= " " and ch != "\x7f")
+    )
+
+
 def looks_like_credential(line: str) -> bool:
     return bool(CREDENTIAL_LINE_RE.search(line))
 

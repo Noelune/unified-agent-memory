@@ -26,7 +26,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from . import embed, index
-from .common import redact
+from .common import encode_untrusted, redact
 
 RRF_K = 60
 DEFAULT_WEIGHTS = (1.0, 1.0, 0.8, 0.9, 1.0)  # bm25, vector, graph, trigram, bigram
@@ -258,9 +258,9 @@ def render_hybrid(results: list[dict], query: str) -> str:
     if not results:
         payload += "no matches\n"
     for r in results:
-        payload += f"doc: {redact(r['doc'])}\n"
-        payload += f"  - {redact(r['line'])}\n"
+        payload += f"doc: {encode_untrusted(redact(r['doc']))}\n"
+        payload += f"  - {encode_untrusted(redact(r['line']))}\n"
         if r.get("type") and r["type"] != "other":
-            payload += f"  (type: {r['type']}, importance: {r['importance']})\n"
+            payload += f"  (type: {encode_untrusted(r['type'])}, importance: {r['importance']})\n"
     payload += "\n</memory-data>"
     return payload

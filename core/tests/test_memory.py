@@ -119,7 +119,10 @@ class MemoryCoreTest(unittest.TestCase):
         buf = io.StringIO()
         with redirect_stdout(buf):
             mem_mod.print_memory_data("test", [{"doc": "note.md", "snippet": "api_key: shortkey"}])
-        self.assertIn("<REDACTED>", buf.getvalue())
+        # Envelope fields are escaped (batch A): the redaction marker still
+        # reads as <REDACTED> to a model, but it can no longer form a tag.
+        # Doubled backslash in source -> string value is the 6 chars \u003c.
+        self.assertIn("\\u003cREDACTED\\u003e", buf.getvalue())
         self.assertNotIn("shortkey", buf.getvalue())
 
     def test_index_does_not_persist_or_return_canonical_credentials(self):
