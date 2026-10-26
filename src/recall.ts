@@ -295,7 +295,7 @@ export function disciplineInstructions(producer: string): string {
 
 // ── Hook ─────────────────────────────────────────────────────────────
 
-/** How recall talks to the outside world; swapped out in tests. */
+/** Shape of the hook dependencies; swapped out in tests. */
 export interface RecallDeps {
   /** Run one search and return the raw core stdout ('' when it failed). */
   search: (query: string, limit: number, signal?: AbortSignal) => Promise<string>
@@ -303,6 +303,11 @@ export interface RecallDeps {
   warn: (reason: string) => void
   /** Plugin package name, used for the producer-owned source kind. */
   producer: string
+  /**
+   * Report the short ids the model cited as `used` events. Best-effort and
+   * optional: absent in older tests, and a failure only logs.
+   */
+  markUsed?: (shorts: string[]) => Promise<void>
 }
 
 /** Shape of the `agent/pre-step` payload this module reads. */
@@ -310,6 +315,49 @@ export interface PreStepPayload {
   step?: number
   messages?: unknown
   signal?: AbortSignal
+}
+
+/** Display prefix the core prints before each recalled fact: the id's first 10 hex chars. */
+export const SHORT_ID_RE = /\[([0-9a-f]{10})\]/g
+
+/**
+ * Short ids the model cited, e.g. "根据 [a1b2c3d4e5] 这条记忆…".
+ *
+ * A citation is the only `used` signal the forgetter rewards (batch A): a
+ * fact that comes back on every search but is never cited stays forgettable.
+ */
+export function extractCitedShortIds(text: string): string[] {
+  const found: string[] = []
+  for (const match of String(text ?? '').matchAll(SHORT_ID_RE)) {
+    if (!found.includes(match[1])) found.push(match[1])
+  }
+  return found
+}
+
+/**
+ * Short ids offered by the MOST RECENT recall block in the history.
+ *
+ * Walk from the end so several accumulated blocks resolve to the newest one —
+ * older blocks' ids must not be creditable from a stale turn. The text comes
+ * straight from the content blocks: extractUserText deliberately returns ''
+ * for injected messages (they are not user input), which is exactly the block
+ * we DO want here.
+ */
+export function previousRecallShortIds(messages: unknown): string[] {
+  if (!Array.isArray(messages)) return []
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i] as { source?: { form?: unknown } } | null
+    if (!message || message.source?.form !== RECALL_FORM) continue
+    const content = (message as { content?: unknown }).content
+    if (!Array.isArray(content)) return []
+    const parts: string[] = []
+    for (const block of content) {
+      const b = block as { type?: unknown; text?: unknown }
+      if (b && b.type === 'text' && typeof b.text === 'string') parts.push(b.text)
+    }
+    return extractCitedShortIds(parts.join('\n'))
+  }
+  return []
 }
 
 /**
@@ -335,6 +383,21 @@ export function makeRecallHandler(cfg: PluginConfig, deps: RecallDeps) {
       if (!Array.isArray(messages) || messages.length === 0) return advance()
       const query = latestUserText(messages)
       if (query === '') return advance()
+
+      // Citation feedback (batch A): when the model echoes a [short-id] from
+      // the previous recall block, report it as `used` — the only event the
+      // forgetter's reinforcement rewards. Best-effort, never blocks the turn.
+      const priorIds = previousRecallShortIds(messages)
+      if (priorIds.length > 0 && typeof deps.markUsed === 'function') {
+        const cited = extractCitedShortIds(query).filter((s) => priorIds.includes(s))
+        if (cited.length > 0) {
+          try {
+            await deps.markUsed(cited)
+          } catch (error) {
+            deps.warn(`mark-used failed: ${error instanceof Error ? error.message : String(error)}`)
+          }
+        }
+      }
 
       // Short replies ("继续", "ok", "2") carry no topic. Searching them wastes a
       // subprocess and returns noise that is worse than no recall.
@@ -400,6 +463,14 @@ export function defaultRecallDeps(cfg: PluginConfig, producer: string, warn: (re
         return ''
       }
       return result.output
+    },
+    async markUsed(shorts) {
+      // Fire-and-forget by contract: a failed citation report must never
+      // surface to the turn (the caller also catches, this keeps the log one line).
+      const result = await runCore(cfg, ['cite', '--ids', shorts.join(',')])
+      if (!result.ok) {
+        warn(`mark-used failed (${result.kind ?? 'error'}): ${result.error ?? 'no detail'}`)
+      }
     },
   }
 }

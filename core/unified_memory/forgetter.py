@@ -2,13 +2,16 @@
 """forgetter — memory decay (optional, conservative, fully reversible).
 
 Upgraded from a pure "90 days unused" rule to a salience × decay +
-reinforcement score (borrowed from rohitg00/agentmemory's retention scoring):
+citation-reinforcement score (borrowed from rohitg00/agentmemory's retention
+scoring, with the batch-A correction that only CITED facts reinforce):
 
     score = min(1, importance × exp(-λ · age_days) + reinforcement)
 
   - importance comes from the memory type (architecture 0.9 … fact 0.5) stored
     in the memory database (index.py), falling back to a keyword classification.
-  - λ controls decay speed; reinforcement grows slowly with read/access count.
+  - λ controls decay speed; reinforcement grows slowly with the number of
+    ``used`` events (the model cited the fact in a later turn). Retrievals do
+    NOT count — rewarding them pinned stale facts forever.
   - A line is demoted only when score < FORGET_THRESHOLD, it is old enough, and
     it is not a durable/protected topic.
 
@@ -93,44 +96,51 @@ def parse_line(line: str) -> dict:
     }
 
 
-def memory_score(importance: float, access_count: int, age_days: float) -> float:
-    """Salience × (durable floor + decay) + access reinforcement, clipped to [0, 1].
+def memory_score(importance: float, used_count: int, age_days: float) -> float:
+    """Salience × (durable floor + decay) + citation reinforcement, clipped [0,1].
 
     ``importance`` is the long-term anchor: above the floor it keeps a memory
     alive indefinitely (preferences, architecture, rules); at or below it the
     exponential decay eventually drops the score under FORGET_THRESHOLD.
+    Reinforcement counts ``used`` events only — facts the model actually
+    cited — not retrievals (batch A).
     """
     decay = (1.0 - DURABLE_FLOOR) * math.exp(-DECAY_LAMBDA * age_days) + DURABLE_FLOOR
-    reinforcement = min(MAX_REINFORCEMENT, 0.08 * math.log1p(max(0, access_count)))
+    reinforcement = min(MAX_REINFORCEMENT, 0.08 * math.log1p(max(0, used_count)))
     return min(1.0, importance * decay + reinforcement)
 
 
 def _index_stats(vault: Path, doc: str, bare: str) -> tuple[float, int, str] | None:
-    """Return (importance, access_count, last_access_at) for a memory line.
+    """Return (importance, used_count, last_access_at) for a memory line.
 
+    ``access_count`` counts every retrieval, and retrieval is NOT usage: the
+    batch-A audit found 752 access rows rewarding facts merely for coming
+    back, pinning stale ones forever. Reinforcement now reads the ``used``
+    events only — facts the model actually cited in a later turn.
     ``updated_at`` is unusable as a "last used" signal: indexing and embedding
-    also touch it. The access_log timestamp is the actual read receipt, which
-    is what the reinforcement model is supposed to reward.
+    also touch it. The access_log timestamp is the actual read receipt.
     """
     try:
         conn = index.get_conn(vault)
         try:
             row = conn.execute(
-                "SELECT m.importance, m.access_count, "
+                "SELECT m.importance, "
+                "(SELECT COUNT(*) FROM access_log a WHERE a.memory_id = m.id AND a.event = 'used') AS used, "
                 "(SELECT MAX(a.at) FROM access_log a WHERE a.memory_id = m.id) AS last_access "
                 "FROM memories m WHERE m.doc = ? AND m.line = ? LIMIT 1",
                 (doc, bare),
             ).fetchone()
             if row is None:
                 row = conn.execute(
-                    "SELECT m.importance, m.access_count, "
+                    "SELECT m.importance, "
+                    "(SELECT COUNT(*) FROM access_log a WHERE a.memory_id = m.id AND a.event = 'used') AS used, "
                     "(SELECT MAX(a.at) FROM access_log a WHERE a.memory_id = m.id) AS last_access "
                     "FROM memories m WHERE m.line = ? LIMIT 1",
                     (bare,),
                 ).fetchone()
             if row is None:
                 return None
-            return float(row["importance"]), int(row["access_count"]), str(row["last_access"] or "")
+            return float(row["importance"]), int(row["used"]), str(row["last_access"] or "")
         finally:
             conn.close()
     except Exception:  # noqa: BLE001 — never let the index break forgetting
@@ -177,20 +187,20 @@ def demote(vault: Path, dry_run: bool = True) -> list[str]:
             age_days = (today - written_ts) / 86400
             if age_days < MIN_AGE_DAYS:
                 continue
-            # Prefer index-derived importance/access; fall back to a keyword
-            # salience and the line's own usage tag.
+            # Prefer index-derived importance and the model's actual citations;
+            # fall back to a keyword salience and the line's own usage tag.
             stats = _index_stats(vault, str(path), parsed["bare"])
             if stats is not None:
-                importance, access, last_access = stats
+                importance, used, last_access = stats
             else:
                 importance = index.salience_for(index.classify_type(parsed["bare"]))
-                access = parsed["used"]
+                used = parsed["used"]
                 last_access = ""
             # Ebbinghaus-style reinforcement: a recently recalled fact has not
             # "gone unused", even if it was written long ago.
             touched_age = _days_since(last_access, today)
             effective_age = min(age_days, touched_age) if touched_age is not None else age_days
-            score = memory_score(importance, access, effective_age)
+            score = memory_score(importance, used, effective_age)
             if score >= FORGET_THRESHOLD:
                 continue
             candidates.append((path, line))

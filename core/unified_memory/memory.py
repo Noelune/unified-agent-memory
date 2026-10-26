@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -325,9 +326,11 @@ def print_memory_data(query: str, results: list[dict]) -> None:
     if not results:
         payload += "no matches (note: inbox facts only become searchable after promotion — run python -m unified_memory.promoter)\n"
     for r in results:
+        short = str(r.get("id", ""))[:10]
+        prefix = f"[{short}] " if short else ""
         payload += f"doc: {encode_untrusted(r['doc'])}\n"
         if r.get("snippet"):
-            payload += f"  …{encode_untrusted(redact(r['snippet']))}…\n"
+            payload += f"  {prefix}…{encode_untrusted(redact(r['snippet']))}…\n"
     payload += "\n</memory-data>"
     print(payload)
 
@@ -1067,6 +1070,27 @@ def cmd_audit(args: argparse.Namespace) -> None:
         print(f"#{r['id']} {r['at']} {r['agent']} {r['action']} {r['target']} {detail}")
 
 
+def cmd_cite(args: argparse.Namespace) -> None:
+    """Report citations: the host tells us which short ids the model used.
+
+    Named `cite` because `memory use <vault>` already means "point the config
+    at this vault" — overloading it would have broken vault selection. Only
+    cited ids earn a ``used`` event, the forgetter's reinforcement signal;
+    retrieval alone never reinforces (batch A).
+    """
+    vault = resolve_vault()
+    ensure_vault(vault)
+    raw = str(getattr(args, "ids", "") or "")
+    shorts = [s.strip().lower() for s in re.split(r"[\s,，]+", raw) if s.strip()]
+    if not shorts:
+        raise SystemExit("usage: memory use --ids <short-id>[,<short-id>...]")
+    matched = index_mod.record_used_events(vault, shorts)
+    if getattr(args, "json", False):
+        emit_json("cite", {"requested": len(shorts), "matched": matched})
+        return
+    print(f"cite: {matched}/{len(shorts)} citation(s) recorded")
+
+
 def cmd_drift(args: argparse.Namespace) -> None:
     """Detect code-memory drift."""
     from . import drift as drift_mod  # lazy import — avoids yaml dependency at module load
@@ -1252,6 +1276,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_audit.add_argument("--verify", action="store_true", help="recompute the hash chain")
     p_audit.add_argument("--json", action="store_true", help="machine-readable output")
     p_audit.set_defaults(fn=cmd_audit)
+
+    p_cite = sub.add_parser("cite", help="record citations ([short-id] echoes) as used events")
+    p_cite.add_argument("--ids", help="comma/space separated 10-char short ids")
+    p_cite.add_argument("--json", action="store_true", help="machine-readable output")
+    p_cite.set_defaults(fn=cmd_cite)
 
     return parser
 

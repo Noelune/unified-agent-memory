@@ -14,7 +14,7 @@ import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
-SCHEMA_VERSION = "9"
+SCHEMA_VERSION = "10"
 _TARGET = int(SCHEMA_VERSION)
 
 
@@ -83,7 +83,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         "CREATE TABLE IF NOT EXISTS query_cache (query_hash TEXT PRIMARY KEY, vector BLOB NOT NULL, at TEXT NOT NULL, model_id TEXT NOT NULL DEFAULT '')"
     )
     conn.execute(
-        "CREATE TABLE IF NOT EXISTS access_log (memory_id TEXT NOT NULL, at TEXT NOT NULL)"
+        "CREATE TABLE IF NOT EXISTS access_log (memory_id TEXT NOT NULL, at TEXT NOT NULL, event TEXT NOT NULL DEFAULT 'retrieved')"
     )
     conn.execute(
         "CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, agent TEXT NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', prev_hash TEXT, entry_hash TEXT)"
@@ -293,6 +293,24 @@ def _migrate_to_v9(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE query_cache ADD COLUMN model_id TEXT NOT NULL DEFAULT ''")
 
 
+def _migrate_to_v10(conn: sqlite3.Connection) -> None:
+    """v9 -> v10: split 'retrieved' from 'used' access events.
+
+    record_access counted a fact the moment it was RETURNED, and the forgetter
+    rewarded that count — retrieval begat reinforcement begat retrieval, and
+    stale facts were pinned forever (752 access rows / 149 memories). Only
+    facts the model actually CITES should reinforce; old rows predate the
+    distinction and count as 'retrieved'.
+    """
+    columns = {
+        row["name"] for row in conn.execute("PRAGMA table_info(access_log)").fetchall()
+    }
+    if "event" not in columns:
+        conn.execute(
+            "ALTER TABLE access_log ADD COLUMN event TEXT NOT NULL DEFAULT 'retrieved'"
+        )
+
+
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     4: _migrate_to_v4,
     5: _migrate_to_v5,
@@ -300,6 +318,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     7: _migrate_to_v7,
     8: _migrate_to_v8,
     9: _migrate_to_v9,
+    10: _migrate_to_v10,
 }
 
 

@@ -139,6 +139,7 @@ def hybrid_search(
             continue
         results.append(
             {
+                "id": rec["id"],
                 "doc": redact(Path(rec["doc"]).name),
                 "title": redact(Path(rec["doc"]).stem),
                 "line": redact(rec["line"]),
@@ -280,8 +281,13 @@ def render_hybrid(results: list[dict], query: str) -> str:
     if not results:
         payload += "no matches\n"
     for r in results:
+        # [short] is the 10-char id prefix; when the model cites it in a later
+        # turn, the host reports it via `memory use` and the fact earns a
+        # `used` event — the only event the forgetter rewards (batch A).
+        short = str(r.get("id", ""))[:10]
+        prefix = f"[{short}] " if short else ""
         payload += f"doc: {encode_untrusted(redact(r['doc']))}\n"
-        payload += f"  - {encode_untrusted(redact(r['line']))}\n"
+        payload += f"  {prefix}- {encode_untrusted(redact(r['line']))}\n"
         if r.get("type") and r["type"] != "other":
             payload += f"  (type: {encode_untrusted(r['type'])}, importance: {r['importance']})\n"
     payload += "\n</memory-data>"

@@ -91,7 +91,7 @@ class SchemaMigrationTests(unittest.TestCase):
             self.assertEqual(counts["memories"], 100)
             self.assertEqual(counts["embeddings"], 50)
             self.assertEqual(counts["access_log"], 200)
-            self.assertEqual(schema._read_version(conn), 9)
+            self.assertEqual(schema._read_version(conn), 10)
         finally:
             conn.close()
         self.assertTrue(db.with_name(db.stem + ".v3.bak").exists())
@@ -135,14 +135,14 @@ class SchemaMigrationTests(unittest.TestCase):
             self.assertEqual(
                 conn.execute("SELECT COUNT(*) AS c FROM memories").fetchone()["c"], 100
             )
-            self.assertEqual(schema._read_version(conn), 9)
+            self.assertEqual(schema._read_version(conn), 10)
         finally:
             conn.close()
 
     def test_fresh_database_is_marked_current(self) -> None:
         conn = schema.get_conn(self.vault)
         try:
-            self.assertEqual(schema._read_version(conn), 9)
+            self.assertEqual(schema._read_version(conn), 10)
         finally:
             conn.close()
 
@@ -156,7 +156,7 @@ class SchemaMigrationTests(unittest.TestCase):
         conn.close()
         conn = schema.get_conn(self.vault)
         try:
-            self.assertEqual(schema._read_version(conn), 9)
+            self.assertEqual(schema._read_version(conn), 10)
             self.assertEqual(_counts(conn)["memories"], 100)
         finally:
             conn.close()

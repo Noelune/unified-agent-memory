@@ -48,7 +48,8 @@ __all__ = [
     "update_memories", "update_index", "fts_search", "lexical_search",
     "cjk_tokens",
     "record_access", "record_audit", "audit_rows", "audit_verify",
-    "audit_entry_hash", "active_memories", "memory_count",
+    "audit_entry_hash", "used_count", "resolve_short_ids",
+    "record_used_events", "active_memories", "memory_count",
 ]
 
 # --------------------------------------------------------------------------
@@ -538,6 +539,7 @@ def fts_search(vault: Path, query: str, limit: int) -> dict:
             seen_docs.add(doc_name)
             results.append(
                 {
+                    "id": row["id"],
                     "doc": redact(doc_name),
                     "title": redact(Path(doc_name).stem),
                     "snippet": redact(row["line"]),
@@ -667,16 +669,70 @@ def lexical_search(vault: Path, query: str, limit: int = 20) -> list[dict]:
 # --------------------------------------------------------------------------
 
 
-def record_access(vault: Path, memory_ids: list[str]) -> None:
+def record_access(
+    vault: Path, memory_ids: list[str], event: str = "retrieved"
+) -> None:
+    """Record one access event per memory.
+
+    Two events exist (batch A): ``retrieved`` — the fact was returned by a
+    search, which is NOT a signal of usefulness — and ``used`` — the model
+    actually cited it in a later turn. Only ``used`` feeds the forgetter's
+    reinforcement; rewarding retrieval alone pinned stale facts forever
+    (752 access rows / 149 memories, every one counting as praise).
+    """
     conn = get_conn(vault)
     try:
         now = time.strftime("%Y-%m-%dT%H:%M:%S")
         for mid in memory_ids:
             conn.execute("UPDATE memories SET access_count = access_count + 1, updated_at = ? WHERE id = ?", (now, mid))
-            conn.execute("INSERT INTO access_log (memory_id, at) VALUES (?, ?)", (mid, now))
+            conn.execute(
+                "INSERT INTO access_log (memory_id, at, event) VALUES (?, ?, ?)",
+                (mid, now, event),
+            )
         conn.commit()
     finally:
         conn.close()
+
+
+def used_count(vault: Path, memory_id: str) -> int:
+    """How many ``used`` events a memory has (reinforcement signal)."""
+    conn = get_conn(vault)
+    try:
+        return conn.execute(
+            "SELECT COUNT(*) AS c FROM access_log WHERE memory_id = ? AND event = 'used'",
+            (memory_id,),
+        ).fetchone()["c"]
+    finally:
+        conn.close()
+
+
+def resolve_short_ids(vault: Path, shorts: list[str]) -> list[str]:
+    """Expand 10-char display prefixes (see render_hybrid) to full ids."""
+    if not shorts:
+        return []
+    conn = get_conn(vault)
+    try:
+        found: list[str] = []
+        for short in shorts:
+            if not re.fullmatch(r"[0-9a-f]{6,64}", short):
+                continue
+            row = conn.execute(
+                "SELECT id FROM memories WHERE id LIKE ? LIMIT 1",
+                (short + "%",),
+            ).fetchone()
+            if row is not None:
+                found.append(row["id"])
+        return found
+    finally:
+        conn.close()
+
+
+def record_used_events(vault: Path, shorts: list[str]) -> int:
+    """Mark the cited short ids as ``used``; returns how many matched."""
+    full = resolve_short_ids(vault, shorts)
+    if full:
+        record_access(vault, full, event="used")
+    return len(full)
 
 
 def audit_entry_hash(
