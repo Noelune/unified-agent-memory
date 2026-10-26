@@ -928,7 +928,6 @@ def cmd_gc(args: argparse.Namespace) -> None:
         apply=getattr(args, "apply", False),
         older_than_days=getattr(args, "older_than", 30),
         vacuum=not getattr(args, "no_vacuum", False),
-        rebuild_graph=not getattr(args, "no_graph", False),
         prune_orphans=not getattr(args, "keep_orphans", False),
     )
     if getattr(args, "json", False):
@@ -954,9 +953,9 @@ def cmd_gc(args: argparse.Namespace) -> None:
 def cmd_graph(args: argparse.Namespace) -> None:
     vault = resolve_vault()
     ensure_vault(vault)
-    nodes = graph_mod.build_graph(vault)
+    index_mod.update_index(vault)
     stats = graph_mod.graph_stats(vault)
-    print(f"graph: {nodes} concept node(s), {stats['edges']} edge(s)")
+    print(f"graph: {stats['nodes']} concept node(s), {stats['edges']} edge(s)")
 
 
 def cmd_digest(args: argparse.Namespace) -> None:
@@ -1234,7 +1233,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_gc.add_argument("--apply", action="store_true", help="actually delete (default: dry-run)")
     p_gc.add_argument("--older-than", type=int, default=30, help="only orphan indexes older than N days (default 30)")
     p_gc.add_argument("--no-vacuum", action="store_true", help="skip VACUUM")
-    p_gc.add_argument("--no-graph", action="store_true", help="skip the bounded graph rebuild")
+    p_gc.add_argument("--no-graph", action="store_true", help="(deprecated) the graph is computed in memory; kept for compatibility")
     p_gc.add_argument("--keep-orphans", action="store_true", help="do not delete orphan index databases")
     p_gc.add_argument("--json", action="store_true", help="emit the machine-readable report")
     p_gc.set_defaults(fn=cmd_gc)

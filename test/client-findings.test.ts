@@ -129,7 +129,8 @@ describe('healthFindings', () => {
     const callSites = [...health.matchAll(/_issue\(/g)].length - 1 // minus `def _issue(`
     const parsed = [...health.matchAll(/_issue\(\s*"(?:error|warn|info)"\s*,\s*"([a-z][a-z0-9-]*)"/g)]
     expect(parsed.length).toBe(callSites)
-    expect(callSites).toBeGreaterThanOrEqual(9)
+    // graph-bloat retired in batch A (the persisted graph is gone): 8 remain.
+    expect(callSites).toBeGreaterThanOrEqual(8)
   })
 
   it('reads the fallback envelope’s two codes too', () => {
@@ -185,8 +186,8 @@ describe('healthFindings', () => {
   })
 
   it('keys by code so a re-read does not remount the whole list', () => {
-    const got = healthFindings([issue('index-bloat'), issue('graph-bloat')])
-    expect(got.map((f) => f.key)).toEqual(['index-bloat', 'graph-bloat'])
+    const got = healthFindings([issue('index-bloat'), issue('orphan-indexes')])
+    expect(got.map((f) => f.key)).toEqual(['index-bloat', 'orphan-indexes'])
   })
 
   it('gives a codeless finding a stable positional key', () => {
@@ -355,7 +356,7 @@ describe('agentAction — who does the work, and on what terms', () => {
 
   it('routes the codes an agent can settle into "fix"', () => {
     const fixable = [
-      'unclassified-facts', 'inbox-stale', 'duplicate-facts', 'graph-bloat',
+      'unclassified-facts', 'inbox-stale', 'duplicate-facts',
       'index-bloat', 'doctor-failed', 'orphan-indexes', 'embedding-coverage',
     ]
     for (const code of fixable) {

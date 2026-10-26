@@ -170,7 +170,7 @@ class GcTest(unittest.TestCase):
         orphan = self._make_db("index-deadbeefdeadbeef.db", missing)
         live = self._make_db("index-feedfacefeedface.db", common.canonical_path(self.vault, "prefs"))
         report = health.gc(
-            self.vault, apply=True, older_than_days=0, vacuum=False, rebuild_graph=False
+            self.vault, apply=True, older_than_days=0, vacuum=False
         )
         removed = {Path(item["path"]).name for item in report["orphanIndexes"]}
         self.assertIn(orphan.name, removed)

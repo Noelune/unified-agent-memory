@@ -14,7 +14,7 @@ import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
-SCHEMA_VERSION = "7"
+SCHEMA_VERSION = "8"
 _TARGET = int(SCHEMA_VERSION)
 
 
@@ -88,19 +88,16 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, agent TEXT NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', prev_hash TEXT, entry_hash TEXT)"
     )
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS graph_nodes (name TEXT PRIMARY KEY, kind TEXT NOT NULL DEFAULT 'concept')"
-    )
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS graph_edges (src TEXT NOT NULL, dst TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'related', weight REAL NOT NULL DEFAULT 1.0, PRIMARY KEY (src, dst, kind))"
-    )
+    # The persisted concept graph is GONE (batch A, v8): build_graph wrote
+    # 1335 nodes / 5000 capped edges that no reader ever queried —
+    # expand_search always recomputed postings from `memories` in memory.
+    # The v8 migration drops both tables.
     # Indexes for common query paths.
     conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_doc ON memories(doc)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_agent ON memories(source_agent)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_status_updated ON memories(status, updated_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_text_hash ON memories(text_hash)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_access_mem ON access_log(memory_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_edge_dst ON graph_edges(dst)")
 
 
 def _read_version(conn: sqlite3.Connection) -> int:
@@ -269,11 +266,24 @@ def _migrate_to_v7(conn: sqlite3.Connection) -> None:
     conn.execute("DROP TABLE IF EXISTS fts_mem")
 
 
+def _migrate_to_v8(conn: sqlite3.Connection) -> None:
+    """v7 -> v8: drop the unread concept graph.
+
+    The persisted graph was write-only: expand_search rebuilt its postings
+    from `memories` on every query and never touched graph_nodes/graph_edges,
+    so the capped 5000-edge table was pure disk and CPU. The stream now
+    computes everything in memory (see graph.expand_search).
+    """
+    conn.execute("DROP TABLE IF EXISTS graph_edges")
+    conn.execute("DROP TABLE IF EXISTS graph_nodes")
+
+
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     4: _migrate_to_v4,
     5: _migrate_to_v5,
     6: _migrate_to_v6,
     7: _migrate_to_v7,
+    8: _migrate_to_v8,
 }
 
 

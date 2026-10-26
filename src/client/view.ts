@@ -503,7 +503,6 @@ const AGENT_PLAN: Record<string, AgentAction> = {
   'unclassified-facts': { mode: 'fix', label: '让 Agent 归类', risk: '会写笔记' },
   'inbox-stale': { mode: 'fix', label: '让 Agent 处理', risk: '会写库' },
   'duplicate-facts': { mode: 'fix', label: '让 Agent 去重', risk: '会写库 · 先备份' },
-  'graph-bloat': { mode: 'fix', label: '让 Agent 处理', risk: '会重建派生数据' },
   'index-bloat': { mode: 'fix', label: '让 Agent 处理', risk: '会重建派生数据' },
   'doctor-failed': { mode: 'fix', label: '让 Agent 处理', risk: '会重建派生数据' },
   'orphan-indexes': { mode: 'fix', label: '让 Agent 处理', risk: '会删旧索引 · 可重建' },
@@ -771,12 +770,6 @@ const ISSUE_COPY: Record<string, { title: string; detail: string; fix: string; c
     detail: '部分记忆没有向量，语义检索会退化成关键词匹配——换个说法就搜不到。',
     fix: '补齐向量，需要先配好 SiliconFlow 的 key。',
     command: 'memory embed',
-  },
-  'graph-bloat': {
-    title: '概念图边数超标',
-    detail: '联想图超出上限，联想结果会变得又散又慢。',
-    fix: '重建一张有界的概念图。',
-    command: 'memory gc --apply',
   },
   'index-bloat': {
     title: '索引库体积过大',

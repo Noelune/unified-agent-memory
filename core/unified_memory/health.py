@@ -22,7 +22,6 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import graph as graph_mod
 from . import index as index_mod
 from .common import (
     CONFLICT_FILE,
@@ -40,7 +39,6 @@ ACCESS_RETENTION_DAYS = 180
 QUERY_CACHE_RETENTION_DAYS = 30
 ORPHAN_INDEX_DAYS = 30
 BLOAT_BYTES = 100 * 1024 * 1024
-BLOAT_GRAPH_EDGES = 50_000
 STALE_INBOX_DAYS = 7
 UNCLASSIFIED_FILE = "未归类事实.md"
 
@@ -123,8 +121,6 @@ def doctor(vault: Path) -> dict:
             "superseded": conn.execute("SELECT COUNT(*) FROM memories WHERE status = 'superseded'").fetchone()[0],
             "vectors": conn.execute("SELECT COUNT(*) FROM embeddings").fetchone()[0],
             "accesses": conn.execute("SELECT COUNT(*) FROM access_log").fetchone()[0],
-            "graphNodes": conn.execute("SELECT COUNT(*) FROM graph_nodes").fetchone()[0],
-            "graphEdges": conn.execute("SELECT COUNT(*) FROM graph_edges").fetchone()[0],
         }
         cursor_row = conn.execute("SELECT value FROM index_meta WHERE key = 'digest_cursor'").fetchone()
         report["digest"] = {"cursor": cursor_row[0] if cursor_row else ""}
@@ -257,15 +253,6 @@ def doctor(vault: Path) -> dict:
                 "Run `memory embed`; hybrid search degrades to lexical until then.",
             )
         )
-    if report["index"]["graphEdges"] > BLOAT_GRAPH_EDGES:
-        issues.append(
-            _issue(
-                "warn",
-                "graph-bloat",
-                f"{report['index']['graphEdges']} graph edges",
-                "Run `memory gc --apply` to rebuild the bounded graph.",
-            )
-        )
     if report["index"]["bytes"] > BLOAT_BYTES:
         issues.append(
             _issue(
@@ -327,10 +314,15 @@ def gc(
     apply: bool = False,
     older_than_days: int = ORPHAN_INDEX_DAYS,
     vacuum: bool = True,
-    rebuild_graph: bool = True,
     prune_orphans: bool = True,
 ) -> dict:
-    """Remove derived data only. Dry-run unless ``apply`` is true."""
+    """Remove derived data only. Dry-run unless ``apply`` is true.
+
+    The rebuild_graph parameter and its report keys are gone (batch A): the
+    persisted concept graph had no readers — expand_search recomputes its
+    postings from memories in memory — so the capped 5000-edge table was pure
+    write amplification and the v8 migration drops it.
+    """
     ensure_vault(vault)
     db_path = index_mod.index_db_for(vault)
     cutoff = (datetime.now() - timedelta(days=older_than_days)).timestamp()
@@ -339,7 +331,6 @@ def gc(
         "orphanIndexes": [],
         "accessPruned": 0,
         "queryCachePruned": 0,
-        "graphRebuilt": False,
         "vacuumed": False,
     }
 
@@ -373,25 +364,6 @@ def gc(
             conn.commit()
     finally:
         conn.close()
-
-    if rebuild_graph:
-        before = 0
-        before_conn = index_mod.get_conn(vault)
-        try:
-            before = before_conn.execute("SELECT COUNT(*) FROM graph_edges").fetchone()[0]
-        finally:
-            before_conn.close()
-        if apply:
-            graph_mod.build_graph(vault)
-            after_conn = index_mod.get_conn(vault)
-            try:
-                after = after_conn.execute("SELECT COUNT(*) FROM graph_edges").fetchone()[0]
-            finally:
-                after_conn.close()
-            report["graphRebuilt"] = True
-            report["graphEdges"] = {"before": before, "after": after}
-        else:
-            report["graphEdges"] = {"before": before, "after": None}
 
     if apply and vacuum:
         conn = index_mod.get_conn(vault)

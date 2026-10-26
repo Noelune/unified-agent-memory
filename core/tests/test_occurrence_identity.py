@@ -165,7 +165,7 @@ class OccurrenceMigrationTests(unittest.TestCase):
             ).fetchone()["memory_id"]
             self.assertEqual(emb, want)
             self.assertEqual(acc, want)
-            self.assertEqual(schema._read_version(conn), 7)
+            self.assertEqual(schema._read_version(conn), 8)
         finally:
             conn.close()
 
