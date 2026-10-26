@@ -180,6 +180,7 @@ def review(vault: Path, verbose: bool = True, only: set[str] | None = None) -> d
     conflicts = 0
     cross_conflicts = 0
     supersessions = 0
+    conflicted_sources: set[str] = set()
     settled = 0
     source_files: set[str] = set()
     # Conflicts a human already ruled on. Without this the inbox submission
@@ -234,6 +235,7 @@ def review(vault: Path, verbose: bool = True, only: set[str] | None = None) -> d
                     )
                     continue
                 conflicts += 1
+                conflicted_sources.add(src.name)
                 append_conflict(vault, clean, hit or "", src.name, doc_id)
                 continue
             # Below the conflict threshold, a replacement cue with a looser
@@ -259,6 +261,7 @@ def review(vault: Path, verbose: bool = True, only: set[str] | None = None) -> d
             if cross is not None:
                 conflicts += 1
                 cross_conflicts += 1
+                conflicted_sources.add(src.name)
                 append_conflict(vault, clean, cross[1], src.name, doc_id, cross_doc=cross[0])
                 continue
             pending.append(
@@ -287,6 +290,7 @@ def review(vault: Path, verbose: bool = True, only: set[str] | None = None) -> d
         "supersessions": supersessions,
         "adjudicated": settled,
         "source_files": source_files,
+        "conflicted_sources": conflicted_sources,
     }
 
 
@@ -691,11 +695,22 @@ def auto_promote(vault: Path, verbose: bool = True) -> int:
         print(f"warning: {result['conflicts']} conflict(s) queued to {CONFLICT_FILE} (adjudicate manually)")
     with file_lock(vault):
         promoted = promote(vault, result["pending"], locked=True)
-        archive_sources(vault, {name for name in result["source_files"] if name}, locked=True)
+        # A submission with an unresolved conflict must stay in the inbox:
+        # archiving it would sever the trail between the queued conflict and
+        # its source, and the file's remaining facts are not fully processed.
+        archivable = {name for name in result["source_files"] if name} - result[
+            "conflicted_sources"
+        ]
+        archive_sources(vault, archivable, locked=True)
     _refresh_index(vault)
     mark_schedule_run(vault, "promote")
     if verbose:
-        print(f"auto-promoted {len(promoted)} fact(s) ({result['duplicates']} duplicate(s) skipped)")
+        held = len(result["conflicted_sources"])
+        held_note = f", {held} source(s) held for conflicts" if held else ""
+        print(
+            f"auto-promoted {len(promoted)} fact(s) "
+            f"({result['duplicates']} duplicate(s) skipped){held_note}"
+        )
         for line in promoted:
             print(f"  + {line[:100]}")
     return len(promoted)
