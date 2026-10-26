@@ -9,10 +9,13 @@ Zero dependencies: Python standard library only.
 from __future__ import annotations
 
 import hashlib
+import shutil
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 
 SCHEMA_VERSION = "4"
+_TARGET = int(SCHEMA_VERSION)
 
 
 def index_db_for(vault: Path) -> Path:
@@ -130,30 +133,101 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_edge_dst ON graph_edges(dst)")
 
 
-def _migrate_schema(conn: sqlite3.Connection) -> None:
-    row = conn.execute("SELECT value FROM index_meta WHERE key = 'schema_version'").fetchone()
-    if row is not None and row[0] == SCHEMA_VERSION:
-        return
-    conn.execute("DELETE FROM docs")
-    conn.execute("DELETE FROM fts")
-    conn.execute("DELETE FROM fts_mem")
+def _read_version(conn: sqlite3.Connection) -> int:
+    """Current schema version from index_meta; 0 means "fresh file".
+
+    Version lives in index_meta (a plain key/value row) rather than
+    ``PRAGMA user_version``: the pragma cannot take a bound parameter and this
+    codebase's scanner red-lines SQL assembled from values. A constant-string
+    PRAGMA read stays as a fallback for foreign databases carrying only
+    user_version.
+    """
     try:
-        conn.execute("DELETE FROM fts_mem_tri")
-    except sqlite3.Error:
+        row = conn.execute(
+            "SELECT value FROM index_meta WHERE key = 'schema_version'"
+        ).fetchone()
+        if row is not None and str(row[0]).strip():
+            return int(str(row[0]).strip())
+    except (sqlite3.Error, ValueError):
         pass
     try:
-        conn.execute("DELETE FROM fts_mem_bigram")
-    except sqlite3.Error:
-        pass
-    conn.execute("DELETE FROM memories")
-    conn.execute("DELETE FROM embeddings")
-    conn.execute("DELETE FROM access_log")
-    conn.execute("DELETE FROM graph_nodes")
-    conn.execute("DELETE FROM graph_edges")
+        return int(conn.execute("PRAGMA user_version").fetchone()[0])
+    except (sqlite3.Error, ValueError):
+        return 0
+
+
+def _write_version(conn: sqlite3.Connection, version: int) -> None:
     conn.execute(
         "INSERT OR REPLACE INTO index_meta (key, value) VALUES ('schema_version', ?)",
-        (SCHEMA_VERSION,),
+        (str(version),),
     )
+
+
+def _backup_db_file(db_path: Path, old_version: int) -> Path:
+    """Snapshot the database file before migrating (best effort, never fatal).
+
+    WAL is checkpointed first so the main file is self-consistent when copied.
+    A failed backup does not block the migration: the transactional rollback
+    is the real safety net, this file is the second one.
+    """
+    backup = db_path.with_name(f"{db_path.stem}.v{old_version}.bak")
+    try:
+        probe = sqlite3.connect(str(db_path))
+        try:
+            probe.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        finally:
+            probe.close()
+        shutil.copy2(db_path, backup)
+    except OSError:
+        pass
+    return backup
+
+
+def _migrate_to_v4(conn: sqlite3.Connection) -> None:
+    """v1-v3 -> v4: nothing to transform.
+
+    _ensure_schema has already created any missing object idempotently, and
+    the per-line FTS mirrors are refilled from `memories` by the count-drift
+    backfills in index.update_index. Historical upgrades therefore keep every
+    learning row; only derived tables are rebuilt.
+    """
+
+
+MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
+    4: _migrate_to_v4,
+}
+
+
+def _migrate_schema(conn: sqlite3.Connection, db_path: Path) -> None:
+    """Bring an older database up to SCHEMA_VERSION without losing learning data.
+
+    The previous implementation answered "version mismatch" with
+    ``DELETE FROM memories/embeddings/access_log/...``, which wiped every
+    upgrade: reinforcement counts, paid-for vectors and read history all went
+    to zero. Migrations only ever ADD objects or backfill derived tables; the
+    memories/embeddings/access_log rows are untouchable. Everything runs in
+    one transaction, so a step that raises rolls the database back to its
+    pre-migration state; a file-level ``.v<old>.bak`` copy is kept as well.
+
+    A downgrade (newer file, older code) is left completely alone: touching it
+    could only destroy data the newer schema owns.
+    """
+    old = _read_version(conn)
+    if old >= _TARGET:
+        return
+    if old > 0:
+        _backup_db_file(db_path, old)
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        for version in range(old + 1, _TARGET + 1):
+            step = MIGRATIONS.get(version)
+            if step is not None:
+                step(conn)
+        _write_version(conn, _TARGET)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def get_conn(vault: Path) -> sqlite3.Connection:
@@ -176,5 +250,5 @@ def get_conn(vault: Path) -> sqlite3.Connection:
     except sqlite3.Error:
         pass
     _ensure_schema(conn)
-    _migrate_schema(conn)
+    _migrate_schema(conn, db_path)
     return conn
