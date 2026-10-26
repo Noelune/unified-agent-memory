@@ -17,7 +17,7 @@ from unified_memory import schema
 
 def _fill_learning_data(conn: sqlite3.Connection) -> None:
     memory_rows = [
-        (str(n), "note.md", "fact line", n) for n in range(100)
+        (str(n), "note.md", "fact line " + str(n), n) for n in range(100)
     ]
     conn.executemany(
         "INSERT OR REPLACE INTO memories "
@@ -91,7 +91,7 @@ class SchemaMigrationTests(unittest.TestCase):
             self.assertEqual(counts["memories"], 100)
             self.assertEqual(counts["embeddings"], 50)
             self.assertEqual(counts["access_log"], 200)
-            self.assertEqual(schema._read_version(conn), 4)
+            self.assertEqual(schema._read_version(conn), 5)
         finally:
             conn.close()
         self.assertTrue(db.with_name(db.stem + ".v3.bak").exists())
@@ -135,14 +135,14 @@ class SchemaMigrationTests(unittest.TestCase):
             self.assertEqual(
                 conn.execute("SELECT COUNT(*) AS c FROM memories").fetchone()["c"], 100
             )
-            self.assertEqual(schema._read_version(conn), 4)
+            self.assertEqual(schema._read_version(conn), 5)
         finally:
             conn.close()
 
     def test_fresh_database_is_marked_current(self) -> None:
         conn = schema.get_conn(self.vault)
         try:
-            self.assertEqual(schema._read_version(conn), 4)
+            self.assertEqual(schema._read_version(conn), 5)
         finally:
             conn.close()
 

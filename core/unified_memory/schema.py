@@ -14,7 +14,7 @@ import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
-SCHEMA_VERSION = "4"
+SCHEMA_VERSION = "5"
 _TARGET = int(SCHEMA_VERSION)
 
 
@@ -91,11 +91,13 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             id TEXT PRIMARY KEY,
             doc TEXT NOT NULL,
             line TEXT NOT NULL,
+            text_hash TEXT NOT NULL DEFAULT '',
             type TEXT NOT NULL DEFAULT 'fact',
             importance REAL NOT NULL DEFAULT 0.5,
             status TEXT NOT NULL DEFAULT 'active',
             version INTEGER NOT NULL DEFAULT 1,
             superseded_by TEXT,
+            legacy_id TEXT,
             source_agent TEXT NOT NULL DEFAULT '',
             project TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL DEFAULT '',
@@ -129,6 +131,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_doc ON memories(doc)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_agent ON memories(source_agent)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_status_updated ON memories(status, updated_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_text_hash ON memories(text_hash)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_access_mem ON access_log(memory_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_edge_dst ON graph_edges(dst)")
 
@@ -193,8 +196,74 @@ def _migrate_to_v4(conn: sqlite3.Connection) -> None:
     """
 
 
+def _migrate_to_v5(conn: sqlite3.Connection) -> None:
+    """v4 -> v5: occurrence identity.
+
+    The old primary key was sha256(line text), so the same sentence promoted
+    into two notes collapsed into one row that kept only the last writer's
+    doc — provenance silently lost, and deleting that one note made the fact
+    (still present in the other note) unsearchable. ids become
+    sha256(doc + "\\x1f" + line); the old value is preserved in legacy_id and
+    every table keyed by memory_id is remapped in the same transaction.
+    """
+    columns = {
+        row["name"] for row in conn.execute("PRAGMA table_info(memories)").fetchall()
+    }
+    if "text_hash" not in columns:
+        conn.execute("ALTER TABLE memories ADD COLUMN text_hash TEXT NOT NULL DEFAULT ''")
+    if "legacy_id" not in columns:
+        conn.execute("ALTER TABLE memories ADD COLUMN legacy_id TEXT")
+
+    # Collapse legacy (doc, line) duplicates before remapping, or two rows
+    # would race for the same new primary key and abort the upgrade. The
+    # most-used occurrence wins; the rest are duplicates by definition.
+    kept: dict[tuple[str, str], str] = {}
+    rows = conn.execute(
+        "SELECT rowid AS rid, id, doc, line, access_count FROM memories "
+        "ORDER BY access_count DESC, rowid ASC"
+    ).fetchall()
+    for row in rows:
+        key = (row["doc"], row["line"])
+        if key in kept:
+            conn.execute("DELETE FROM memories WHERE rowid = ?", (row["rid"],))
+            continue
+        kept[key] = row["id"]
+
+    remap: dict[str, str] = {}
+    for (doc, line), old_id in kept.items():
+        new_id = hashlib.sha256((doc + "\x1f" + line).encode("utf-8")).hexdigest()
+        text_hash = hashlib.sha256(line.encode("utf-8")).hexdigest()
+        conn.execute(
+            "UPDATE memories SET id = ?, text_hash = ?, legacy_id = ? WHERE id = ?",
+            (new_id, text_hash, old_id, old_id),
+        )
+        remap[old_id] = new_id
+    # Remap the two memory_id-keyed tables. Two literal statements rather than
+    # a loop over table names: dynamic SQL is red-lined, and the tables have
+    # different row shapes anyway.
+    for row in conn.execute(
+        "SELECT rowid AS rid, memory_id AS mid FROM access_log"
+    ).fetchall():
+        new_id = remap.get(row["mid"])
+        if new_id is not None and new_id != row["mid"]:
+            conn.execute(
+                "UPDATE access_log SET memory_id = ? WHERE rowid = ?",
+                (new_id, row["rid"]),
+            )
+    for row in conn.execute(
+        "SELECT rowid AS rid, memory_id AS mid FROM embeddings"
+    ).fetchall():
+        new_id = remap.get(row["mid"])
+        if new_id is not None and new_id != row["mid"]:
+            conn.execute(
+                "UPDATE embeddings SET memory_id = ? WHERE rowid = ?",
+                (new_id, row["rid"]),
+            )
+
+
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     4: _migrate_to_v4,
+    5: _migrate_to_v5,
 }
 
 

@@ -346,25 +346,34 @@ def update_memories(conn: sqlite3.Connection, vault: Path, sweep_orphans: bool =
         conn.execute("INSERT INTO fts (path, title, content) VALUES (?, ?, ?)", (rel, title, text))
 
         old_rows = conn.execute(
-            "SELECT id, access_count, created_at, updated_at, version "
+            "SELECT id, line, access_count, created_at, updated_at, version "
             "FROM memories WHERE doc = ?",
             (rel,),
         ).fetchall()
         old_ids = {r["id"] for r in old_rows}
+        # Reinforcement state is matched per (doc, line), not by id: the id
+        # became doc-scoped (occurrence identity, batch A), so an unchanged
+        # line keeps its stats through the one-time id remap and later edits.
         old_stats = {
-            r["id"]: (r["access_count"], r["created_at"], r["updated_at"], r["version"])
+            r["line"]: (r["access_count"], r["created_at"], r["updated_at"], r["version"])
             for r in old_rows
         }
 
         records: list[tuple] = []
         for status, bare, raw_line in _doc_lines(text):
-            mid = hashlib.sha256(bare.encode("utf-8")).hexdigest()
+            # Occurrence identity (batch A): the id scopes a fact to ITS note,
+            # so the same sentence promoted into two notes stays two rows with
+            # two provenances instead of one row that silently keeps only the
+            # last writer. text_hash remains the cross-doc duplicate signal.
+            occ_id = hashlib.sha256((rel + "\x1f" + bare).encode("utf-8")).hexdigest()
+            text_hash = hashlib.sha256(bare.encode("utf-8")).hexdigest()
             created, agent = parse_write_stamp(raw_line)
             mem_type = classify_type(bare)
-            prior = old_stats.get(mid)
+            prior = old_stats.get(bare)
             records.append(
                 (
-                    mid,
+                    occ_id,
+                    text_hash,
                     rel,
                     bare,
                     mem_type,
@@ -401,23 +410,26 @@ def update_memories(conn: sqlite3.Connection, vault: Path, sweep_orphans: bool =
             if mid in seen:
                 continue  # the same fact twice in one note is one memory
             seen.add(mid)
+            # Tuple layout: (occ_id, text_hash, rel, bare, type, salience,
+            # status, agent, created, updated, access, version).
             conn.execute(
                 """INSERT OR REPLACE INTO memories
-                   (id, doc, line, type, importance, status, version,
+                   (id, doc, line, text_hash, type, importance, status, version,
                     superseded_by, source_agent, project, created_at, updated_at,
                     access_count, metadata_json)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, '', ?, ?, ?, '{}')""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, '', ?, ?, ?, '{}')""",
                 (
-                    record[0], record[1], record[2], record[3], record[4],
-                    record[5], record[10], record[6], record[7], record[8], record[9],
+                    record[0], record[2], record[3], record[1], record[4],
+                    record[5], record[6], record[11], record[7], record[8],
+                    record[9], record[10],
                 ),
             )
             conn.execute(
                 "INSERT OR REPLACE INTO fts_mem (memory_id, line) VALUES (?, ?)",
-                (mid, record[2]),
+                (mid, record[3]),
             )
-            _fts_mem_tri_upsert(conn, mid, record[2])
-            _fts_mem_bigram_upsert(conn, mid, record[2])
+            _fts_mem_tri_upsert(conn, mid, record[3])
+            _fts_mem_bigram_upsert(conn, mid, record[3])
         changed += 1
     # Remove stale docs (deleted from the vault).
     stale = [
