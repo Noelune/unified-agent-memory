@@ -18,7 +18,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-sys.path.insert(0, r"C:\Users\zhaowei\review_repos\unified-agent-memory\core")
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "core"))
 
 from unified_memory import schema  # noqa: E402
 
