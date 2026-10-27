@@ -197,3 +197,82 @@ def is_versioned(line: str) -> bool:
 def write_stamp(src_name: str, when: str | None = None) -> str:
     day = when or time.strftime("%Y-%m-%d")
     return f"（写入 {day}｜来源：Agent提交区/{src_name}）"
+
+
+# --------------------------------------------------------------------------
+# CJK-aware tokenisation + canonical-note line parsing (moved verbatim from
+# index.py, B2 — pure text processing, no storage). The store's lexical index
+# and the migrations both need these, and infra may import domain freely.
+# --------------------------------------------------------------------------
+
+_CJK_RUN_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]+")
+_WORD_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.\-]*")
+
+
+def cjk_tokens(text: str) -> list[str]:
+    """Overlapping-bigram tokens for Chinese + lowercased ASCII words.
+
+    unicode61 treats a contiguous Chinese run as a single token, so a query
+    like 记忆 can never match a line containing 记忆系统. Bigrams restore
+    ordinary substring recall without a third-party segmenter.
+    """
+    tokens: list[str] = []
+    for run in _CJK_RUN_RE.findall(text or ""):
+        if len(run) == 1:
+            tokens.append(run)
+        else:
+            tokens.extend(run[i : i + 2] for i in range(len(run) - 1))
+    for word in _WORD_RE.findall(text or ""):
+        word = word.lower()
+        if len(word) >= 2:
+            tokens.append(word)
+    # Stable dedupe: repeated tokens add nothing to a BM25 query.
+    seen: set[str] = set()
+    return [t for t in tokens if not (t in seen or seen.add(t))]
+
+
+SUPERSEDED_HEADING_RE = re.compile(r"已取代|已失效|已废弃|superseded|obsolete", re.I)
+
+
+def parse_write_stamp(line: str) -> tuple[str | None, str]:
+    """Return (created_date, source_agent) parsed from a promoted line's stamp.
+
+    Delegates to parse_stamp so both the repo/dsh dialect and the Hermes
+    ``[[Agent提交区/...]]`` / ``事件`` dialect resolve. Returning "" for every
+    Hermes-written line used to make the whole live vault look undated and
+    unattributed.
+    """
+    created, source, _valid_until = parse_stamp(line)
+    return created, source_agent(source)
+
+
+def doc_lines(text: str) -> list[tuple[str, str, str]]:
+    """Parse a canonical note into (status, bare_line, raw_line) tuples.
+
+    A line under a heading that mentions 已取代/已失效/已废弃 (or superseded)
+    is marked ``superseded``; everything else is ``active``. Non-fact lines
+    (headings, prose, tables) are ignored.
+    """
+    out: list[tuple[str, str, str]] = []
+    heading = ""
+    for raw in text.splitlines():
+        stripped = raw.strip()
+        if stripped.startswith("#"):
+            heading = stripped
+            continue
+        if not stripped.startswith(("- ", "• ", "* ")):
+            continue
+        bare = bare_fact_line(stripped)
+        if not bare:
+            continue
+        # Bi-temporal versioning: a line carrying ｜有效至 is a historical
+        # version even when it is not physically under a 已取代 heading. That
+        # is how the Hermes promoter records supersession, so it must not stay
+        # searchable as current truth.
+        status = (
+            "superseded"
+            if SUPERSEDED_HEADING_RE.search(heading) or is_versioned(stripped)
+            else "active"
+        )
+        out.append((status, bare, stripped))
+    return out

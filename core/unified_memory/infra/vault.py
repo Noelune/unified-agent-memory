@@ -22,6 +22,7 @@ from ..domain.policy import (
     SUBMISSION_DIR,
     UNCLASSIFIED_FACT_REL,
     VAULT_ENV,
+    is_conflict_copy,
 )
 
 
@@ -189,3 +190,31 @@ def atomic_create(path: Path, text: str) -> bool:
 
 def read_maybe(path: Path) -> str:
     return path.read_text(encoding="utf-8") if path.exists() else ""
+
+
+def indexed_files(vault: Path) -> list[Path]:
+    """Canonical .md files that actually hold facts (moved verbatim from
+    index.py, B2 — this is vault layout, not storage).
+
+    Top-level notes, plus the one situation note the promoter writes facts
+    into. `情境信息/未归类事实.md` used to be excluded by a top-level-only
+    glob, so every fact the classifier could not place was written, stamped
+    and locked — and then permanently invisible to search. The rest of
+    情境信息/ is workflow state (待晋升 / 冲突 / 已裁决) and 已处理/ is the
+    inbox archive; indexing those would surface duplicates and stale rows.
+
+    Sync-client conflict copies (``note 2.md``, ``note-副本.md`` …) are skipped:
+    they are an unresolved duplicate of a note, not another source of truth.
+    """
+    ctx = canonical_dir(vault)
+    if not ctx.is_dir():
+        return []
+    files = [
+        p
+        for p in sorted(ctx.glob("*.md"))
+        if p.is_file() and not is_conflict_copy(p.name)
+    ]
+    unclassified = ctx / UNCLASSIFIED_FACT_REL
+    if unclassified.is_file() and not is_conflict_copy(unclassified.name):
+        files.append(unclassified)
+    return files

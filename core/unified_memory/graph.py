@@ -26,7 +26,7 @@ import math
 import re
 from pathlib import Path
 
-from . import index
+from .infra.store import active_memories
 
 MIN_CONCEPT_FREQ = 2
 MAX_CANDIDATES = 60
@@ -55,11 +55,8 @@ def _tokens(text: str) -> set[str]:
     return toks
 
 
-def _active_lines(conn) -> list[dict]:
-    rows = conn.execute(
-        "SELECT id, doc, line, type, importance, source_agent FROM memories WHERE status = 'active'"
-    ).fetchall()
-    return [dict(r) for r in rows]
+def _active_lines(vault: Path) -> list[dict]:
+    return active_memories(vault)
 
 
 def expand_search(vault: Path, query: str, limit: int = 20) -> list[dict]:
@@ -73,11 +70,7 @@ def expand_search(vault: Path, query: str, limit: int = 20) -> list[dict]:
     query_toks = _tokens(query)
     if not query_toks:
         return []
-    conn = index.get_conn(vault)
-    try:
-        memories = _active_lines(conn)
-    finally:
-        conn.close()
+    memories = _active_lines(vault)
 
     postings: dict[str, list[str]] = {}
     token_by_id: dict[str, set[str]] = {}
@@ -126,11 +119,7 @@ def expand_search(vault: Path, query: str, limit: int = 20) -> list[dict]:
 
 def graph_stats(vault: Path) -> dict:
     """Concept/pair counts, computed in memory (no persisted graph any more)."""
-    conn = index.get_conn(vault)
-    try:
-        memories = _active_lines(conn)
-    finally:
-        conn.close()
+    memories = _active_lines(vault)
     counts: dict[str, int] = {}
     line_tokens: list[set[str]] = []
     for mem in memories:

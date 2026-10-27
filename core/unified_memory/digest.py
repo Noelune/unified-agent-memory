@@ -42,9 +42,10 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from . import embed, index
+from . import embed
 from .domain.markdown import looks_like_credential, redact
 from .infra.config import parse_config, resolve_vault
+from .infra.store import get_meta, record_audit, set_meta
 from .infra.vault import atomic_create, canonical_dir
 
 SESSION_DIRS = ("会话归档", "Hermes会话自动归档")
@@ -174,16 +175,15 @@ def _write_digest_facts(vault: Path, facts: list[str]) -> int:
     for seq in range(1, 100):
         candidate = inbox / f"digest-{stamp}-{seq:02d}.md"
         if atomic_create(candidate, body):
-            index.record_audit(
+            record_audit(
                 vault, "digest", "digest", candidate.name, str(len(facts))
             )
             return len(facts)
     return 0
 
 
-def _cursor(conn, key: str = CURSOR_KEY) -> str:
-    row = conn.execute("SELECT value FROM index_meta WHERE key = ?", (key,)).fetchone()
-    return row["value"] if row else ""
+def _cursor(vault: Path, key: str = CURSOR_KEY) -> str:
+    return get_meta(vault, key)
 
 
 def _units(vault: Path, source: str, cursor: str) -> list[tuple[str, str, str]]:
@@ -214,11 +214,7 @@ def digest(vault: Path, dry_run: bool = False, limit: int = 0, source: str = "ar
         raise ValueError(f"source must be one of {SOURCES}, got {source!r}")
     cursor_key = STATE_CURSOR_KEY if source == "state" else CURSOR_KEY
     avail_files = len(_archive_files(vault))
-    conn = index.get_conn(vault)
-    try:
-        cursor = _cursor(conn, cursor_key)
-    finally:
-        conn.close()
+    cursor = _cursor(vault, cursor_key)
     if source == "state":
         from . import sessiondb
 
@@ -269,15 +265,7 @@ def digest(vault: Path, dry_run: bool = False, limit: int = 0, source: str = "ar
         # Advance the cursor only on a real run (and only after a successful
         # extraction) so a dry-run never consumes a session.
         if not dry_run:
-            conn = index.get_conn(vault)
-            try:
-                conn.execute(
-                    "INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)",
-                    (cursor_key, date),
-                )
-                conn.commit()
-            finally:
-                conn.close()
+            set_meta(vault, cursor_key, date)
     return report
 
 

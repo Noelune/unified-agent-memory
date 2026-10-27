@@ -30,7 +30,15 @@ import urllib.request
 from pathlib import Path
 
 from . import index
+from .domain.markdown import cjk_tokens
 from .infra.config import parse_config, resolve_vault
+from .infra.store import (
+    pending_vector_rows,
+    query_cache_get,
+    query_cache_put,
+    save_vectors,
+    vector_search_rows,
+)
 
 EMBED_URL = "https://api.siliconflow.cn/v1/embeddings"
 EMBED_MODEL = "Qwen/Qwen3-Embedding-4B"
@@ -211,14 +219,7 @@ def embed_missing(vault: Path, limit: int = 400, update: bool = True) -> dict:
         return {"ok": False, "embedded": 0, "total": 0, "reason": "no SiliconFlow API key (set SILICONFLOW_API_KEY or ~/.unified-memory/secrets.yaml)"}
     if update:
         index.update_index(vault)  # self-healing: memories must exist before we embed
-    conn = index.get_conn(vault)
-    try:
-        rows = conn.execute(
-            "SELECT id, line FROM memories WHERE id NOT IN (SELECT memory_id FROM embeddings) LIMIT ?",
-            (limit,),
-        ).fetchall()
-    finally:
-        conn.close()
+    rows = pending_vector_rows(vault, limit)
     if not rows:
         return {"ok": True, "embedded": 0, "total": 0, "reason": "all memory lines already embedded"}
     vectors: list[list[float]] = []
@@ -228,18 +229,7 @@ def embed_missing(vault: Path, limit: int = 400, update: bool = True) -> dict:
         if result is None:
             return {"ok": False, "embedded": start, "total": len(rows), "reason": "embedding provider failed mid-batch"}
         vectors.extend(result)
-    conn = index.get_conn(vault)
-    try:
-        now = time.strftime("%Y-%m-%dT%H:%M:%S")
-        for row, vec in zip(rows, vectors):
-            conn.execute(
-                "INSERT OR REPLACE INTO embeddings (memory_id, dim, vector) VALUES (?, ?, ?)",
-                (row["id"], EMBED_DIMS, vector_to_blob(vec)),
-            )
-            conn.execute("UPDATE memories SET updated_at = ? WHERE id = ?", (now, row["id"]))
-        conn.commit()
-    finally:
-        conn.close()
+    save_vectors(vault, [(row["id"], vector_to_blob(vec)) for row, vec in zip(rows, vectors)])
     return {"ok": True, "embedded": len(rows), "total": len(rows), "reason": ""}
 
 
@@ -257,8 +247,6 @@ def _cache_key(text: str) -> str:
     the harmless direction. The model id is part of the key so switching
     embedding models can never compare vectors across spaces.
     """
-    from .index import cjk_tokens
-
     tokens = cjk_tokens(text or "")
     ascii_words = sorted({t for t in tokens if t[0].isascii()})
     # Character bag from the RAW CJK runs, not from the bigram tokens: the
@@ -281,20 +269,15 @@ def embed_query_cached(vault: Path, text: str) -> list[float] | None:
     """
     key = _cache_key(text)
     try:
-        conn = index.get_conn(vault)
-        try:
-            row = conn.execute(
-                "SELECT vector, at FROM query_cache WHERE query_hash = ?", (key,)
-            ).fetchone()
-        finally:
-            conn.close()
-        if row is not None:
+        cached = query_cache_get(vault, key)
+        if cached is not None:
+            blob, at = cached
             try:
-                age_days = (time.time() - time.mktime(time.strptime(str(row["at"])[:10], "%Y-%m-%d"))) / 86400
+                age_days = (time.time() - time.mktime(time.strptime(at[:10], "%Y-%m-%d"))) / 86400
             except (ValueError, OverflowError):
                 age_days = QUERY_CACHE_TTL_DAYS + 1
             if age_days <= QUERY_CACHE_TTL_DAYS:
-                return blob_to_vector(row["vector"])
+                return blob_to_vector(blob)
     except Exception:  # noqa: BLE001 — cache is optional
         pass
 
@@ -302,15 +285,7 @@ def embed_query_cached(vault: Path, text: str) -> list[float] | None:
     if vector is None:
         return None
     try:
-        conn = index.get_conn(vault)
-        try:
-            conn.execute(
-                "INSERT OR REPLACE INTO query_cache (query_hash, vector, at, model_id) VALUES (?, ?, ?, ?)",
-                (key, vector_to_blob(vector), time.strftime("%Y-%m-%dT%H:%M:%S"), EMBED_MODEL),
-            )
-            conn.commit()
-        finally:
-            conn.close()
+        query_cache_put(vault, key, vector_to_blob(vector), EMBED_MODEL)
     except Exception:  # noqa: BLE001 — never fail a search on a cache write
         pass
     return vector
@@ -321,15 +296,7 @@ def vector_search(vault: Path, query_vec: list[float], limit: int = 8) -> list[d
 
     Returns the top-``limit`` active memories with a ``score`` in 0..1.
     """
-    conn = index.get_conn(vault)
-    try:
-        rows = conn.execute(
-            "SELECT m.id, m.doc, m.line, m.type, m.importance, e.vector "
-            "FROM memories m JOIN embeddings e ON e.memory_id = m.id "
-            "WHERE m.status = 'active'"
-        ).fetchall()
-    finally:
-        conn.close()
+    rows = vector_search_rows(vault)
     scored: list[dict] = []
     for row in rows:
         vec = blob_to_vector(row["vector"])

@@ -17,7 +17,6 @@ data. Both entry points are safe to call from a scheduler.
 """
 from __future__ import annotations
 
-import sqlite3
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -29,6 +28,14 @@ from .domain.policy import (
     NON_SUBMISSION_FILES,
     SITUATION_DIR,
     is_conflict_copy,
+)
+from .infra.store import (
+    get_meta,
+    index_counts,
+    orphan_index_report,
+    prune_access_log,
+    prune_query_cache,
+    vacuum_index,
 )
 from .infra.vault import canonical_dir, ensure_vault
 from .conflict import read_conflicts
@@ -49,42 +56,9 @@ def _issue(severity: str, code: str, message: str, hint: str = "") -> dict:
     return {"severity": severity, "code": code, "message": message, "hint": hint}
 
 
-def _orphan_indexes(vault: Path) -> list[dict]:
-    """Index DBs under ~/.unified-memory whose source vault no longer exists.
-
-    A DB is orphaned when it has no docs rows, or when none of the vault paths
-    it indexed still exist. The current vault's DB is always excluded, so a
-    healthy install reports zero.
-    """
-    current = index_mod.index_db_for(vault).resolve()
-    root = current.parent
-    found: list[dict] = []
-    for db in sorted(root.glob("index-*.db")):
-        try:
-            if db.resolve() == current:
-                continue
-        except OSError:
-            continue
-        try:
-            conn = sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True)
-            try:
-                rows = conn.execute("SELECT path FROM docs").fetchall()
-            finally:
-                conn.close()
-        except sqlite3.Error:
-            continue
-        if not rows:
-            orphaned = True
-        else:
-            orphaned = not any(Path(str(row[0])).exists() for row in rows)
-        if not orphaned:
-            continue
-        try:
-            size = db.stat().st_size
-        except OSError:
-            size = 0
-        found.append({"path": str(db), "bytes": size, "ageDays": round(_days_ago(db.stat().st_mtime), 1)})
-    return found
+# _orphan_indexes lives in infra.store.maintain now (it opens OTHER databases
+# read-only, which only the store is allowed to do).
+_orphan_indexes = orphan_index_report
 
 
 def doctor(vault: Path) -> dict:
@@ -107,23 +81,13 @@ def doctor(vault: Path) -> dict:
 
     db_path = index_mod.index_db_for(vault)
     index_mod.update_index(vault)
-    conn = index_mod.get_conn(vault)
-    try:
-        report["index"] = {
-            "path": str(db_path),
-            "bytes": db_path.stat().st_size if db_path.exists() else 0,
-            "journalMode": conn.execute("PRAGMA journal_mode").fetchone()[0],
-            "docs": conn.execute("SELECT COUNT(*) FROM docs").fetchone()[0],
-            "memories": conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0],
-            "active": conn.execute("SELECT COUNT(*) FROM memories WHERE status = 'active'").fetchone()[0],
-            "superseded": conn.execute("SELECT COUNT(*) FROM memories WHERE status = 'superseded'").fetchone()[0],
-            "vectors": conn.execute("SELECT COUNT(*) FROM embeddings").fetchone()[0],
-            "accesses": conn.execute("SELECT COUNT(*) FROM access_log").fetchone()[0],
-        }
-        cursor_row = conn.execute("SELECT value FROM index_meta WHERE key = 'digest_cursor'").fetchone()
-        report["digest"] = {"cursor": cursor_row[0] if cursor_row else ""}
-    finally:
-        conn.close()
+    counts = index_counts(vault)
+    report["index"] = {
+        "path": str(db_path),
+        "bytes": db_path.stat().st_size if db_path.exists() else 0,
+        **counts,
+    }
+    report["digest"] = {"cursor": get_meta(vault, "digest_cursor")}
 
     inbox_files = (
         sorted((ctx / "Agent提交区").glob("*.md"))
@@ -346,32 +310,11 @@ def gc(
                 except OSError:
                     pass
 
-    conn = index_mod.get_conn(vault)
-    try:
-        cutoff_text = (datetime.now() - timedelta(days=ACCESS_RETENTION_DAYS)).strftime("%Y-%m-%d")
-        report["accessPruned"] = conn.execute(
-            "SELECT COUNT(*) FROM access_log WHERE at < ?", (cutoff_text,)
-        ).fetchone()[0]
-        query_cutoff = (datetime.now() - timedelta(days=QUERY_CACHE_RETENTION_DAYS)).strftime("%Y-%m-%d")
-        report["queryCachePruned"] = conn.execute(
-            "SELECT COUNT(*) FROM query_cache WHERE at < ?", (query_cutoff,)
-        ).fetchone()[0]
-        if apply:
-            conn.execute("DELETE FROM access_log WHERE at < ?", (cutoff_text,))
-            conn.execute("DELETE FROM query_cache WHERE at < ?", (query_cutoff,))
-            conn.commit()
-    finally:
-        conn.close()
+    report["accessPruned"] = prune_access_log(vault, ACCESS_RETENTION_DAYS, apply)
+    report["queryCachePruned"] = prune_query_cache(vault, QUERY_CACHE_RETENTION_DAYS, apply)
 
     if apply and vacuum:
-        conn = index_mod.get_conn(vault)
-        try:
-            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            conn.commit()
-            conn.execute("VACUUM")
-            report["vacuumed"] = True
-        finally:
-            conn.close()
+        report["vacuumed"] = vacuum_index(vault)
         try:
             report["indexBytes"] = db_path.stat().st_size
         except OSError:

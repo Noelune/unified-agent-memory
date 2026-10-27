@@ -308,7 +308,11 @@ class BuildTest(_ScratchIndexTest):
 
         raw = sqlite3.connect(str(index_mod.index_db_for(self.vault)))
         raw.row_factory = sqlite3.Row
-        with unittest.mock.patch.object(index_mod, "get_conn", return_value=raw):
+        # B2: _scalar's statements live in infra.store.claims, so the injection
+        # point ("a connection that skipped the schema step") moved with them.
+        from unified_memory.infra.store import claims as store_claims
+
+        with unittest.mock.patch.object(store_claims, "get_conn", return_value=raw):
             # Sanity: this connection really has no embeddings table, so the
             # assertion below cannot pass for the wrong reason.
             with self.assertRaises(sqlite3.OperationalError):

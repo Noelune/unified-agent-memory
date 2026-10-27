@@ -44,6 +44,7 @@ from .infra.config import (
     parse_config,
     resolve_vault,
 )
+from .infra.store import record_used_events, vector_count
 from .infra.vault import (
     atomic_create,
     atomic_write,
@@ -1008,8 +1009,7 @@ def cmd_status(args: argparse.Namespace) -> None:
             print(f"index: {index_db_for(vault)} (re-indexed {changed} file(s), fts5={'yes' if fts_ok else 'no'})")
         try:
             memories = index_mod.memory_count(vault)
-            with index_mod.get_conn(vault) as conn:
-                embedded = conn.execute("SELECT COUNT(*) FROM embeddings").fetchone()[0]
+            embedded = vector_count(vault)
             data["memories"] = {"count": memories, "vectors": embedded, "embedConfigured": embed_mod.configured()}
             if not getattr(args, "json", False):
                 print(f"memories: {memories} (vectors: {embedded}, embed configured: {'yes' if embed_mod.configured() else 'no'})")

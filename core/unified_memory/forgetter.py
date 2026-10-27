@@ -40,6 +40,7 @@ from .domain.policy import CANONICAL_DOCS
 from .infra.config import resolve_vault
 from .infra.lock import file_lock
 from .infra.schedule import core_source_dir, mark_schedule_run
+from .infra.store import forget_stats
 from .infra.vault import (
     atomic_write,
     canonical_dir,
@@ -110,38 +111,10 @@ def memory_score(importance: float, used_count: int, age_days: float) -> float:
 def _index_stats(vault: Path, doc: str, bare: str) -> tuple[float, int, str] | None:
     """Return (importance, used_count, last_access_at) for a memory line.
 
-    ``access_count`` counts every retrieval, and retrieval is NOT usage: the
-    batch-A audit found 752 access rows rewarding facts merely for coming
-    back, pinning stale ones forever. Reinforcement now reads the ``used``
-    events only — facts the model actually cited in a later turn.
-    ``updated_at`` is unusable as a "last used" signal: indexing and embedding
-    also touch it. The access_log timestamp is the actual read receipt.
+    Thin adapter over infra.store.claims.forget_stats, which holds the SQL
+    (B2). Kept because forgetter.demote reads like scoring logic, not storage.
     """
-    try:
-        conn = index.get_conn(vault)
-        try:
-            row = conn.execute(
-                "SELECT m.importance, "
-                "(SELECT COUNT(*) FROM access_log a WHERE a.memory_id = m.id AND a.event = 'used') AS used, "
-                "(SELECT MAX(a.at) FROM access_log a WHERE a.memory_id = m.id) AS last_access "
-                "FROM memories m WHERE m.doc = ? AND m.line = ? LIMIT 1",
-                (doc, bare),
-            ).fetchone()
-            if row is None:
-                row = conn.execute(
-                    "SELECT m.importance, "
-                    "(SELECT COUNT(*) FROM access_log a WHERE a.memory_id = m.id AND a.event = 'used') AS used, "
-                    "(SELECT MAX(a.at) FROM access_log a WHERE a.memory_id = m.id) AS last_access "
-                    "FROM memories m WHERE m.line = ? LIMIT 1",
-                    (bare,),
-                ).fetchone()
-            if row is None:
-                return None
-            return float(row["importance"]), int(row["used"]), str(row["last_access"] or "")
-        finally:
-            conn.close()
-    except Exception:  # noqa: BLE001 — never let the index break forgetting
-        return None
+    return forget_stats(vault, doc, bare)
 
 
 def _days_since(value: str, now: float) -> float | None:

@@ -28,6 +28,7 @@ from pathlib import Path
 
 from . import embed, index
 from .domain.markdown import encode_untrusted, redact
+from .infra.store import records_for_ids
 
 RRF_K = 60
 DEFAULT_WEIGHTS = (1.0, 1.0, 0.9)  # lexical, vector, graph
@@ -185,17 +186,7 @@ def _doc_map(*streams: list[dict]) -> dict[str, str]:
 def _records_for(vault: Path, ids: list[str]) -> list[dict]:
     if not ids:
         return []
-    conn = index.get_conn(vault)
-    try:
-        placeholders = ",".join("?" * len(ids))
-        rows = conn.execute(
-            f"SELECT id, doc, line, type, importance, source_agent FROM memories "
-            f"WHERE id IN ({placeholders})",
-            ids,
-        ).fetchall()
-        return [dict(r) for r in rows]
-    finally:
-        conn.close()
+    return records_for_ids(vault, ids)
 
 
 # --------------------------------------------------------------------------

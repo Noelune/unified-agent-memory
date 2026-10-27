@@ -120,9 +120,6 @@ def _matches_any(module: str, prefixes: tuple[str, ...]) -> bool:
 
 WHITELIST: dict[str, set[str]] = {
     "sqlite3": {
-        "unified_memory.schema",
-        "unified_memory.index",
-        "unified_memory.health",
         "unified_memory.sessiondb",
     },
     "writes": {
@@ -144,7 +141,6 @@ WHITELIST: dict[str, set[str]] = {
         "unified_memory.maintenance",
         "unified_memory.memory",
         "unified_memory.promoter",
-        "unified_memory.schema",
         "unified_memory.search",
     },
     # third-party imports: core is dependency-free; drift's optional PyYAML is

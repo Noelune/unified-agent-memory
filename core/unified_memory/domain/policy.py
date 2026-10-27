@@ -81,3 +81,44 @@ CONFLICT_COPY_RE = re.compile(
 def is_conflict_copy(name: str) -> bool:
     """True for a sync-client conflict copy, never for a normal dated note."""
     return bool(CONFLICT_COPY_RE.search(Path(name).name))
+
+
+# --------------------------------------------------------------------------
+# Memory types & salience (moved verbatim from index.py, B2 — pure policy).
+# Borrowed from rohitg00/agentmemory's salience ordering:
+# architecture > preference > pattern > bug > workflow > fact.
+# --------------------------------------------------------------------------
+
+MEMORY_TYPES = ("architecture", "preference", "pattern", "bug", "workflow", "fact", "other")
+
+SALIENCE: dict[str, float] = {
+    "architecture": 0.9,
+    "preference": 0.85,
+    "pattern": 0.8,
+    "bug": 0.7,
+    "workflow": 0.6,
+    "fact": 0.5,
+    "other": 0.4,
+}
+
+# Keyword → memory type (best-effort, rule-based, no LLM).
+TYPE_RULES: list[tuple[str, re.Pattern]] = [
+    ("preference", re.compile(r"prefer|like|dislike|favor|default|language|format|tone|语气|偏好|喜欢|希望|不要|审美|风格|style", re.I)),
+    ("architecture", re.compile(r"architecture|architect|微服务|服务架构|模块|组件|依赖|refactor|重构|迁移|migrate|database|db|schema|接口|api design|设计|技术决策|decid|方案", re.I)),
+    ("bug", re.compile(r"bug|fix|fixed|issue|error|错误|报错|踩坑|失败|fail|workaround|绕开|故障|异常|exception|crash|崩溃", re.I)),
+    ("workflow", re.compile(r"workflow|process|step|步骤|流程|rule|规则|必须|must|always|never|验证|verify|deploy|发布|backup|备份|checklist|清单|red line|红线", re.I)),
+    ("pattern", re.compile(r"pattern|模式|习惯|通常|typically|usually|always|惯例|convention|best practice|最佳实践|模板|template", re.I)),
+    ("fact", re.compile(r"path|路径|version|版本|install|安装|port|端口|server|服务器|host|地址|url|endpoint|account|账号|config|配置|工具|tool|环境|env|credential|凭据|location|位于", re.I)),
+]
+
+
+def classify_type(fact: str) -> str:
+    """Classify a bare fact line into a memory type by keyword rules."""
+    for name, pattern in TYPE_RULES:
+        if pattern.search(fact):
+            return name
+    return "other"
+
+
+def salience_for(mem_type: str) -> float:
+    return SALIENCE.get(mem_type, 0.5)

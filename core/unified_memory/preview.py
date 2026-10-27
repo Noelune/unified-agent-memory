@@ -27,6 +27,7 @@ from .domain.policy import (
     NON_SUBMISSION_FILES,
     SUBMISSION_DIR,
 )
+from .infra.store import forgetting_candidates
 from .infra.vault import canonical_dir
 from .conflict import (
     ADVICE_CHOICE,
@@ -164,17 +165,7 @@ def _note_name(raw: str) -> str:
 
 
 def _forgetting(vault: Path, limit: int) -> list[dict]:
-    conn = index_mod.get_conn(vault)
-    try:
-        rows = conn.execute(
-            "SELECT id, doc, line, type, importance, access_count FROM memories "
-            "WHERE status = 'active' ORDER BY access_count ASC, importance ASC LIMIT ?",
-            (limit,),
-        ).fetchall()
-    except Exception:  # noqa: BLE001
-        return []
-    finally:
-        conn.close()
+    rows = forgetting_candidates(vault, limit)
     return [
         {"id": r["id"], "doc": redact(Path(r["doc"]).name), "line": redact(r["line"]),
          "type": r["type"], "importance": r["importance"],
