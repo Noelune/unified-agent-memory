@@ -50,7 +50,10 @@
 
 ## 删除清单
 
-（随进度填充）
+- B3：三处重复的围栏拼装实现（render_hybrid / print_memory_data / cmd_show 各自的报头+标签常量），合并进 `domain/envelope.py`。
+- B4：三个 canonical 写者各自的内联 `with file_lock` 写入块（promote/demote/repair），合并进 `infra/vault.apply` 唯一执行器；`atomic_write` 的无 fsync 版本。
+- B5.1：`promoter.decide` 里的 DECISIONS 成员校验（改走状态机）。
+- B5.2（阻塞回滚）：无删除——拆分件完整保存在 `../attic/b5.2-prepared.tar.gz`，解阻塞后解包即得。
 
 ## bench 前后对比
 
@@ -88,8 +91,13 @@
 
 ## 待办发现
 
-（随进度填充）
+1. **Mimosa SSRF 规则与本项目迁移冲突**（本批次最大发现）：任何新建/改写的 .py 含 `urllib`/`urlopen`/动态 URL 即被整文件拦截，导致 embed/digest/memory 三个含出站调用的模块无法物理迁移。解除路径三选一，见"阻塞记录"节。
+2. `~/.unified-memory.yaml` 曾被某次 e2e 测试指到临时目录（`Temp\uam-e2e\vault`），2026-10-27 已改回真实 vault（索引哈希 `71a04777…` 核对确认）。建议测试框架避免测试直写用户全局配置。
+3. 用户 vault 的 git 仓库有 **427 个未提交变更**、`.githooks` 为空——做任何"以 git 为记忆事务日志"类功能前必须先清基线。
+4. `README.md` 被 canonical 索引收录（7 条事实行）——模板说明文件混进了事实库，可考虑在 indexed_files 里排除。
 
 ## 建议的下一批次方向
 
-（收尾时填充）
+1. **解除 Mimosa SSRF 阻塞后先做 B5.2–B5.5**（拆分件已在 attic，`BATCH-B-HANDOVER.md` §9 有三步顺序）。
+2. 之后进入批次 C：Claim Ledger（block ID + 双时间 + as-of）、abstain 置信下限、`PROTECTED_RE` 收敛为白名单（三项均在总方案 §7 缺陷清单）。
+3. 独立小批：若扫描器未解除，embed/digest 迁移可用"新增文件不含 urllib、由既有文件继续承担 HTTP"的折中——需先评审。
