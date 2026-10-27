@@ -884,7 +884,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
             print(
                 f"index: {idx['memories']} memories ({idx['active']} active, "
                 f"{idx['superseded']} superseded), {idx['vectors']} vectors, "
-                f"{idx['graphEdges']} graph edges, {idx['bytes'] / 1e6:.1f} MB, "
+                f"{idx['bytes'] / 1e6:.1f} MB, "
                 f"journal={idx['journalMode']}"
             )
             print(
