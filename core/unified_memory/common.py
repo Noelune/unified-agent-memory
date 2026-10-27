@@ -7,8 +7,9 @@ imports ``unified_memory.domain.*`` / ``unified_memory.infra.*`` directly.
 Importing this module still arms the console-encoding guard (infra.console
 runs it at import, exactly as common.py did).
 """
+from .domain.envelope import MEMORY_DATA_TAG  # the fence tag lives in envelope (B3)
 from .domain.markdown import (
-    CREDENTIAL_LINE_RE, EN_STAMP_RE, MEMORY_DATA_TAG, SECRET_PATTERNS, STAMP_RE,
+    CREDENTIAL_LINE_RE, EN_STAMP_RE, SECRET_PATTERNS, STAMP_RE,
     USAGE_TAG_RE, VERSIONED_RE, WRITTEN_SUFFIX_RE, bare_fact_line,
     collapse_whitespace, encode_untrusted, fact_lines, is_versioned,
     looks_like_credential, parse_stamp, redact, source_agent, strip_suffix,

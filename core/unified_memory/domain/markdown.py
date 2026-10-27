@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """Markdown fact-line and stamp handling (moved verbatim from common.py, B1).
 
-Standard library only: redaction, credential detection, the <memory-data>
-envelope encoding, promotion-stamp parsing and the bare-fact comparisons the
-dedup / conflict / forgetting paths all share.
+Standard library only: redaction, credential detection, the DATA envelope
+encoding (domain.envelope owns the fence), promotion-stamp parsing and the
+bare-fact comparisons the dedup / conflict / forgetting paths all share.
 """
 from __future__ import annotations
 
@@ -44,15 +44,10 @@ def redact(text: str) -> str:
     return out
 
 
-# The one fence this project speaks. Kept next to encode_untrusted so the
-# tag and its escaping rule cannot drift apart.
-MEMORY_DATA_TAG = "memory-data"
-
-
 def encode_untrusted(text: str) -> str:
-    """Make vault text safe to place inside a ``<memory-data>`` envelope.
+    """Make vault text safe to place inside the DATA envelope.
 
-    A fact line that itself contains ``</memory-data>`` would close the
+    A fact line that itself contains a closing fence tag would close the
     envelope early and turn everything after it into model-visible
     instructions (reproduced end to end in the batch-A audit). ``<`` and
     ``>`` are therefore escaped to their ``\\uXXXX`` forms — the same trick

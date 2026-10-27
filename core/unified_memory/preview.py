@@ -10,8 +10,9 @@ self-healing update_index call every command performs):
   recent      canonical notes by modification time
 
 Vault content is returned under ``line``/``doc``/``name`` fields and is always
-redacted. Callers must treat these as DATA. The CLI wraps them in
-<memory-data> on the text path; the JSON path marks records ``untrusted``.
+redacted. Callers must treat these as DATA. The CLI wraps them in the DATA
+envelope (domain.envelope) on the text path; the JSON path marks records
+``untrusted``.
 """
 from __future__ import annotations
 
