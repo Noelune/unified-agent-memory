@@ -14,11 +14,11 @@
 | B2 | 收口存储 infra/store | ✅ 完成 | `a369877` |
 | B3 | Evidence 读模型 + envelope 唯一围栏 | ✅ 完成 | `9d95bbd` |
 | B4 | ChangeSet + executor + journal | ✅ 完成 | `0ad04f4` |
-| B5.1 | domain/state.py 状态机 + decide/supersede 接线 | ✅ 完成 | `见 git log` |
-| B5.2 | 拆 memory.py → surface/cli.py + app 命令模块 + shim | ⬜ 未开始 | — |
-| B5.3 | legacy 实现模块逐个迁入 layers（preview/stats/inbox/digest/health/drift/sessiondb/catchup/graph/embed/search） | ⬜ 未开始 | — |
+| B5.1 | domain/state.py 状态机 + decide/supersede 接线 | ✅ 完成 | `72d7a9d` |
+| B5.2 | 拆 memory.py → surface/cli.py + app 命令模块 + shim | ⚠️ 部分受阻（见"阻塞"节） | — |
+| B5.3 | legacy 实现模块逐个迁入 layers | ⚠️ 多数可迁；embed/digest 被安全扫描器硬阻塞（见"阻塞"节） | — |
 | B5.4 | promoter/conflict/forgetter/maintenance 拆分到 ≤600 行；register_cron → infra/schedule | ⬜ 未开始 | — |
-| B5.5 | 拆 8 个 >60 行函数；ENFORCE_BUDGETS=True；白名单清空 | ⬜ 未开始 | — |
+| B5.5 | 拆 8 个 >60 行函数；ENFORCE_BUDGETS=True；白名单清空（embed/digest 两项受阻塞影响） | ⬜ 未开始 | — |
 | 收尾 | BATCH-REPORT 定稿 + push origin | ⬜ 未开始 | — |
 
 ## 验证基线（B4 后，全绿）
@@ -60,6 +60,27 @@
 
 - 本机 `python` 默认解析到 AutoClaw vendored Python（`._pth` 冻结 sys.path），验证必须用 `../verify.sh`（已封装 Python311 + UNIFIED_MEMORY_PYTHON）。
 - `python bench/verify_live_migration.py` 读取本机真实索引库的**副本**；B5 不改 schema（停在 v10），无需执行 I4。
+
+## ⛔ 阻塞记录：Mimosa SSRF 规则 vs embed/digest 迁移（B5.2/B5.3 的硬约束）
+
+**现象**：任何**新建**的 .py 文件只要包含 `urllib.request` / `urlopen(` 就被 Mimosa 以"SSRF 高危"拦截（Write 和 Edit 都拦，纯内容级扫描，与是否字面量 URL、是否带 scheme/host 校验无关）。已三次尝试并被拦：
+
+1. 原样迁移 `embed.py` → `infra/providers/embedding.py`（urlopen 变量形式）——拦（line 150 urlopen）。
+2. 端点字面量内联到 Request 构造——拦（line 154 urlopen）。
+3. 加 urlparse 显式校验（scheme==https 且 hostname==api.siliconflow.cn，否则抛 RuntimeError，符合扫描器自己的建议）——仍拦（line 170 urlopen）。
+
+**影响**：`embed.py`（urllib + argparse-lazy）与 `digest.py`（urllib）无法物理迁移进 `infra/providers/` / `app/ingest/`。而 B0 的 layers 禁令"app 模块禁止 import 顶层 legacy 模块"意味着 `app/system.py`（cmd_sync/cmd_embed/cmd_status 需要 embed）与 `app/ingest/commands.py`（cmd_digest 需要 digest）必然产生 layers 白名单临时条目。
+
+**为什么不用规避手段**：用 getattr 字符串拼接、拆分 import 行等方式绕过安全扫描器，属于"为了通过检查而规避检查"——正是质量红线禁止的行为类别。扫描器的 SSRF 关注点本身是合理的（新文件里的出站 HTTP 确实该审）。
+
+**给用户/管理员的解除路径（三选一）**：
+1. 在 Mimosa 规则中为本仓库的 `core/unified_memory/infra/providers/`、`app/ingest/` 路径加 SSRF 扫描豁免（该路径下的出站调用是产品功能本身，端点为编译期字面量）；
+2. 或改为"diff 扫描"模式：只扫描新增/修改行，迁移类提交（内容逐字搬移）不再整文件重扫；
+3. 或对 `embed.py`/`digest.py` 这类既有 urllib 文件签发一次性迁移许可证。
+
+解除后，B5.2/B5.3 的剩余步骤照 `BATCH-B-HANDOVER.md` §9 执行即可，其余部分（B5.1 状态机、memory.py 拆分、promoter/conflict 拆分、预算断言）不受此阻塞。
+
+**本批次的降级决策**：B5.2–B5.5 中凡需要新建含 urllib 的文件的迁移暂缓；其余照做（见各节）。`WHITELIST` 将保留**有注释的** embed/digest 相关临时条目（layers/lazy），其余照常清空；`ENFORCE_BUDGETS` 照常翻 True（预算测试独立于白名单）。
 
 ## 待办发现
 
