@@ -15,11 +15,11 @@
 | B3 | Evidence 读模型 + envelope 唯一围栏 | ✅ 完成 | `9d95bbd` |
 | B4 | ChangeSet + executor + journal | ✅ 完成 | `0ad04f4` |
 | B5.1 | domain/state.py 状态机 + decide/supersede 接线 | ✅ 完成 | `72d7a9d` |
-| B5.2 | 拆 memory.py → surface/cli.py + app 命令模块 + shim | ⚠️ 部分受阻（见"阻塞"节） | — |
-| B5.3 | legacy 实现模块逐个迁入 layers | ⚠️ 多数可迁；embed/digest 被安全扫描器硬阻塞（见"阻塞"节） | — |
-| B5.4 | promoter/conflict/forgetter/maintenance 拆分到 ≤600 行；register_cron → infra/schedule | ⬜ 未开始 | — |
-| B5.5 | 拆 8 个 >60 行函数；ENFORCE_BUDGETS=True；白名单清空（embed/digest 两项受阻塞影响） | ⬜ 未开始 | — |
-| 收尾 | BATCH-REPORT 定稿 + push origin | ⬜ 未开始 | — |
+| B5.2 | 拆 memory.py → surface/cli.py + app 命令模块 + shim | ⛔ 阻塞跳过（SSRF 扫描器拦 memory.py 重写；拆分件已保全于 attic） | — |
+| B5.3 | legacy 实现模块迁入 layers | ⛔ 连带阻塞（embed/digest 含 urllib 不可新建；其余依赖 B5.2 后再做） | — |
+| B5.4 | promoter/conflict/forgetter/maintenance 拆分到 ≤600 行；register_cron → infra/schedule | ⛔ 顺延（govern 命令模块引用 legacy promoter/conflict 的白名单条目依赖 B5.2） | — |
+| B5.5 | 拆 8 个 >60 行函数；ENFORCE_BUDGETS=True；白名单清空 | ⛔ 顺延（需 B5.2–B5.4 全部完成） | — |
+| 收尾 | BATCH-REPORT 定稿 + push origin | ⬜ 推送待用户确认（remote=GitHub 公共仓库） | — |
 
 ## 验证基线（B4 后，全绿）
 
