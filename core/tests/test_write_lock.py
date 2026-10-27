@@ -2,9 +2,11 @@
 """The three canonical writers, and the lock that makes them safe.
 
 `core` has exactly three functions that rewrite 50-Agent-Context notes:
-`promoter.promote`, `forgetter.demote` and `maintenance.repair_existing`. Each
-of them takes the vault's `common.file_lock`, and that — not a declaration file
-naming an owner — is the whole of the coordination story.
+`promoter.promote`, `forgetter.demote` and `maintenance.repair_existing`.
+Since batch B they PLAN a ChangeSet and hand it to `infra.vault.apply` — the
+one executor that takes the vault's file lock, journals intent/commit and
+recovers an uncommitted predecessor. That — not a declaration file naming an
+owner — is the whole of the coordination story.
 
 This file replaces `test_owner.py`, which pinned a different design: a
 `hermes-owner.lock` declaration naming a single writer, with a claim/release CLI
@@ -17,11 +19,9 @@ prevent is prevented by the lock, which these tests check.
 
 Two kinds of check, because each catches what the other misses:
 
-  * structural — each of the three functions takes the lock. Cheap, covers all
-    three, and fails the moment someone deletes a `with file_lock(vault):`.
-    It has to patch the MODULE-LOCAL name: every writer does
-    `from .common import file_lock`, so patching `common.file_lock` would prove
-    nothing about the binding the writer actually calls.
+  * structural — each of the three functions reaches the lock. Cheap, covers
+    all three, and fails the moment someone routes a writer around the
+    executor. It patches the lock where it is TAKEN: `infra.vault.file_lock`.
   * behavioural — a second writer really waits for the first. Slow-ish and only
     exercised through `promote`, but it is the only one that would catch a lock
     that is taken and then ignored.
@@ -35,6 +35,7 @@ from unittest import mock
 from test_common import destroy_scratch, make_scratch_vault
 from unified_memory import common, forgetter, maintenance, promoter
 from unified_memory import memory as mem_mod
+from unified_memory.infra import vault as vault_mod
 
 
 def _recording_lock(recorded, label):
@@ -63,21 +64,23 @@ class EveryCanonicalWriterTakesTheLockTest(unittest.TestCase):
 
     def test_promote_takes_the_lock(self):
         recorded = []
-        with mock.patch.object(promoter, "file_lock", _recording_lock(recorded, "promote")):
+        # Batch B: the lock lives in the ONE executor (infra.vault.apply), so
+        # the patch moved from the writer modules to where the lock is taken.
+        with mock.patch.object(vault_mod, "file_lock", _recording_lock(recorded, "lock")):
             promoter.promote(self.vault, [{"分类": "prefs", "内容": "锁内写入的事实", "来源": "test"}])
-        self.assertEqual(recorded, ["promote"])
+        self.assertEqual(recorded, ["lock"])
 
     def test_demote_takes_the_lock(self):
         recorded = []
-        with mock.patch.object(forgetter, "file_lock", _recording_lock(recorded, "demote")):
+        with mock.patch.object(vault_mod, "file_lock", _recording_lock(recorded, "lock")):
             forgetter.demote(self.vault, dry_run=False)
-        self.assertEqual(recorded, ["demote"])
+        self.assertEqual(recorded, ["lock"])
 
     def test_repair_existing_takes_the_lock(self):
         recorded = []
-        with mock.patch.object(maintenance, "file_lock", _recording_lock(recorded, "repair")):
+        with mock.patch.object(vault_mod, "file_lock", _recording_lock(recorded, "lock")):
             maintenance.repair_existing(self.vault, dry_run=False)
-        self.assertEqual(recorded, ["repair"])
+        self.assertEqual(recorded, ["lock"])
 
 
 class TheLockActuallyExcludesTest(unittest.TestCase):

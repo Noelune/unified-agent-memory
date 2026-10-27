@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Callable
 
 from .domain.markdown import bare_fact_line, fact_lines, redact, write_stamp
+from .domain.model import Change, ChangeSet
 from .domain.policy import (
     ADJUDICATED_FILE,
     CANONICAL_DOCS,
@@ -38,6 +39,7 @@ from .domain.policy import (
     SUBMISSION_DIR,
     UNCLASSIFIED_FACT_REL,
 )
+from .infra import vault as vault_mod
 from .infra.config import resolve_vault
 from .infra.lock import file_lock
 from .infra.schedule import core_source_dir, mark_schedule_run
@@ -512,33 +514,20 @@ def _move_to_superseded(text: str, old_bare: str) -> str:
     return move_to_superseded(text, lambda ln: bare_fact_line(ln) == old_bare)
 
 
-def promote(vault: Path, entries: list[dict], *, locked: bool = False) -> list[str]:
-    """Append facts to canonical notes under the file lock; returns promoted lines.
+def plan_promotion(vault: Path, entries: list[dict]) -> ChangeSet:
+    """Read-only: build the ChangeSet promote() would apply.
 
-    Accepts entries from either source: `apply_pending` (parsed pending list,
-    keys `分类`/`内容`/`来源`/`取代`) or `auto_promote` (raw review output, keys
-    `doc`/`fact`/`source`/`supersede`). Missing keys fall back to "other"/""/"inbox".
-
-    Entries are grouped per target note and written once per note. The old
-    loop rewrote the whole file for every fact, which on a synced vault meant
-    one cloud-sync event per fact (and O(facts × file size) writes).
-
-    One of the three functions in this package that rewrite canonical notes
-    (with ``forgetter.demote`` and ``maintenance.repair_existing``); the
-    ``file_lock`` below is what makes that safe, and
-    ``core/tests/test_write_lock.py`` is what keeps all three honest.
+    The dedup re-check that used to run inside the file lock runs here against
+    the current file content; ``infra.vault.apply`` re-validates under the lock
+    and re-runs this plan if anything moved while it was being built (the
+    ``replan`` callback).
     """
-    if not locked:
-        with file_lock(vault):
-            return promote(vault, entries, locked=True)
-
     grouped: dict[Path, list[dict]] = {}
     for entry in entries:
         doc = entry.get("分类") or entry.get("doc") or "other"
         grouped.setdefault(target_path(vault, doc), []).append(entry)
 
-    promoted: list[str] = []
-    audited: list[tuple[str, str, str]] = []
+    changes: list[Change] = []
     today = time.strftime("%Y-%m-%d")
     for target, group in grouped.items():
         existing = read_maybe(target)
@@ -549,9 +538,9 @@ def promote(vault: Path, entries: list[dict], *, locked: bool = False) -> list[s
         prior = set(active_fact_lines(existing))
         additions: list[str] = []
         supersedes: list[str] = []
+        facts: list[tuple[str, str]] = []
         for entry in group:
             fact = entry.get("内容") or entry.get("fact") or ""
-            # Re-check dedup under the lock (another promoter may have raced).
             # Compare bare fact text on both sides — the previous version
             # compared a bullet-prefixed "bare" against bullet-stripped prior
             # lines, so this guard never fired.
@@ -561,19 +550,54 @@ def promote(vault: Path, entries: list[dict], *, locked: bool = False) -> list[s
             src = entry.get("来源") or entry.get("source") or "inbox"
             line = f"- {fact}{write_stamp(src, today)}\n"
             additions.append(line)
+            facts.append((src, fact))
             prior.add(bare)
             old_bare = entry.get("取代") or entry.get("supersede") or ""
             if old_bare:
                 supersedes.append(old_bare)
-            promoted.append(line.strip())
-            audited.append((src, str(target.name), fact))
         if not additions:
             continue
         text = append_active_facts(existing, additions)
         # Supersession: move old fact lines under 已取代 (keeps history).
         for old_bare in supersedes:
             text = _move_to_superseded(text, old_bare)
-        atomic_write(target, text)
+        changes.append(
+            Change(
+                op="rewrite_doc", doc=target,
+                before_text=existing, after_text=text,
+                facts=tuple(facts),
+            )
+        )
+    return ChangeSet(
+        actor="promoter", reason="promote", changes=tuple(changes),
+        replan=lambda: plan_promotion(vault, entries),
+    )
+
+
+def promote(vault: Path, entries: list[dict], *, locked: bool = False) -> list[str]:
+    """Plan the promotion, then hand the ChangeSet to the one executor.
+
+    Accepts entries from either source: `apply_pending` (parsed pending list,
+    keys `分类`/`内容`/`来源`/`取代`) or `auto_promote` (raw review output, keys
+    `doc`/`fact`/`source`/`supersede`). Missing keys fall back to "other"/""/"inbox".
+
+    Entries are grouped per target note and written once per note. The old
+    loop rewrote the whole file for every fact, which on a synced vault meant
+    one cloud-sync event per fact (and O(facts × file size) writes).
+
+    ``locked=True`` is for callers that already hold the vault lock and wrap
+    more steps around this one (auto_promote adds archiving); the executor
+    then runs without re-acquiring the non-reentrant lock.
+    """
+    changeset = plan_promotion(vault, entries)
+    applied = vault_mod.apply(vault, changeset, take_lock=not locked)
+    promoted: list[str] = []
+    audited: list[tuple[str, str, str]] = []
+    today = time.strftime("%Y-%m-%d")
+    for change in applied.changes:
+        for src, fact in change.facts:
+            promoted.append(f"- {fact}{write_stamp(src, today)}")
+            audited.append((src, change.doc.name, fact))
     # Audit AFTER the writes: record_audit opens its own connection, and the
     # file writes above hold no database transaction, so chaining is safe.
     for src, doc_name, fact in audited:

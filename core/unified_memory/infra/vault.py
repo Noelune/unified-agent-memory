@@ -24,6 +24,10 @@ from ..domain.policy import (
     VAULT_ENV,
     is_conflict_copy,
 )
+from .journal import recover as _journal_recover
+from .journal import write_commit as _journal_write_commit
+from .journal import write_intent as _journal_write_intent
+from .lock import file_lock
 
 
 class VaultMissing(RuntimeError):
@@ -147,10 +151,18 @@ def ensure_vault(vault: Path) -> None:
 
 
 def atomic_write(path: Path, text: str) -> None:
-    """Write via temp file + rename so concurrent readers never see partial content."""
+    """Write via temp file + rename so concurrent readers never see partial content.
+
+    The temp file is flushed and fsynced before the rename (batch B): without
+    the fsync a power loss could leave the rename pointing at a temp file
+    whose bytes never reached the disk — an empty or stale canonical note.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex[:8]}.tmp")
-    tmp.write_text(text, encoding="utf-8")
+    with tmp.open("w", encoding="utf-8", newline="") as handle:
+        handle.write(text)
+        handle.flush()
+        os.fsync(handle.fileno())
     os.replace(tmp, path)
 
 
@@ -218,3 +230,73 @@ def indexed_files(vault: Path) -> list[Path]:
     if unclassified.is_file() and not is_conflict_copy(unclassified.name):
         files.append(unclassified)
     return files
+
+
+# --------------------------------------------------------------------------
+# The one executor: plan → apply (lock → recover → validate → journal → write)
+# --------------------------------------------------------------------------
+
+
+def apply(vault: Path, changeset, *, take_lock: bool = True):
+    """Execute a planned ChangeSet against canonical notes.
+
+    This is the ONLY place that takes the vault lock for canonical writes and
+    the ONLY place canonical notes get written from a plan (the writers build
+    a ChangeSet first; the old inline ``with file_lock`` blocks in
+    promoter.promote / forgetter.demote / maintenance.repair_existing are its
+    predecessors — core/tests/test_write_lock.py keeps the new shape honest).
+
+    Sequence under the lock: ``journal.recover`` (roll back an uncommitted
+    predecessor) → staleness validation (re-plan once if the world moved
+    while the plan was being built) → ``journal`` intent → per-change
+    ``atomic_write`` → ``journal`` commit. No-op changes (after == before)
+    are skipped, and a ChangeSet that is entirely no-ops never touches the
+    journal.
+
+    ``take_lock=False`` is for callers that ALREADY hold the vault lock and
+    must not deadlock on the non-reentrant thread lock (auto_promote wraps
+    promote + archive in one lock and calls promote(locked=True)).
+    """
+    if not take_lock:
+        return _apply_locked(vault, changeset)
+    with file_lock(vault):
+        return _apply_locked(vault, changeset)
+
+
+def _apply_locked(vault: Path, changeset):
+    _journal_recover(vault)
+    # Optimistic concurrency: the plan was built without the lock, so
+    # re-validate under it. A stale plan with a ``replan`` callback gets one
+    # re-plan; without one it is refused — writing over a file the plan never
+    # read would be guessing.
+    for _ in range(2):
+        stale = [
+            c
+            for c in changeset.changes
+            if read_maybe(c.doc) not in (c.before_text, c.after_text)
+        ]
+        if not stale:
+            break
+        if changeset.replan is None:
+            raise RuntimeError(
+                f"stale {changeset.reason} plan: the vault changed while the "
+                "change set was applied — re-run the command"
+            )
+        changeset = changeset.replan()
+    else:
+        raise RuntimeError(
+            f"stale {changeset.reason} plan: the vault changed while the "
+            "change set was applied — re-run the command"
+        )
+    changed = [c for c in changeset.changes if c.after_text != c.before_text]
+    if not changed:
+        return changeset
+    seq = _journal_write_intent(vault, changeset)
+    for change in changed:
+        if change.op == "backup_doc":
+            change.doc.parent.mkdir(parents=True, exist_ok=True)
+        elif change.op != "rewrite_doc":
+            raise ValueError(f"unknown change op {change.op!r}")
+        atomic_write(change.doc, change.after_text)
+    _journal_write_commit(vault, seq)
+    return changeset

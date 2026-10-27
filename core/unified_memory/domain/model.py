@@ -12,7 +12,9 @@ module never fills it and no renderer reads it yet.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Callable
 
 
 @dataclass(frozen=True)
@@ -34,3 +36,43 @@ class Evidence:
     source: str = ""
     written_at: str = ""
     confidence: str = ""  # reserved (batch C): disputed / low / high; not filled yet
+
+
+@dataclass(frozen=True)
+class Change:
+    """One file rewrite a plan wants, with the world it was computed against.
+
+    ``before_text`` is the file content the plan READ when it decided
+    ``after_text`` was correct. The executor re-checks it under the lock: if
+    the file has moved on, the plan is stale and gets re-run there (batch B).
+    ``before_text == ""`` means the file did not exist at plan time.
+
+    ``facts`` / ``meta`` are writer bookkeeping and are NOT journaled:
+    ``facts`` carries the (source, fact) pairs a promote added (for audit),
+    ``meta`` carries per-writer report data (e.g. the dropped lines a repair
+    removed). The journal only serialises op/doc/before/after.
+    """
+
+    op: str  # "rewrite_doc" | "backup_doc"
+    doc: Path
+    before_text: str = ""
+    after_text: str = ""
+    facts: tuple = ()
+    meta: dict = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ChangeSet:
+    """A planned, not-yet-applied unit of canonical writes.
+
+    ``replan`` re-runs the plan against the CURRENT file state and is called
+    by the executor under the lock when the staleness check fails — the same
+    re-validation the old inline writers performed inside their ``with
+    file_lock`` blocks, now explicit. It may be None for plans that read
+    nothing (tests).
+    """
+
+    actor: str
+    reason: str
+    changes: tuple[Change, ...]
+    replan: Callable[[], "ChangeSet"] | None = None

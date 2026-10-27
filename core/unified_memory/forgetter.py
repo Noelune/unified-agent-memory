@@ -36,13 +36,13 @@ from pathlib import Path
 
 from . import index
 from .domain.markdown import bare_fact_line, is_versioned, parse_stamp
+from .domain.model import Change, ChangeSet
 from .domain.policy import CANONICAL_DOCS
+from .infra import vault as vault_mod
 from .infra.config import resolve_vault
-from .infra.lock import file_lock
 from .infra.schedule import core_source_dir, mark_schedule_run
 from .infra.store import forget_stats
 from .infra.vault import (
-    atomic_write,
     canonical_dir,
     ensure_vault,
     forget_dir,
@@ -128,11 +128,9 @@ def _days_since(value: str, now: float) -> float | None:
         return None
 
 
-def demote(vault: Path, dry_run: bool = True) -> list[str]:
+def _forget_candidates(vault: Path) -> list[tuple[Path, str]]:
+    """Scan canonical notes for decay candidates (read-only)."""
     ensure_vault(vault)
-    # Demotion rewrites canonical notes (it moves lines into 记忆遗忘区), so it
-    # is one of the three write paths bound by `file_lock` (see
-    # core/tests/test_write_lock.py). A dry run writes nothing and takes no lock.
     ctx = canonical_dir(vault)
     today = time.time()
     candidates: list[tuple[Path, str]] = []
@@ -174,6 +172,60 @@ def demote(vault: Path, dry_run: bool = True) -> list[str]:
             if score >= FORGET_THRESHOLD:
                 continue
             candidates.append((path, line))
+    return candidates
+
+
+def plan_forget(vault: Path, candidates: list[tuple[Path, str]]) -> ChangeSet:
+    """Read-only: build the ChangeSet demote() would apply.
+
+    The remaining-lines computation that used to run inside the file lock runs
+    here; ``infra.vault.apply`` re-validates under the lock and re-runs this
+    plan if any source note moved while it was being built.
+    """
+    out_dir = forget_dir(vault)
+    changes: list[Change] = []
+    by_doc: dict[Path, list[str]] = {}
+    for path, line in candidates:
+        by_doc.setdefault(path, []).append(line)
+    for path, lines in by_doc.items():
+        current = read_maybe(path)
+        remaining = [
+            ln
+            for ln in current.splitlines()
+            if not any(ln.rstrip() == l for l in lines)
+        ]
+        changes.append(
+            Change(
+                op="rewrite_doc", doc=path,
+                before_text=current,
+                after_text="\n".join(remaining) + ("\n" if remaining else ""),
+                meta={"kind": "source", "moved": len(lines), "lines": list(lines)},
+            )
+        )
+        target = out_dir / path.name
+        old = read_maybe(target)
+        changes.append(
+            Change(
+                op="rewrite_doc", doc=target,
+                before_text=old,
+                after_text=old + "\n".join(lines) + "\n",
+                meta={"kind": "forget", "moved": len(lines)},
+            )
+        )
+    return ChangeSet(
+        actor="forgetter", reason="demote", changes=tuple(changes),
+        replan=lambda: plan_forget(vault, candidates),
+    )
+
+
+def demote(vault: Path, dry_run: bool = True) -> list[str]:
+    ensure_vault(vault)
+    # Demotion rewrites canonical notes (it moves lines into 记忆遗忘区), so it
+    # is one of the three write paths — but the lock now lives in the ONE
+    # executor (infra.vault.apply, batch B): plan here, apply there, and
+    # core/tests/test_write_lock.py keeps that shape honest. A dry run writes
+    # nothing and takes no lock.
+    candidates = _forget_candidates(vault)
 
     if dry_run:
         print(f"dry-run: {len(candidates)} candidate line(s) would be demoted to 记忆遗忘区/")
@@ -181,31 +233,23 @@ def demote(vault: Path, dry_run: bool = True) -> list[str]:
             print(f"  {path.name}: {line[:90]}")
         return [line for _, line in candidates]
 
-    out_dir = forget_dir(vault)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    changeset = plan_forget(vault, candidates)
+    applied = vault_mod.apply(vault, changeset)
     moved = 0
-    with file_lock(vault):
-        by_doc: dict[Path, list[str]] = {}
-        for path, line in candidates:
-            by_doc.setdefault(path, []).append(line)
-        for path, lines in by_doc.items():
-            remaining = [
-                ln
-                for ln in read_maybe(path).splitlines()
-                if not any(ln.rstrip() == l for l in lines)
-            ]
-            atomic_write(path, "\n".join(remaining) + ("\n" if remaining else ""))
-            target = out_dir / path.name
-            old = read_maybe(target)
-            additions = "\n".join(lines) + "\n"
-            atomic_write(target, old + additions)
-            moved += len(lines)
-        index.record_audit(
-            vault, "forgetter", "demote",
-            ", ".join(p.name for p in by_doc),
-            "; ".join(ln[:60] for _p, ln in candidates),
-        )
-    print(f"demoted {moved} line(s) to {out_dir} (reversible — nothing was deleted)")
+    names: list[str] = []
+    moved_lines: list[str] = []
+    for change in applied.changes:
+        meta = change.meta or {}
+        if meta.get("kind") == "source":
+            moved += int(meta["moved"])
+            names.append(change.doc.name)
+            moved_lines.extend(meta["lines"])
+    index.record_audit(
+        vault, "forgetter", "demote",
+        ", ".join(names),
+        "; ".join(ln[:60] for ln in moved_lines),
+    )
+    print(f"demoted {moved} line(s) to {forget_dir(vault)} (reversible — nothing was deleted)")
     # A completed apply counts as this week's forgetting run for catch-up
     # purposes, no matter which entry point fired it (CLI, OS cron, dsh plugin).
     mark_schedule_run(vault, "forget")
