@@ -14,7 +14,7 @@
 | B2 | 收口存储 infra/store | ✅ 完成 | `a369877` |
 | B3 | Evidence 读模型 + envelope 唯一围栏 | ✅ 完成 | `9d95bbd` |
 | B4 | ChangeSet + executor + journal | ✅ 完成 | `0ad04f4` |
-| B5.1 | domain/state.py 状态机 + decide/supersede 接线 | 🔜 进行中 | — |
+| B5.1 | domain/state.py 状态机 + decide/supersede 接线 | ✅ 完成 | `见 git log` |
 | B5.2 | 拆 memory.py → surface/cli.py + app 命令模块 + shim | ⬜ 未开始 | — |
 | B5.3 | legacy 实现模块逐个迁入 layers（preview/stats/inbox/digest/health/drift/sessiondb/catchup/graph/embed/search） | ⬜ 未开始 | — |
 | B5.4 | promoter/conflict/forgetter/maintenance 拆分到 ≤600 行；register_cron → infra/schedule | ⬜ 未开始 | — |
@@ -38,9 +38,13 @@
 
 ### B5.1 domain/state.py 状态机
 
-- 调研：Harel statecharts（1987）与 XState（30.4k★，见证据矩阵）确立"状态 + 事件 → 迁移表，非法迁移显式拒绝"的建模；repo 内既有先例是 `promoter.DECISIONS/ADVISABLE` 集合校验。选定方案：纯表 + `transition(table, current, event)`，非法迁移抛 `ValueError`；放弃方案：不引入有限状态机库（零依赖红线）、不改任何文件格式（快照锁字节）。
-- 接线点：`promoter.decide` 的 choice 校验改走 CONFLICT 迁移表（行为等价：DECISIONS 集合 = 表中 open 态的合法事件）；`plan_promotion` 的 supersede 路径走 CLAIM 表（active→superseded）。
-- 验证：新增 `core/tests/test_state.py`（三表合法/非法迁移）；全六道门。
+- **调研**：Harel statecharts（1987）与 XState（30.4k★，见证据矩阵）确立"状态 + 事件 → 迁移表，非法迁移显式拒绝"的建模；repo 内既有先例是 `promoter.DECISIONS/ADVISABLE` 集合校验。**选定方案**：纯表（`{state: {event: next}}`）+ `transition(machine, current, event)`，非法迁移/未知机器/未知状态一律 `ValueError`；零依赖。**放弃方案**：引入状态机库（零依赖红线）；给 inbox 生命周期接线（其"状态"是文件位置派生的视图，接线等于改文件格式语义，留给批次 C 并已在表 docstring 声明）。
+- **设计**：三张表（INBOX/CONFLICT/CLAIM）+ `MACHINES` 注册；两个接线点——`promoter.decide` 的 choice 校验改走 CONFLICT 表（未知裁决 → 原样的 `unknown-choice` 信封），`plan_promotion` 的 supersede 路径走 CLAIM 表（active→superseded，合法事件，调用即把计划钉在表上）。`DECISIONS` 保留字面量（交互面依赖其顺序），由一致性测试钉住 `tuple(CONFLICT["open"]) == DECISIONS`。
+- **虚拟项目验证**：`core/tests/test_state.py`（8 例）：三表合法路径、五组非法迁移（含"不可再取代""已裁决不可再裁""不可跳过 triage"）、未知机器/状态/事件、与 promoter.DECISIONS 的一致性、decide 对未知裁决返回原信封（不碰真实 vault，全部 scratch vault/非存在路径）。
+- **实现**：`domain/state.py` 新建（65 行）；promoter 两处接线 + import；测试 8 例。无删除。
+- **测试结果**：六道门全绿（Python 446 / JS 886 / setup 32 / typecheck / bench 一致 / 快照 42 逐字节）。
+- **过程记录（质量红线执行证据）**：第一轮验证抓到两个自己引入的缺陷——(1) 把表 dict 当 machine 参数传入导致 `TypeError: unhashable type`（快照尺子 3 处差异当场定位到 traceback）；(2) recover 语义混淆（current==after_text 在未提交 intent 下必须回滚而非跳过——该修复属 B4 journal，已在 B4 提交内完成）。另修正测试自身一处断言笔误（rejected ≠ reject+"d"）。三轮验证后才提交。
+- **遗留风险**：无——表是纯域模型；inbox 表当前无接线点（已声明）。
 
 （B5.2 起逐项填充）
 

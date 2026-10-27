@@ -30,6 +30,7 @@ from typing import Callable
 
 from .domain.markdown import bare_fact_line, fact_lines, redact, write_stamp
 from .domain.model import Change, ChangeSet
+from .domain import state as domain_state
 from .domain.policy import (
     ADJUDICATED_FILE,
     CANONICAL_DOCS,
@@ -558,8 +559,11 @@ def plan_promotion(vault: Path, entries: list[dict]) -> ChangeSet:
         if not additions:
             continue
         text = append_active_facts(existing, additions)
-        # Supersession: move old fact lines under 已取代 (keeps history).
+        # Supersession: move old fact lines under 已取代 (keeps history). The
+        # CLAIM table is the contract for that move (batch B5) — the event is
+        # legal by definition, and the call pins the plan to the tables.
         for old_bare in supersedes:
+            domain_state.transition("claim", "active", "superseded")
             text = _move_to_superseded(text, old_bare)
         changes.append(
             Change(
@@ -770,7 +774,9 @@ def _resolve_target(vault: Path, entry: dict) -> Path:
     return target_path(vault, classify(str(entry.get("新", ""))))
 
 
-# The four decisions, and what each one does to memory.
+# The four decisions, and what each one does to memory. The ORDER matters to
+# interactive surfaces; the SET is pinned to the CONFLICT state machine's legal
+# events by a consistency test (core/tests/test_state.py).
 DECISIONS = ("用新", "保留旧", "并存", "跳过")
 
 # The three that mean something as a RECOMMENDATION. `跳过` is a way to defer a
@@ -876,7 +882,11 @@ def decide(vault: Path, entry: dict, choice: str, why: str = "") -> dict:
     watching the prompt; a panel button that silently did nothing would just
     look broken.
     """
-    if choice not in DECISIONS:
+    try:
+        # The CONFLICT state machine owns this validation: "open" accepts
+        # exactly the four rulings, anything else is an illegal transition.
+        domain_state.transition("conflict", "open", choice)
+    except ValueError:
         return {"ok": False, "reason": "unknown-choice", "choice": choice,
                 "applied": False, "target": None}
 
