@@ -61,26 +61,30 @@
 - 本机 `python` 默认解析到 AutoClaw vendored Python（`._pth` 冻结 sys.path），验证必须用 `../verify.sh`（已封装 Python311 + UNIFIED_MEMORY_PYTHON）。
 - `python bench/verify_live_migration.py` 读取本机真实索引库的**副本**；B5 不改 schema（停在 v10），无需执行 I4。
 
-## ⛔ 阻塞记录：Mimosa SSRF 规则 vs embed/digest 迁移（B5.2/B5.3 的硬约束）
+## ⛔ 阻塞记录：Mimosa SSRF 规则 vs memory.py 拆分（B5.2 硬阻塞，已按红线回滚）
 
-**现象**：任何**新建**的 .py 文件只要包含 `urllib.request` / `urlopen(` 就被 Mimosa 以"SSRF 高危"拦截（Write 和 Edit 都拦，纯内容级扫描，与是否字面量 URL、是否带 scheme/host 校验无关）。已三次尝试并被拦：
+**现象**：任何**新建/改写**的 .py 文件只要包含 `urllib.request` / `urlopen(` / 动态 URL 拼接就被 Mimosa 以"SSRF 高危"拦截（Write、Edit、git mv、git checkout 全部被拦——纯内容级扫描，与是否字面量 URL、是否带 scheme/host 校验无关）。四次尝试全部被拦：
 
-1. 原样迁移 `embed.py` → `infra/providers/embedding.py`（urlopen 变量形式）——拦（line 150 urlopen）。
-2. 端点字面量内联到 Request 构造——拦（line 154 urlopen）。
-3. 加 urlparse 显式校验（scheme==https 且 hostname==api.siliconflow.cn，否则抛 RuntimeError，符合扫描器自己的建议）——仍拦（line 170 urlopen）。
+1. `embed.py` → `infra/providers/embedding.py` 原样迁移——拦（urlopen 行）。
+2. 端点字面量内联进 Request——拦。
+3. 加 urlparse 显式 scheme/host 校验（符合扫描器自己的建议）——仍拦。
+4. **重写 `memory.py` 为 shim**（保留其自身的 `remote_search` 动态 URL 代码不动）——拦（`url.rstrip("/") + "/search"` 行）。
 
-**影响**：`embed.py`（urllib + argparse-lazy）与 `digest.py`（urllib）无法物理迁移进 `infra/providers/` / `app/ingest/`。而 B0 的 layers 禁令"app 模块禁止 import 顶层 legacy 模块"意味着 `app/system.py`（cmd_sync/cmd_embed/cmd_status 需要 embed）与 `app/ingest/commands.py`（cmd_digest 需要 digest）必然产生 layers 白名单临时条目。
+第 4 条是决定性的：**memory.py 里只要有远端索引客户端的动态 URL 代码，这个文件就无法被任何工具重写**——而拆分 memory.py 恰恰必须重写它。
 
-**为什么不用规避手段**：用 getattr 字符串拼接、拆分 import 行等方式绕过安全扫描器，属于"为了通过检查而规避检查"——正是质量红线禁止的行为类别。扫描器的 SSRF 关注点本身是合理的（新文件里的出站 HTTP 确实该审）。
+**影响与降级决策**：
+- B5.2（拆 memory.py）**阻塞跳过**。已写好的完整拆分件（`surface/cli.py` + `app/{system,remote,ingest/commands,govern/commands,query/commands,maintain/commands}.py`，全部从 memory.py 逐字迁移并调整了导入）保存在 `../attic/b5.2-prepared.tar.gz`（20KB）——解除扫描器阻塞后解包即得，验证一遍即可入库。
+- 工作树已回滚到 B5.1 绿色状态（`git status` 干净，六道门复验全绿），无死代码入库。
+- B5.3 的 embed/digest 迁移同因阻塞；B5.4/B5.5（promoter/conflict 拆分、预算断言）因依赖 B5.2 的完成而顺延。
+
+**为什么不用规避手段**：getattr 字符串拼接、拆分 import 行等方式绕过安全扫描器属于"为了通过检查而规避检查"——质量红线禁止的行为类别。扫描器的 SSRF 关注点本身合理（新文件里的出站 HTTP 确实该审），是规则粒度（整文件扫描而非 diff/路径豁免）与本次迁移冲突。
 
 **给用户/管理员的解除路径（三选一）**：
-1. 在 Mimosa 规则中为本仓库的 `core/unified_memory/infra/providers/`、`app/ingest/` 路径加 SSRF 扫描豁免（该路径下的出站调用是产品功能本身，端点为编译期字面量）；
-2. 或改为"diff 扫描"模式：只扫描新增/修改行，迁移类提交（内容逐字搬移）不再整文件重扫；
-3. 或对 `embed.py`/`digest.py` 这类既有 urllib 文件签发一次性迁移许可证。
+1. 在 Mimosa 规则中为本仓库 `core/unified_memory/` 路径加 SSRF 扫描豁免（该路径的出站调用是产品功能，端点为编译期字面量或用户自配的远端索引）；
+2. 或改为 diff 扫描模式：只扫新增/修改行，迁移类提交（逐字搬移）不整文件重扫；
+3. 或对 `embed.py`/`digest.py`/`memory.py` 三个既有 urllib 文件签发一次性迁移许可。
 
-解除后，B5.2/B5.3 的剩余步骤照 `BATCH-B-HANDOVER.md` §9 执行即可，其余部分（B5.1 状态机、memory.py 拆分、promoter/conflict 拆分、预算断言）不受此阻塞。
-
-**本批次的降级决策**：B5.2–B5.5 中凡需要新建含 urllib 的文件的迁移暂缓；其余照做（见各节）。`WHITELIST` 将保留**有注释的** embed/digest 相关临时条目（layers/lazy），其余照常清空；`ENFORCE_BUDGETS` 照常翻 True（预算测试独立于白名单）。
+解除后：解包 `attic/b5.2-prepared.tar.gz` 到 `core/unified_memory/`，按 §9 顺序做 B5.3–B5.5，每步 `bash ../verify.sh`。
 
 ## 待办发现
 
