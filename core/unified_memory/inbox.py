@@ -12,7 +12,8 @@ import shutil
 import time
 from pathlib import Path
 
-from .common import NON_SUBMISSION_FILES, file_lock
+from .domain.policy import NON_SUBMISSION_FILES
+from .infra.lock import file_lock
 from .preview import INBOX_REL, _safe_inbox_name
 
 DONE_DIR = "已处理"

@@ -97,6 +97,10 @@ SQLITE3_OK_PREFIXES = (
 WRITES_OK_PREFIXES = (
     PKG_NAME + ".infra.vault",
     PKG_NAME + ".infra.journal",
+    # The config writer backs up and rewrites ~/.unified-memory.yaml — user
+    # configuration, never vault content — so it cannot route through the
+    # vault module's canonical-note write path.
+    PKG_NAME + ".infra.config",
     PKG_NAME + ".infra.sessiondb",
 )
 SUBPROCESS_OK_PREFIXES = (PKG_NAME + ".infra.schedule",)
@@ -122,8 +126,6 @@ WHITELIST: dict[str, set[str]] = {
         "unified_memory.sessiondb",
     },
     "writes": {
-        "unified_memory.common",
-        "unified_memory.config",
         "unified_memory.conflict",
         "unified_memory.forgetter",
         "unified_memory.promoter",

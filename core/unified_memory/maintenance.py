@@ -14,13 +14,13 @@ import re
 import time
 from pathlib import Path
 
-from .common import (
-    CANONICAL_DOCS,
+from .domain.markdown import bare_fact_line
+from .domain.policy import CANONICAL_DOCS
+from .infra.lock import file_lock
+from .infra.vault import (
     atomic_write,
-    bare_fact_line,
     canonical_path,
     ensure_vault,
-    file_lock,
     read_maybe,
     situation_dir,
 )

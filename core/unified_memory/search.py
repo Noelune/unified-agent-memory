@@ -27,7 +27,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from . import embed, index
-from .common import encode_untrusted, redact
+from .domain.markdown import encode_untrusted, redact
 
 RRF_K = 60
 DEFAULT_WEIGHTS = (1.0, 1.0, 0.9)  # lexical, vector, graph

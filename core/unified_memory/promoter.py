@@ -28,7 +28,8 @@ import time
 from pathlib import Path
 from typing import Callable
 
-from .common import (
+from .domain.markdown import bare_fact_line, fact_lines, redact, write_stamp
+from .domain.policy import (
     ADJUDICATED_FILE,
     CANONICAL_DOCS,
     CONFLICT_FILE,
@@ -36,21 +37,18 @@ from .common import (
     PENDING_FILE,
     SUBMISSION_DIR,
     UNCLASSIFIED_FACT_REL,
+)
+from .infra.config import resolve_vault
+from .infra.lock import file_lock
+from .infra.schedule import core_source_dir, mark_schedule_run
+from .infra.vault import (
     atomic_write,
     canonical_dir,
     canonical_path,
-    core_source_dir,
     ensure_vault,
-    fact_lines,
-    file_lock,
-    mark_schedule_run,
     processed_dir,
     read_maybe,
-    redact,
-    resolve_vault,
     situation_dir,
-    bare_fact_line,
-    write_stamp,
 )
 from .conflict import (
     CONFLICT_SIM_THRESHOLD,

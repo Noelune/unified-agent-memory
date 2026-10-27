@@ -35,20 +35,17 @@ import time
 from pathlib import Path
 
 from . import index
-from .common import (
-    CANONICAL_DOCS,
+from .domain.markdown import bare_fact_line, is_versioned, parse_stamp
+from .domain.policy import CANONICAL_DOCS
+from .infra.config import resolve_vault
+from .infra.lock import file_lock
+from .infra.schedule import core_source_dir, mark_schedule_run
+from .infra.vault import (
     atomic_write,
-    bare_fact_line,
     canonical_dir,
-    core_source_dir,
     ensure_vault,
-    file_lock,
     forget_dir,
-    is_versioned,
-    mark_schedule_run,
-    parse_stamp,
     read_maybe,
-    resolve_vault,
 )
 
 # Scoring knobs.

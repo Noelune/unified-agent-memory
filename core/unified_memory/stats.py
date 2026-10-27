@@ -15,7 +15,8 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from . import index as index_mod
-from .common import NON_SUBMISSION_FILES, redact
+from .domain.markdown import redact
+from .domain.policy import NON_SUBMISSION_FILES
 from .preview import INBOX_REL
 
 

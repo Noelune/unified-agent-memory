@@ -30,28 +30,30 @@ from . import graph as graph_mod
 from . import inbox as inbox_mod
 from . import index as index_mod
 from . import search as search_mod
-from .common import (
-    AGENT_CONTEXT,
-    CANONICAL_DOCS,
+from .domain.markdown import (
+    collapse_whitespace,
+    encode_untrusted,
+    looks_like_credential,
+    redact,
+)
+from .domain.policy import AGENT_CONTEXT, CANONICAL_DOCS, NON_SUBMISSION_FILES
+from .infra.config import (
     CONFIG_PATH,
-    NON_SUBMISSION_FILES,
     VAULT_ENV,
     VaultMissing,
+    parse_config,
+    resolve_vault,
+)
+from .infra.vault import (
     atomic_create,
     atomic_write,
     canonical_dir,
     canonical_path,
-    collapse_whitespace,
-    encode_untrusted,
     ensure_vault,
     is_bare_note_name,
-    looks_like_credential,
     note_named,
-    parse_config,
     read_maybe,
-    redact,
     resolve_canonical_note,
-    resolve_vault,
 )
 
 # Single redirectable base path for every per-vault index DB (see

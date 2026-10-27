@@ -23,16 +23,14 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from . import index as index_mod
-from .common import (
+from .domain.markdown import bare_fact_line, redact
+from .domain.policy import (
     CONFLICT_FILE,
     NON_SUBMISSION_FILES,
     SITUATION_DIR,
-    bare_fact_line,
-    canonical_dir,
-    ensure_vault,
     is_conflict_copy,
-    redact,
 )
+from .infra.vault import canonical_dir, ensure_vault
 from .conflict import read_conflicts
 
 ACCESS_RETENTION_DAYS = 180

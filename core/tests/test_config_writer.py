@@ -22,6 +22,7 @@ from unittest import mock
 # into a temp dir, so nothing here can reach the user's real ~/.unified-memory.yaml.
 from test_common import assert_guard_intact
 from unified_memory import config
+from unified_memory.infra import config as infra_config  # B1: the real home of the writer
 
 
 class ConfigWriterTest(unittest.TestCase):
@@ -174,8 +175,8 @@ class ConfigWriterTest(unittest.TestCase):
                 raise PermissionError(13, "Permission denied")
             return real_open(*args, **kwargs)
 
-        with mock.patch.object(config.os, "open", side_effect=lost_race):
-            with config._locked(self.path):
+        with mock.patch.object(infra_config.os, "open", side_effect=lost_race):
+            with infra_config._locked(self.path):
                 pass
         self.assertGreaterEqual(attempts["n"], 2, "the failed creation must be retried")
         self.assertFalse(lock.exists(), "the lock is released when the block exits")

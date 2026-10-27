@@ -30,7 +30,7 @@ import urllib.request
 from pathlib import Path
 
 from . import index
-from .common import parse_config, resolve_vault
+from .infra.config import parse_config, resolve_vault
 
 EMBED_URL = "https://api.siliconflow.cn/v1/embeddings"
 EMBED_MODEL = "Qwen/Qwen3-Embedding-4B"

@@ -33,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from unified_memory import memory as mem_mod
 from unified_memory import common
 from unified_memory import schema
+from unified_memory.infra import config as infra_config
 
 
 def index_db_name_for(vault: Path) -> str:
@@ -96,6 +97,7 @@ def _arm_guard() -> None:
     """Pin every real-home escape hatch into the guard dir. Idempotent."""
     common.CONFIG_PATH = _GUARD_CONFIG
     mem_mod.CONFIG_PATH = _GUARD_CONFIG
+    infra_config.CONFIG_PATH = _GUARD_CONFIG
     mem_mod.INDEX_DB = _GUARD_INDEX_DB
     os.environ["UNIFIED_MEMORY_INDEX_DB"] = str(_GUARD_INDEX_DB)
     # UNIFIED_MEMORY_VAULT keeps resolve_vault() off the real config file. It is
@@ -142,6 +144,7 @@ def make_scratch_vault() -> Path:
     # Redirect config + index away from the real home directory.
     common.CONFIG_PATH = root / "config.yaml"
     mem_mod.CONFIG_PATH = common.CONFIG_PATH
+    infra_config.CONFIG_PATH = common.CONFIG_PATH
     mem_mod.INDEX_DB = root / "index.db"
     os.environ["UNIFIED_MEMORY_VAULT"] = str(vault)
     # The parent-process rebind above cannot reach a child process: a spawned
@@ -227,11 +230,14 @@ class ScratchIsolationGuardTest(unittest.TestCase):
         and this pins that behaviour plus the guard that notices a relapse.
         """
         from unified_memory import config
+        from unified_memory.infra import config as infra_config
 
         # A rebind after import must be honoured by the next call.
         redirected = _GUARD_ROOT / "rebound.yaml"
         saved = common.CONFIG_PATH
+        saved_infra = infra_config.CONFIG_PATH
         common.CONFIG_PATH = redirected
+        infra_config.CONFIG_PATH = redirected
         try:
             self.assertEqual(config.default_path(), redirected)
             config.set_key("vault", "/tmp/redirected")
@@ -239,6 +245,7 @@ class ScratchIsolationGuardTest(unittest.TestCase):
             self.assertIn("vault: /tmp/redirected", redirected.read_text(encoding="utf-8"))
         finally:
             common.CONFIG_PATH = saved
+            infra_config.CONFIG_PATH = saved_infra
         # And the guard can actually SEE a change. Prove it against a synthetic
         # file rather than against the developer's real config: on a clean
         # machine — every CI runner — there is no ~/.unified-memory.yaml, and a

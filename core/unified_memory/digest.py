@@ -43,14 +43,9 @@ import urllib.request
 from pathlib import Path
 
 from . import embed, index
-from .common import (
-    atomic_create,
-    canonical_dir,
-    looks_like_credential,
-    parse_config,
-    redact,
-    resolve_vault,
-)
+from .domain.markdown import looks_like_credential, redact
+from .infra.config import parse_config, resolve_vault
+from .infra.vault import atomic_create, canonical_dir
 
 SESSION_DIRS = ("会话归档", "Hermes会话自动归档")
 CHAT_URL = "https://api.siliconflow.cn/v1/chat/completions"
@@ -301,21 +296,21 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--on", action="store_true", help="re-enable a digest turned off with --off")
     args = parser.parse_args(argv)
     vault = Path(args.vault) if args.vault else resolve_vault()
-    from .common import CONFIG_PATH
+    from .infra import config as config_mod
 
     if args.off and args.on:
         raise SystemExit("digest: --on and --off are mutually exclusive")
     if args.off:
-        _set_enabled(CONFIG_PATH, False)
+        _set_enabled(config_mod.CONFIG_PATH, False)
         print("session digest disabled (digest.enabled=false)")
         return
     if args.on:
         # --off had no counterpart: once disabled, the only way back was to
         # hand-edit the config file that --off itself had just written.
-        _set_enabled(CONFIG_PATH, True)
+        _set_enabled(config_mod.CONFIG_PATH, True)
         print("session digest enabled (digest.enabled=true)")
         return
-    if not digest_enabled(CONFIG_PATH):
+    if not digest_enabled(config_mod.CONFIG_PATH):
         print("session digest is disabled (run `memory digest --on` to re-enable)")
         return
     report = digest(vault, dry_run=args.dry_run, limit=args.limit, source=args.source)

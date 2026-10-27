@@ -31,16 +31,15 @@ import sys
 import time
 from pathlib import Path
 
-from .common import (
-    UNCLASSIFIED_FACT_REL,
+from .domain.markdown import (
     bare_fact_line,
-    canonical_dir,
-    is_conflict_copy,
     is_versioned,
     parse_stamp,
     redact,
     source_agent,
 )
+from .domain.policy import UNCLASSIFIED_FACT_REL, is_conflict_copy
+from .infra.vault import canonical_dir
 from .schema import SCHEMA_VERSION, index_db_for, get_conn  # noqa: F401  (re-exported API)
 
 __all__ = [

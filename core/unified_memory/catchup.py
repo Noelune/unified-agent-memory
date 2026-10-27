@@ -32,7 +32,9 @@ import json
 from pathlib import Path
 
 from . import forgetter, promoter
-from .common import ensure_vault, mark_schedule_run, read_schedule_state, resolve_vault
+from .infra.config import resolve_vault
+from .infra.schedule import mark_schedule_run, read_schedule_state
+from .infra.vault import ensure_vault
 
 PROMOTE_HOUR = 3   # daily promotion fires at 03:00 local
 FORGET_HOUR = 4    # weekly forgetting fires Monday 04:00 local

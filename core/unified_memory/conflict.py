@@ -36,16 +36,10 @@ import re
 import time
 from pathlib import Path
 
-from .common import (
-    ADJUDICATED_FILE,
-    CONFLICT_FILE,
-    atomic_write,
-    bare_fact_line,
-    collapse_whitespace,
-    file_lock,
-    read_maybe,
-    situation_dir,
-)
+from .domain.markdown import bare_fact_line, collapse_whitespace
+from .domain.policy import ADJUDICATED_FILE, CONFLICT_FILE
+from .infra.lock import file_lock
+from .infra.vault import atomic_write, read_maybe, situation_dir
 
 
 def char_bigrams(text: str) -> set[tuple[str, str]]:

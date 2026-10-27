@@ -34,7 +34,7 @@ import sys
 import time
 from pathlib import Path
 
-from .common import redact
+from .domain.markdown import redact
 
 DB_ENV = "UNIFIED_MEMORY_SESSION_DB"
 # Durable facts live in what the human said and what the agent concluded. Tool

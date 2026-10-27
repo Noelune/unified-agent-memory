@@ -20,14 +20,14 @@ import os
 from pathlib import Path, PurePosixPath
 
 from . import index as index_mod
-from .common import (
+from .domain.markdown import redact
+from .domain.policy import (
     AGENT_CONTEXT,
     CANONICAL_DOCS,
     NON_SUBMISSION_FILES,
     SUBMISSION_DIR,
-    canonical_dir,
-    redact,
 )
+from .infra.vault import canonical_dir
 from .conflict import (
     ADVICE_CHOICE,
     ADVICE_WHY,
