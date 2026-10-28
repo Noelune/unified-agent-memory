@@ -19,14 +19,17 @@
 | B5.3 | legacy 实现模块迁入 layers | ⛔ 连带阻塞（embed/digest 含 urllib 不可新建；其余依赖 B5.2 后再做） | — |
 | B5.4 | promoter/conflict/forgetter/maintenance 拆分到 ≤600 行；register_cron → infra/schedule | ⛔ 顺延（govern 命令模块引用 legacy promoter/conflict 的白名单条目依赖 B5.2） | — |
 | B5.5 | 拆 8 个 >60 行函数；ENFORCE_BUDGETS=True；白名单清空 | ⛔ 顺延（需 B5.2–B5.4 全部完成） | — |
+| 维护轮 | 全量测试 + 测试隔离修复（journal / decide 集成 / bench）+ 真实 home 清理 | ✅ 完成（2026-10-29） | `4a1a50a`、`c2de07c` |
 | 收尾 | BATCH-REPORT 定稿 + push origin | ⬜ 推送待用户确认（remote=GitHub 公共仓库） | — |
 
-## 验证基线（B4 后，全绿）
+## 验证基线（维护轮后，全绿）
 
-- Python 439（skipped=1 预算门）/ JS 886 / setup 32 / typecheck 0
+- Python 455（skipped=1 预算门）/ JS 886（41 文件）/ setup 32 / node 24 / typecheck 0
+- `npm run check` 全链退出 0（typecheck → drift:check → sync:check → vitest → python → setup → build → node test → drift:python）
 - bench fixture：recall@5/10=0.9167、mrr/ndcg=0.9167、abstain=0.75、update_top1_ok=1.0、empty=0.25（与 after-a12 一致）
-- CLI 快照：42/42 逐字节一致
-- 结构指标（B5 前实测）：memory.py 1305、promoter.py 1055、conflict.py 619；>600 行文件 3 个；>60 行函数 8 个
+- CLI 快照：42/42 逐字节一致；真实库副本迁移 164 memories / 130 embeddings / 752 access_log 守恒
+- 隔离：Python 套件、vitest、bench、figures-smoke 跑完后 `~/.unified-memory/` **零新增文件**
+- 结构指标（B5 前实测，未变）：memory.py 1305、promoter.py 1055、conflict.py 619；>600 行文件 3 个；>60 行函数 8 个
 
 ## 逐项详情
 
@@ -48,12 +51,25 @@
 
 （B5.2 起逐项填充）
 
+### 维护轮（2026-10-29）：全量测试 + 测试隔离修复 + 真实 home 清理
+
+- **起因**：用户要求"完整跑所有能跑的测试，全绿"。六道门本来就绿，但复跑时发现**绿了却在污染本机真实 home**——测试隔离漏了第三个出口。
+- **全量矩阵（实测）**：Python 455 / JS 886（41 文件）/ setup 32 / node 24 / typecheck 0 / build 成功 / drift 双侧通过 / sync 通过 / 打包审计 146 entries / bench 与 after-a12 逐字段一致 / CLI 快照 42 例逐字节 / 真实库副本迁移 164·130·752 守恒 / figures-smoke 全 PASS / 8 个模块入口 `--help` 全 OK / **托管 Python 3.13.12 跑核心套件同样 455 OK** / Python 与 JS 套件各跑两轮结果一致（无偶发）。
+- **修复 1（journal 泄漏）**：`infra/journal.py` 的 `JOURNAL_BASE` 是模块级常量，`test_common._arm_guard()` 只钉了 `CONFIG_PATH` 与 `INDEX_DB`，于是每个 promoting 测试往真实 `~/.unified-memory/journal/` 追加一个 jsonl（单日 183 个）。修复 = 新增 `UNIFIED_MEMORY_JOURNAL_DIR`（子进程可继承，与 `UNIFIED_MEMORY_INDEX_DB` 同构，默认路径不变）+ 守卫 rebind 全局并设 env + `assert_guard_intact()` 纳入检查 + 回归测试 `test_journal_is_never_written_under_the_real_home`（Python 454 → 455）。
+- **修复 2（decide 集成测试泄漏）**：`test/route-decide-integration.test.ts` 的 `runCore` 继承真实 `process.env`，每次生成一个真实 `index-<hash>.db`。修复 = `beforeAll` 把 `UNIFIED_MEMORY_INDEX_DB` / `UNIFIED_MEMORY_JOURNAL_DIR` 指到 per-file 临时目录，`afterAll` 还原原值。
+- **修复 3（bench 泄漏）**：`bench/run.py` 只把 vault 复制到 temp，`memory.INDEX_DB` 仍是真实默认值，于是每次 `--fixture-only`（verify.sh 第 5 道门）生成一个索引库。修复 = 新增 `_pin_state()`，fixture / real / latency 三趟各用独立临时索引库与 journal 目录；指标不变。
+- **附带**：`scripts/figures-smoke.mjs` 自述"辅助文件已 gitignore"但实际没有，已补两条规则，跑 smoke 不再弄脏工作树。
+- **验证方法学（踩坑，写下来给下一位）**：判断"是否污染真实 home"**不能用 mtime**——本机 dsh 插件常驻，会持续写自己的 `index-71a04777…db`，按时间戳会大量误报；正确做法是比对**文件名集合差**。`stat -c %Y` 只有秒精度会漏同一秒内的变化，要用 `%y`（纳秒）。
+- **清理执行**：`~/.unified-memory/journal/` 487 个 jsonl（816 KB，全部指向 `%TEMP%\um-test-*`）+ `index-*.db` 44 个（0 记忆、仅一条 `decide:` 测试审计行，5.1 MB）**移入** `~/.unified-memory/_cleanup-backup-20261029-014758/`（531 文件 / 5.94 MB），不是直接删除，可整体还原。清理后 62 个库全部 `memories > 0`，真实库 164/130/752 完好；清理脚本 `../cleanup_home_artifacts.py`（判据：journal 的 change doc 必须落在 temp；db 必须 memories/embeddings/access_log 全 0 且 audit 仅 `decide:`）。
+- **测试结果**：清理后六道门 + `npm run check` 复验全绿，`~/.unified-memory/` 零新增。
+
 ## 删除清单
 
 - B3：三处重复的围栏拼装实现（render_hybrid / print_memory_data / cmd_show 各自的报头+标签常量），合并进 `domain/envelope.py`。
 - B4：三个 canonical 写者各自的内联 `with file_lock` 写入块（promote/demote/repair），合并进 `infra/vault.apply` 唯一执行器；`atomic_write` 的无 fsync 版本。
 - B5.1：`promoter.decide` 里的 DECISIONS 成员校验（改走状态机）。
 - B5.2（阻塞回滚）：无删除——拆分件完整保存在 `../attic/b5.2-prepared.tar.gz`，解阻塞后解包即得。
+- 维护轮：`~/.unified-memory/journal/*.jsonl` 487 个（816 KB）+ `index-*.db` 44 个（5.1 MB）移入 `_cleanup-backup-20261029-014758/`（531 文件 / 5.94 MB，可整体还原）；备份确认无误后可删该目录。`scripts/` 下两个 smoke 辅助文件改为忽略，不再产生未跟踪文件。
 
 ## bench 前后对比
 
@@ -62,7 +78,9 @@
 ## 已知风险
 
 - 本机 `python` 默认解析到 AutoClaw vendored Python（`._pth` 冻结 sys.path），验证必须用 `../verify.sh`（已封装 Python311 + UNIFIED_MEMORY_PYTHON）。
+- `npm run check` 里的 `sync:check` 要求工作树干净：有未提交改动就会红，这是设计而非缺陷；要么先提交，要么只用 `../verify.sh`。
 - `python bench/verify_live_migration.py` 读取本机真实索引库的**副本**；B5 不改 schema（停在 v10），无需执行 I4。
+- 判断测试是否污染真实 home 时不要用 mtime：本机 dsh 插件常驻会持续写自己的 `index-71a04777…db`，会误报；用文件名集合差。
 
 ## ⛔ 阻塞记录：Mimosa SSRF 规则 vs memory.py 拆分（B5.2 硬阻塞，已按红线回滚）
 
@@ -92,7 +110,7 @@
 ## 待办发现
 
 1. **Mimosa SSRF 规则与本项目迁移冲突**（本批次最大发现）：任何新建/改写的 .py 含 `urllib`/`urlopen`/动态 URL 即被整文件拦截，导致 embed/digest/memory 三个含出站调用的模块无法物理迁移。解除路径三选一，见"阻塞记录"节。
-2. `~/.unified-memory.yaml` 曾被某次 e2e 测试指到临时目录（`Temp\uam-e2e\vault`），2026-10-27 已改回真实 vault（索引哈希 `71a04777…` 核对确认）。建议测试框架避免测试直写用户全局配置。
+2. `~/.unified-memory.yaml` 曾被某次 e2e 测试指到临时目录（`Temp\uam-e2e\vault`），2026-10-27 已改回真实 vault（索引哈希 `71a04777…` 核对确认）。建议测试框架避免测试直写用户全局配置。**2026-10-29 复检**：配置仍指向真实 vault、mtime 停在 2026-10-27，未复现；同期发现并修掉了 journal 与两处索引库的同类泄漏（见"维护轮"）。
 3. 用户 vault 的 git 仓库有 **427 个未提交变更**、`.githooks` 为空——做任何"以 git 为记忆事务日志"类功能前必须先清基线。
 4. `README.md` 被 canonical 索引收录（7 条事实行）——模板说明文件混进了事实库，可考虑在 indexed_files 里排除。
 
