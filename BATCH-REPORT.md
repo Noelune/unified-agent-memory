@@ -113,6 +113,48 @@
 - **测试结果**：每个子步七道门全绿（Python 457 / JS 886 / setup 32 / typecheck / bench / 快照 42 / e2e 46）。
 - **遗留**：`index`/`embed`/`search`/`promoter`/`conflict`/`forgetter`/`maintenance`/`sessiondb` 仍平铺（B5.4/B5.5）；`app.query.commands` 的 `memory` 懒导入仍是环，等 HTTP 客户端搬进 `app.remote` 后清除。
 
+## B5.4 / B5.5 未完成：接手说明（2026-10-29 收工点）
+
+B5.2、B5.3 已入库并全绿；B5.4（promoter/conflict 拆分 + cron 搬迁）与 B5.5（预算门 + 清空白名单）**未动**。下面是本轮实际探查到的结论，接手者可直接照做，不必重走弯路。
+
+### 为什么停在这里
+
+- 剩余两项都是"拆 1000 行级文件 + 改全部调用面"，单步风险高；本轮已连续完成 6 个模块搬迁，继续硬推会把工作树留在半红状态，违反"每个提交独立全绿"。
+- 已确认的三个技术障碍（见下）需要设计决策，不是机械操作；按任务书"方案有歧义 → 停下写明"，此处停下。
+
+### 障碍 1：conflict.py 不能按函数边界机械切分
+
+`describe()` / `split_change()` 是纯函数，但它们依赖的五个正则常量（`_BULLET`、`_PROVENANCE_TAIL`、`_RECORDED_AT`、`_SOURCE_IN_STAMP`、`_WIKILINK`）定义在**队列 I/O 段内部**（第 434–441 行，夹在 `read_conflicts` 与 `describe` 之间）。按"纯函数留 domain"直接切行会得到一个缺常量的 domain 模块。
+
+**建议方案**：先把这五个正则与 `_BOUNDARY` / `_SNAP_LIMIT` 一起上移到 `domain/markdown.py` 或新的 `domain/conflict.py` 顶部，再切分；切完用 `python -c "import unified_memory.domain.conflict"` + 现有 457 例验证。**放弃方案**：在 domain 里重复定义常量（两份真相，迟早漂移）。
+
+### 障碍 2：promoter.py 的 1055 行不是四个独立块
+
+`promote / review / decide / cron` 共享一组模块级状态：`CATEGORY_RULES`、`DECISIONS`/`ADVISABLE`、`_pending_path`、`plan_promotion` 的返回结构，以及 `_refresh_index`/`mark_schedule_run` 的调用时序（B4 明确要求"apply 之后再刷"）。直接按函数名切会把共享常量撕成两份。
+
+**建议方案**：先切出 `domain/policy` 已有的分类规则（`CATEGORY_RULES` 可整体下沉 domain），再按"plan / execute / adjudicate / schedule"四块切，每切一块跑一次七道门。**放弃方案**：只做文件搬家不改结构（对 B5.5 的 450/600 行预算没有帮助）。
+
+### 障碍 3：register_cron 搬进 infra/schedule 会遇到反向依赖
+
+`forgetter.register_cron` 需要 `forgetter.forget_dir(vault)` 来算 `.bat` 落点；直接 import 会形成 `infra.schedule → forgetter → infra.schedule` 的环。
+
+**建议方案**：把 `register_cron` 改成 `infra.schedule.register_job(*, name, module, vault, schedule, log_path, work_dir)` 的通用形式，由调用方（forgetter/promoter）传入路径与调度参数；这样 schedule 不认识任何业务模块，subprocess/write_bytes 白名单可一次清空两条。**放弃方案**：在 schedule 里 import forgetter（环）。
+
+### 当前白名单（B5.3 收工态，接手时照此收敛）
+
+| 规则 | 剩余条目 | 清除条件 |
+|---|---|---|
+| sqlite3 | `sessiondb` | 移到 `infra/sessiondb.py` |
+| writes | `conflict`、`forgetter`、`promoter`、`sessiondb` | 前三个的写盘改走 `infra.vault.apply`；sessiondb 随搬家 |
+| subprocess | `app.maintain.drift`、`forgetter`、`promoter` | drift 的 `--git-precommit` 保留例外；后两个随障碍 3 |
+| lazy_import | `app.ingest.digest`、`app.maintain.drift`、`app.maintain.health`、`embed`、`maintenance`、`promoter`、`search`、`app.query.commands` | 前三个是可选依赖/环，需逐条判定；`app.query.commands` 随 HTTP 客户端搬进 `app.remote` |
+| third_party | `app.maintain.drift` | PyYAML 例外，B0 已批准 |
+| layers | `app.govern.commands`、`app.ingest.commands`、`app.ingest.digest`、`app.query.commands`、`app.query.preview`、`app.system`、`app.maintain.drift`、`app.maintain.health` | 随 B5.4 把 promoter/conflict/search/index/embed 搬进 layers |
+
+### 预算门（B5.5）现状
+
+`ENFORCE_BUDGETS` 仍为 `False`。翻 True 前必须解决：`promoter.py` 1055 行、`conflict.py` 619 行（>600 硬限），以及 8 个 >60 行函数（`health.doctor` 207、`build_parser` 155、`search_index.update_memories` 141、`promoter.review` 132、`search.hybrid_search` 102、`infra.lock.file_lock` 94、`drift.main` 86、`store/schema._ensure_schema` 75）。
+
 ## 删除清单
 
 
