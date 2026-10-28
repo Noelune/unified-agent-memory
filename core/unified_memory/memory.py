@@ -377,6 +377,7 @@ def cmd_search(args: argparse.Namespace) -> None:
                 "See docs/DEPLOY.md."
             )
         url, token = rc
+        mode = "remote"
         try:
             results = remote_search(url, token, args.query, args.limit)
         except Exception as exc:  # noqa: BLE001
@@ -385,6 +386,21 @@ def cmd_search(args: argparse.Namespace) -> None:
             # silently return no matches for a missing vault.
             ensure_vault(vault)
             results = search_index(args.query, args.limit, vault)["results"]
+            mode = "local"
+        if want_json:
+            # Every other search mode honours --json; this branch used to print
+            # the fenced text regardless, so a caller asking for JSON got a
+            # human panel and failed to parse it.
+            emit_json(
+                "search",
+                {
+                    "query": args.query,
+                    "mode": mode,
+                    "count": len(results),
+                    "results": [dict(r, untrusted=True) for r in results],
+                },
+            )
+            return
         print_memory_data(args.query, results)
         return
     ensure_vault(vault)

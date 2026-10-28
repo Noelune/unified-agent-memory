@@ -89,8 +89,17 @@ class Handler(BaseHTTPRequestHandler):
                 return
             limit = min(max(int(payload.get("limit", 8)), 1), 100)
             result = mem_mod.search_index(query, limit, self.vault)
+            # Redact the CONTENT, not the identity. `id` is the sha256 the
+            # citation protocol echoes back, and `doc` is a file name: running
+            # them through redact() turned a 64-hex id into
+            # "<REDACTED_HEX_SECRET>" and every remote hit rendered as
+            # "[<REDACTED_] …", so a citation could never be resolved.
+            keep = ("id", "doc")
             safe_results = [
-                {key: redact(value) if isinstance(value, str) else value for key, value in item.items()}
+                {
+                    key: value if key in keep or not isinstance(value, str) else redact(value)
+                    for key, value in item.items()
+                }
                 for item in result["results"]
             ]
             self._send_json(200, {"ok": True, "results": safe_results})

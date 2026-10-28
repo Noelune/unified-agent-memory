@@ -127,6 +127,39 @@ class RemoteSearchTest(unittest.TestCase):
                 urllib.request.urlopen(request)
             self.assertEqual(raised.exception.code, 400)
 
+    def test_remote_text_output_keeps_the_citation_id(self):
+        """The id must survive the server-side redaction.
+
+        The server redacted every string field, so a 64-hex id became
+        "<REDACTED_HEX_SECRET>" and every hit rendered as "[<REDACTED_] …" —
+        the citation the model is supposed to echo back was unusable.
+        """
+        server = RemoteServer(self.vault, "tok123")
+        self.addCleanup(server.close)
+        os.environ["UNIFIED_MEMORY_REMOTE_URL"] = server.url
+        os.environ["UNIFIED_MEMORY_REMOTE_TOKEN"] = "tok123"
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            mem_mod.cmd_search(Namespace(query="indigo", limit=8, remote=True))
+        out = buf.getvalue()
+        self.assertRegex(out, r"\[[0-9a-f]{10}\]")
+        self.assertNotIn("REDACTED", out)
+
+    def test_remote_json_mode_returns_a_json_envelope(self):
+        """`--remote --json` used to print the human fence regardless."""
+        server = RemoteServer(self.vault, "tok123")
+        self.addCleanup(server.close)
+        os.environ["UNIFIED_MEMORY_REMOTE_URL"] = server.url
+        os.environ["UNIFIED_MEMORY_REMOTE_TOKEN"] = "tok123"
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            mem_mod.cmd_search(Namespace(query="indigo", limit=8, remote=True, json=True))
+        payload = json.loads(buf.getvalue())
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["data"]["mode"], "remote")
+        self.assertGreaterEqual(payload["data"]["count"], 1)
+        self.assertRegex(payload["data"]["results"][0]["id"], r"^[0-9a-f]{64}$")
+
     def test_remote_search_times_out_an_incomplete_request_body(self):
         server = RemoteServer(self.vault, "tok123")
         self.addCleanup(server.close)
