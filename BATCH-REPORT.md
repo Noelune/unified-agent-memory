@@ -15,10 +15,10 @@
 | B3 | Evidence 读模型 + envelope 唯一围栏 | ✅ 完成 | `9d95bbd` |
 | B4 | ChangeSet + executor + journal | ✅ 完成 | `0ad04f4` |
 | B5.1 | domain/state.py 状态机 + decide/supersede 接线 | ✅ 完成 | `72d7a9d` |
-| B5.2 | 拆 memory.py → surface/cli.py + app 命令模块 + shim | ⛔ 阻塞跳过（SSRF 扫描器拦 memory.py 重写；拆分件已保全于 attic） | — |
-| B5.3 | legacy 实现模块迁入 layers | ⛔ 连带阻塞（embed/digest 含 urllib 不可新建；其余依赖 B5.2 后再做） | — |
-| B5.4 | promoter/conflict/forgetter/maintenance 拆分到 ≤600 行；register_cron → infra/schedule | ⛔ 顺延（govern 命令模块引用 legacy promoter/conflict 的白名单条目依赖 B5.2） | — |
-| B5.5 | 拆 8 个 >60 行函数；ENFORCE_BUDGETS=True；白名单清空 | ⛔ 顺延（需 B5.2–B5.4 全部完成） | — |
+| B5.2 | 拆 memory.py → surface/cli.py + app 命令模块 + 119 行 shim | ✅ 完成（阻塞已解除，2026-10-29） | `d247aa1` |
+| B5.3 | legacy 实现模块迁入 layers | ⬜ 待做（阻塞已解除） | — |
+| B5.4 | promoter/conflict/forgetter/maintenance 拆分到 ≤600 行；register_cron → infra/schedule | ⬜ 待做 | — |
+| B5.5 | 拆 8 个 >60 行函数；ENFORCE_BUDGETS=True；白名单清空 | ⬜ 待做 | — |
 | 维护轮 | 全量测试 + 测试隔离修复（journal / decide 集成 / bench）+ 真实 home 清理 + 46 项真功能 e2e（发现并修掉远端两处缺陷） | ✅ 完成（2026-10-29） | `4a1a50a`、`c2de07c`、`00050f4` |
 | 收尾 | BATCH-REPORT 定稿 + push origin | ⬜ 推送待用户确认（remote=GitHub 公共仓库） | — |
 
@@ -29,7 +29,7 @@
 - bench fixture：recall@5/10=0.9167、mrr/ndcg=0.9167、abstain=0.75、update_top1_ok=1.0、empty=0.25（与 after-a12 一致）
 - CLI 快照：42/42 逐字节一致；真实库副本迁移 164 memories / 130 embeddings / 752 access_log 守恒
 - 隔离：Python 套件、vitest、bench、figures-smoke 跑完后 `~/.unified-memory/` **零新增文件**
-- 结构指标（B5 前实测，未变）：memory.py 1305、promoter.py 1055、conflict.py 619；>600 行文件 3 个；>60 行函数 8 个
+- 结构指标（B5.2 后实测）：memory.py 1305 → **119**；新增 surface/cli.py 232、app/ 合计 1145；promoter.py 1055、conflict.py 619 未动（B5.4）；>600 行文件 2 个（promoter/conflict）；>60 行函数 8 个
 
 ## 逐项详情
 
@@ -80,12 +80,29 @@
 
 **仍未做真实验证的路径（如实记录）**：① SiliconFlow 向量与 LLM digest 的真实网络调用（无密钥，只验了降级路径）；② `--cron` / `--cron` 注册（会在本机 `schtasks` 建真实计划任务，属系统级副作用，未执行）；③ dsh 桌面端 UI 的真实浏览器渲染（只有契约测试 + 无 DOM 的组件 smoke）；④ 跨机远端（只跑 loopback）；⑤ 真实 vault 的写操作（按硬约束只用副本，迁移验证在副本上做）。
 
+### B5.2 拆 memory.py → surface/cli.py + app/* 命令模块
+
+- **调研**：`attic/b5.2-prepared.tar.gz` 里的拆分件（1395 行）是阻塞前准备的，**从未被执行过**。逐模块核对导入面后发现四类问题：① 四个子包命令模块的相对导入少一层（`..domain` → 应为 `...domain`，`from . import preview` 指向了 `app.ingest`）；② `emit_json` 与 `remote_config` 的落点与拆分件假设不一致（前者需进 `infra.console`，后者已在 `app.remote`）；③ 拆分件复制的是 `00050f4` 之前的 `cmd_search`，远端 `--json` 修复丢失；④ `CONFIG_PATH` 被写成模块级快照，`rebind` 失效。**选定方案**：修拆分件而不是重写——它已经是逐字迁移，问题都在导入与注入点。**放弃方案**：从 `memory.py` 重新拆一遍（会丢已有 docstring 与注释，且无收益）。
+- **设计**：`surface/cli.py` 只留 grammar + dispatch + `plain_reason`（232 行）；命令体按域落 `app/{system,query,ingest,govern,maintain}/`；`memory.py` 收成 119 行 shim，**按任务要求原位保留** `INDEX_DB`（`infra.store.schema` 经 `sys.modules` 读、测试 rebind）与 `remote_search`（HTTP 客户端）。回滚方式：`git revert d247aa1`（纯搬迁，无数据格式变化）。
+- **虚拟项目验证**：`e2e_all_features.py` 46 项（22 子命令 + 8 入口 + 真 HTTP）全过；`make_scratch_vault` 隔离跑完真实 `~/.unified-memory/` 零新增。
+- **过程中抓到并修掉的真实回归**：
+  1. **真实 `~/.unified-memory.yaml` 被测试写掉**：拆分件的 `app/system.py` 在模块级 `from ...infra.config import CONFIG_PATH`，把路径冻在导入时刻；测试 rebind `infra.config.CONFIG_PATH` 后写入仍指向真实 home。隔离守卫的指纹检查当场报红，配置已从它自己写的 `.bak-20261029-021449` **逐字节恢复**（现为 `vault: C:\Users\zhaowei\OneDrive\Desktop\Obsidian Vault`）。修复：`app/{system,ingest/commands,remote}.py` 全部改为调用时 `config_mod.default_path()`。
+  2. **`--json` 远端修复在搬迁中丢失**：拆分件复制的是修复前的 `cmd_search`，`test_remote_json_mode_returns_a_json_envelope` 立刻红。修复：把 `00050f4` 的分支重新落进 `app/query/commands.py`。
+  3. **surface 层 import infra**：`surface/cli.py` 为捕获 `VaultMissing` 直接 import `infra.config`，违反层规则。修复：`app.system` 再导出 `VaultMissing`，surface 从 app 拿（定义点仍在 `infra/vault.py`，raise 点不变）。
+- **测试跟随（不弱化）**：`test_memory` 的两处 `patch("unified_memory.memory.time.strftime")` 改打新家（`app.ingest.commands` / `app.system`）；`test_config_vault`、`test_digest` 增加 `infra.config.CONFIG_PATH` 的 rebind（规范注入点）；`test/client-findings.test.ts` 扫描 `cmd_doctor` 的新文件。断言内容一字未改。
+- **test_architecture 检查器修正**：`module_layer()` 原先把 `unified_memory.domain`（包本身）判成 legacy，导致 `from ...domain import envelope` 被误报；新增 `LAYER_PACKAGES` 映射。白名单：layers 从空集增加到 5 条（五个 app 模块仍调用待迁的 legacy 实现，每条注明由哪步迁移删除）；lazy 删 `memory`（导入已提到模块级）、加 `app.query.commands`（`memory` 是环，必须函数内导入，B5.3 把 HTTP 客户端搬进 `app.remote` 后删除）。
+- **结构指标**：memory.py 1305 → 119；surface/cli.py 232（软限 450 / 硬限 600 内）；app/ 合计 1145；>600 行文件 3 → 2（剩 promoter 1055、conflict 619）。
+- **测试结果**：七道门全绿（Python 457 / JS 886 / setup 32 / typecheck / bench 与 after-a12 一致 / **快照 42/42 逐字节** / e2e 46）。
+- **遗留风险**：`memory.py` 119 行，未达任务书 §B5 的"≤20 行"——因为用户明确要求 `INDEX_DB` 与 `remote_search` 原位保留；B5.3 把 HTTP 客户端搬进 `app.remote` 后只剩 `INDEX_DB` + 显式 re-export（预计 ~70 行），"≤20 行"需在 B5.5 连同 shim 退场计划一起评估。
+
 ## 删除清单
+
 
 - B3：三处重复的围栏拼装实现（render_hybrid / print_memory_data / cmd_show 各自的报头+标签常量），合并进 `domain/envelope.py`。
 - B4：三个 canonical 写者各自的内联 `with file_lock` 写入块（promote/demote/repair），合并进 `infra/vault.apply` 唯一执行器；`atomic_write` 的无 fsync 版本。
 - B5.1：`promoter.decide` 里的 DECISIONS 成员校验（改走状态机）。
 - B5.2（阻塞回滚）：无删除——拆分件完整保存在 `../attic/b5.2-prepared.tar.gz`，解阻塞后解包即得。
+- B5.2：`memory.py` 的 1305 行实现（argparse 语法、dispatch、22 个命令体、内置模板常量、vault 引导、`emit_json`）全部搬走；`emit_json` 的旧定义从 memory.py 删除（改由 `infra.console` 提供）；`surface/cli.py` 里对 `infra.config` 的直接依赖删除（`VaultMissing` 经 `app.system` 再导出）。
 - 维护轮：`~/.unified-memory/journal/*.jsonl` 487 个（816 KB）+ `index-*.db` 44 个（5.1 MB）移入 `_cleanup-backup-20261029-014758/`（531 文件 / 5.94 MB，可整体还原）；备份确认无误后可删该目录。`scripts/` 下两个 smoke 辅助文件改为忽略，不再产生未跟踪文件。
 
 ## bench 前后对比
@@ -99,7 +116,11 @@
 - `python bench/verify_live_migration.py` 读取本机真实索引库的**副本**；B5 不改 schema（停在 v10），无需执行 I4。
 - 判断测试是否污染真实 home 时不要用 mtime：本机 dsh 插件常驻会持续写自己的 `index-71a04777…db`，会误报；用文件名集合差。
 
-## ⛔ 阻塞记录：Mimosa SSRF 规则 vs memory.py 拆分（B5.2 硬阻塞，已按红线回滚）
+## ✅ 阻塞已解除：Mimosa SSRF 规则 vs memory.py 拆分（2026-10-29 复测）
+
+**复测方法与结果**：按最小探针向 `core/unified_memory/infra/providers/` 写入一个含 `import urllib.request` 与 `urlopen(` 的临时 .py 文件 —— **写入成功，未被拦截**（探针随后删除）。阻塞解除后 `attic/b5.2-prepared.tar.gz` 已解包入库，B5.2 于 `d247aa1` 完成。
+
+**以下是阻塞期间的原始记录，保留作为历史**：
 
 **现象**：任何**新建/改写**的 .py 文件只要包含 `urllib.request` / `urlopen(` / 动态 URL 拼接就被 Mimosa 以"SSRF 高危"拦截（Write、Edit、git mv、git checkout 全部被拦——纯内容级扫描，与是否字面量 URL、是否带 scheme/host 校验无关）。四次尝试全部被拦：
 
