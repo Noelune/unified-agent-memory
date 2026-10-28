@@ -140,13 +140,16 @@ WHITELIST: dict[str, set[str]] = {
         "unified_memory.sessiondb",
     },
     "subprocess": {
-        "unified_memory.drift",
+        # B5.3: drift moved to app/maintain/drift.py (its --git-precommit path
+        # shells out to git). B5.4 moves the cron registration in forgetter and
+        # promoter to infra/schedule and clears those two entries.
+        "unified_memory.app.maintain.drift",
         "unified_memory.forgetter",
         "unified_memory.promoter",
     },
     "lazy_import": {
         "unified_memory.digest",
-        "unified_memory.drift",
+        "unified_memory.app.maintain.drift",
         "unified_memory.embed",
         "unified_memory.health",
         "unified_memory.maintenance",
@@ -162,7 +165,7 @@ WHITELIST: dict[str, set[str]] = {
     # third-party imports: core is dependency-free; drift's optional PyYAML is
     # the one legacy exception (lazy, degrades with an actionable message).
     "third_party": {
-        "unified_memory.drift",
+        "unified_memory.app.maintain.drift",
     },
     # Cross-layer imports. B5.2 moved the 22 command bodies into app/, and they
     # still call the flat legacy implementations that B5.3/B5.4 migrate into
@@ -176,6 +179,9 @@ WHITELIST: dict[str, set[str]] = {
         "unified_memory.app.maintain.commands",
         "unified_memory.app.query.commands",
         "unified_memory.app.system",
+        # drift's optional PyYAML import is the one sanctioned third-party
+        # exception (B0 comment); inside a layer it trips the same rule.
+        "unified_memory.app.maintain.drift",
     },
 }
 

@@ -11,7 +11,7 @@ import sys
 from argparse import Namespace
 from pathlib import Path
 
-from ... import drift as drift_mod
+from . import drift as drift_mod
 from ... import health as health_mod
 from ...infra.config import resolve_vault
 from ...infra.console import emit_json
@@ -121,9 +121,10 @@ def cmd_gc(args: Namespace) -> None:
 
 def cmd_drift(args: Namespace) -> None:
     """Detect code-memory drift."""
-    # drift.py sits at the same depth the old memory.py did (one level under
-    # unified_memory), so the repo-root walk is stable across this move.
-    repo_root = Path(drift_mod.__file__).resolve().parents[2]
+    # drift now lives at app/maintain/drift.py (three levels below
+    # unified_memory), so the repo-root walk grew by two: parents[4] is the
+    # checkout root that holds driftrc.yaml and vault-template/.
+    repo_root = Path(drift_mod.__file__).resolve().parents[4]
     vault_path = Path(args.vault).resolve() if args.vault else None
     if args.template:
         vault_path = repo_root / "vault-template" / "50-Agent-Context"
