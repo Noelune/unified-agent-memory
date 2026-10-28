@@ -1,8 +1,11 @@
 # BATCH-REPORT — 批次 B 交付文档（滚动更新）
 
-> 本文档是批次 B 的**唯一进度台账**，每完成一小步立即更新，防止中断后丢失进度。>   
-> 历史背景：`BATCH-A-REPORT.md`（批次 A）、`BATCH-B-HANDOVER.md`（B0–B4 交接与环境坑）、`TASKBOOK-B.md`（任务书）。>   
-> 工作区：`C:\Users\zhaowei\workspaces\unified-agent-memory-batch-b\repo`，分支 `refactor/batch-b`。>   
+> 本文档是批次 B 的**唯一进度台账**，每完成一小步立即更新，防止中断后丢失进度。
+>   
+> 历史背景：`BATCH-A-REPORT.md`（批次 A）、`BATCH-B-HANDOVER.md`（B0–B4 交接与环境坑）、`TASKBOOK-B.md`（任务书）。
+>   
+> 工作区：`C:\Users\zhaowei\workspaces\unified-agent-memory-batch-b\repo`，分支 `refactor/batch-b`。
+>   
 > 验证命令：`bash ../verify.sh`（七道门：Python 测试 / JS 测试 / setup / typecheck / bench fixture / CLI 快照 42 例 / e2e 46 项）。
 
 ## 总览表
@@ -29,7 +32,7 @@
 - bench fixture：recall@5/10=0.9167、mrr/ndcg=0.9167、abstain=0.75、update_top1_ok=1.0、empty=0.25（与 after-a12 一致）
 - CLI 快照：42/42 逐字节一致；真实库副本迁移 164 memories / 130 embeddings / 752 access_log 守恒
 - 隔离：Python 套件、vitest、bench、figures-smoke 跑完后 `~/.unified-memory/` **零新增文件**
-- 结构指标（B5.2 后实测）：memory.py 1305 → **119**；新增 surface/cli.py 232、app/ 合计 1145；promoter.py 1055、conflict.py 619 未动（B5.4）；>600 行文件 2 个（promoter/conflict）；>60 行函数 8 个
+- 结构指标（B5.3 后实测）：memory.py **119**；surface/cli.py 232；app/ 合计 1962；promoter.py 1055、conflict.py 619 未动（B5.4）；>600 行文件 2 个（promoter/conflict）；>60 行函数 8 个
 
 ## 逐项详情
 
@@ -96,13 +99,29 @@
 - **测试结果**：七道门全绿（Python 457 / JS 886 / setup 32 / typecheck / bench 与 after-a12 一致 / **快照 42/42 逐字节** / e2e 46）。
 - **遗留风险**：`memory.py` 119 行，未达任务书 §B5 的"≤20 行"——因为用户明确要求 `INDEX_DB` 与 `remote_search` 原位保留；B5.3 把 HTTP 客户端搬进 `app.remote` 后只剩 `INDEX_DB` + 显式 re-export（预计 ~70 行），"≤20 行"需在 B5.5 连同 shim 退场计划一起评估。
 
+### B5.3 legacy 实现模块迁入 layers
+
+- **调研**：七个候选模块的依赖面差别很大——`drift` 自包含、`graph` 被 app 与 hybrid 检索共用（任务书要求留 facade）、其余六个都只依赖 domain/infra 加少数 legacy 兄弟。**选定方案**：逐模块 `git mv` 到目标层，旧路径留**显式 re-export shim**（任务书 §0.7：shim 只活一个 minor），这样 `python -m unified_memory.{digest,drift}`、`integrations/hermes/daily_cron.py`、以及所有测试的 import 面都不用改。**放弃方案**：一次性把六个模块连同 import 面全改到新路径（改动面翻倍，且无法用现有测试证明没漏）。
+- **设计**：`drift`→`app/maintain/`、`health`→`app/maintain/`、`digest`/`inbox`→`app/ingest/`、`preview`/`stats`→`app/query/`；`graph` 按任务书保持 legacy facade 不动。shim 只做显式列举（不用 `*`），并在 docstring 写明"一个 minor 后删除"。
+- **虚拟项目验证**：每个模块迁完立刻跑 `python -m unittest discover -s core/tests`（457 例），再做七道门；`e2e_all_features.py` 覆盖 `python -m unified_memory.digest --dry-run`、`sessiondb`、`drift --template`。
+- **过程中抓到的三类真实问题**：
+  1. **`cmd_drift` 的 repo_root 层级**：`Path(drift_mod.__file__).parents[2]` 在文件下沉两层后指向 `unified_memory/` 而不是仓库根，`drift --template` 会找不到 `driftrc.yaml`。改为 `parents[4]` 并写清理由；快照 `drift-template` case 是把关者。
+  2. **懒导入层级**：`digest` 里三处函数内 `from . import config/sessiondb` 在搬迁后指向 `app.ingest`，运行到才炸（`test_sessiondb` 的三个用例当场红）。全部改为 `...`。
+  3. **patch 打在 shim 上等于没打**：`test_digest` / `test_sessiondb` / `test_health` 的 `patch("unified_memory.digest.chat_extract_facts")` 之类，迁完后 patch 的是 shim 的独立绑定，被测代码用的是实现模块的全局——用例会"绿得莫名其妙"或直接红。全部重定向到 `unified_memory.app.<layer>.<module>.<name>`；`test/client-findings.test.ts` 的 `HEALTH_PY` 源码扫描同理改指 `app/maintain/health.py`（它数 `_issue(` 调用点，shim 里是 0）。
+- **白名单变化**：`app.maintain.commands` 因 health/drift 都变成本地兄弟而**退出 layers 集合**；`app.query.preview`、`app.maintain.health` 因仍读 legacy `conflict`/`index` facade 而加入（B5.4/B5.5 清除）；`subprocess`/`lazy_import`/`third_party` 里 drift 的条目跟着模块改名。
+- **结构指标**：六个旧文件 812 行实现变成 6 个 shim 共 118 行；app/ 合计 1145 → 1962；`>600 行文件` 仍是 2 个（promoter 1055、conflict 619，B5.4 处理）。
+- **测试结果**：每个子步七道门全绿（Python 457 / JS 886 / setup 32 / typecheck / bench / 快照 42 / e2e 46）。
+- **遗留**：`index`/`embed`/`search`/`promoter`/`conflict`/`forgetter`/`maintenance`/`sessiondb` 仍平铺（B5.4/B5.5）；`app.query.commands` 的 `memory` 懒导入仍是环，等 HTTP 客户端搬进 `app.remote` 后清除。
+
 ## 删除清单
+
 
 - B3：三处重复的围栏拼装实现（render_hybrid / print_memory_data / cmd_show 各自的报头+标签常量），合并进 `domain/envelope.py`。
 - B4：三个 canonical 写者各自的内联 `with file_lock` 写入块（promote/demote/repair），合并进 `infra/vault.apply` 唯一执行器；`atomic_write` 的无 fsync 版本。
 - B5.1：`promoter.decide` 里的 DECISIONS 成员校验（改走状态机）。
 - B5.2（阻塞回滚）：无删除——拆分件完整保存在 `../attic/b5.2-prepared.tar.gz`，解阻塞后解包即得。
 - B5.2：`memory.py` 的 1305 行实现（argparse 语法、dispatch、22 个命令体、内置模板常量、vault 引导、`emit_json`）全部搬走；`emit_json` 的旧定义从 memory.py 删除（改由 `infra.console` 提供）；`surface/cli.py` 里对 `infra.config` 的直接依赖删除（`VaultMissing` 经 `app.system` 再导出）。
+- B5.3：`drift.py`(445)、`digest.py`(314)、`health.py`(322)、`preview.py`(245)、`stats.py`(130)、`inbox.py`(115) 六份实现搬进 layers，旧路径只留显式 re-export shim（合计 118 行）；`graph.py` 按任务书保留 legacy facade，未动。
 - 维护轮：`~/.unified-memory/journal/*.jsonl` 487 个（816 KB）+ `index-*.db` 44 个（5.1 MB）移入 `_cleanup-backup-20261029-014758/`（531 文件 / 5.94 MB，可整体还原）；备份确认无误后可删该目录。`scripts/` 下两个 smoke 辅助文件改为忽略，不再产生未跟踪文件。
 
 
