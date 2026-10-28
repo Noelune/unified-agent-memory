@@ -83,6 +83,17 @@ LAYER_PREFIXES = (
     (PKG_NAME + ".surface.", "surface"),
 )
 
+# Importing the PACKAGE itself (``from ...domain import envelope``) is not an
+# import of a flat legacy module: the target has no trailing dot, so the prefix
+# table above would call it "legacy" and flag every such line. Map the four
+# package names to their own layer (B5.2).
+LAYER_PACKAGES = {
+    PKG_NAME + ".domain": "domain",
+    PKG_NAME + ".infra": "infra",
+    PKG_NAME + ".app": "app",
+    PKG_NAME + ".surface": "surface",
+}
+
 # The composition root. Only it constructs the runtime (infra access).
 MAIN_MODULE = PKG_NAME + ".__main__"
 
@@ -139,17 +150,33 @@ WHITELIST: dict[str, set[str]] = {
         "unified_memory.embed",
         "unified_memory.health",
         "unified_memory.maintenance",
-        "unified_memory.memory",
         "unified_memory.promoter",
         "unified_memory.search",
+        # B5.2: cmd_search reaches remote_search through the memory shim inside
+        # the function, because the shim imports surface.cli and a module-level
+        # import would close the cycle. Removed by B5.3, which moves the HTTP
+        # client into app.remote (the SSRF blocker that kept it on the shim is
+        # gone — see BATCH-REPORT.md).
+        "unified_memory.app.query.commands",
     },
     # third-party imports: core is dependency-free; drift's optional PyYAML is
     # the one legacy exception (lazy, degrades with an actionable message).
     "third_party": {
         "unified_memory.drift",
     },
-    # cross-layer imports among the new packages: must stay empty forever.
-    "layers": set(),
+    # Cross-layer imports. B5.2 moved the 22 command bodies into app/, and they
+    # still call the flat legacy implementations that B5.3/B5.4 migrate into
+    # app/*: promoter+conflict (govern), digest+inbox (ingest), health+drift
+    # (maintain), search+preview+index+stats (query), embed+graph+index
+    # (system). Each entry disappears with its migration; the set must be
+    # empty by B5.5.
+    "layers": {
+        "unified_memory.app.govern.commands",
+        "unified_memory.app.ingest.commands",
+        "unified_memory.app.maintain.commands",
+        "unified_memory.app.query.commands",
+        "unified_memory.app.system",
+    },
 }
 
 # ---------------------------------------------------------------------------
@@ -192,6 +219,8 @@ def module_layer(module: str) -> str:
     """domain / infra / app / surface / main / legacy."""
     if module == MAIN_MODULE:
         return "main"
+    if module in LAYER_PACKAGES:
+        return LAYER_PACKAGES[module]
     for prefix, layer in LAYER_PREFIXES:
         if module.startswith(prefix):
             return layer

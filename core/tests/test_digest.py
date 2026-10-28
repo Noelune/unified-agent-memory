@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 from test_common import destroy_scratch, make_scratch_vault
 from unified_memory import digest, common
+from unified_memory.infra import config as infra_config
 
 
 class DigestTest(unittest.TestCase):
@@ -25,11 +26,15 @@ class DigestTest(unittest.TestCase):
         # original value is restored in tearDown: leaving a deleted temp path
         # here would hand the next test (or a later digest_enabled call) a
         # config that no longer exists.
+        # B5.2: cmd_digest resolves infra.config.CONFIG_PATH at call time.
         self._saved_config = common.CONFIG_PATH
+        self._saved_infra_config = infra_config.CONFIG_PATH
         common.CONFIG_PATH = self.vault.parent / "config.yaml"
+        infra_config.CONFIG_PATH = common.CONFIG_PATH
 
     def tearDown(self):
         common.CONFIG_PATH = self._saved_config
+        infra_config.CONFIG_PATH = self._saved_infra_config
         destroy_scratch(self.vault)
 
     def _write_session(self, name, body):

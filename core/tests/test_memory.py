@@ -79,7 +79,9 @@ class MemoryCoreTest(unittest.TestCase):
         inbox = canonical_dir(self.vault) / "Agent提交区"
         existing = inbox / "race-20260815-000000-01.md"
         self.assertTrue(atomic_create(existing, "first concurrent fact\n"))
-        with patch("unified_memory.memory.time.strftime", return_value="20260815-000000"):
+        # B5.2: submit moved to app.ingest.commands — patch the module that now
+        # owns the naming clock, not the shim (same injection point, new home).
+        with patch("unified_memory.app.ingest.commands.time.strftime", return_value="20260815-000000"):
             mem_mod.cmd_submit(type("A", (), {"agent": "race", "fact": "second concurrent fact"})())
 
         files = sorted(inbox.glob("race-20260815-000000-*.md"))
@@ -184,7 +186,8 @@ class MemoryCoreTest(unittest.TestCase):
     def test_force_init_creates_distinct_backups_when_repeated_in_one_second(self):
         prefs = canonical_path(self.vault, "prefs")
         prefs.write_text("# My preference\n\n- customized fact\n", encoding="utf-8")
-        with patch("unified_memory.memory.time.strftime", return_value="20260815-120000"):
+        # B5.2: init_vault moved to app.system — patch its clock, not the shim's.
+        with patch("unified_memory.app.system.time.strftime", return_value="20260815-120000"):
             mem_mod.init_vault(self.vault, force=True)
             mem_mod.init_vault(self.vault, force=True)
         backups = sorted(self.vault.parent.glob("vault-backup-20260815-120000*"))

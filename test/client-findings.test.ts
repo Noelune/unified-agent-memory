@@ -32,7 +32,9 @@ const CONSOLE = readFileSync(new URL('../src/client/Console.tsx', import.meta.ur
 const STYLES = readFileSync(new URL('../src/client/styles.ts', import.meta.url), 'utf8')
 
 const HEALTH_PY = new URL('../core/unified_memory/health.py', import.meta.url)
-const MEMORY_PY = new URL('../core/unified_memory/memory.py', import.meta.url)
+// B5.2: cmd_doctor (and the fallback envelope it mints) moved out of
+// memory.py into app/maintain/commands.py — memory.py is a shim now.
+const DOCTOR_CLI_PY = new URL('../core/unified_memory/app/maintain/commands.py', import.meta.url)
 
 /** Comments stripped: assertions about call sites must not match prose. */
 function stripComments(src: string): string {
@@ -57,14 +59,14 @@ const CONSOLE_CODE = stripComments(CONSOLE)
  */
 function coreIssueCodes(): string[] {
   const health = readFileSync(HEALTH_PY, 'utf8')
-  const memory = readFileSync(MEMORY_PY, 'utf8')
+  const doctor_cli = readFileSync(DOCTOR_CLI_PY, 'utf8')
 
   const fromDoctor = [...health.matchAll(/_issue\(\s*"(?:error|warn|info)"\s*,\s*"([a-z][a-z0-9-]*)"/g)]
     .map(function (m) { return m[1] })
 
   // Both branches of the ternary sit on the assignment line; every kebab-case
   // literal on it is a code.
-  const fromFallback = [...memory.matchAll(/^\s*code\s*=\s*(.+)$/gm)]
+  const fromFallback = [...doctor_cli.matchAll(/^\s*code\s*=\s*(.+)$/gm)]
     .flatMap(function (line) {
       return [...line[1].matchAll(/"([a-z][a-z0-9-]*)"/g)].map(function (s) { return s[1] })
     })

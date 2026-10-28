@@ -24,6 +24,7 @@ from pathlib import Path
 
 import test_common  # noqa: F401  (importing arms the temp-home guard)
 from unified_memory import memory as mem_mod
+from unified_memory.infra import config as infra_config
 
 
 class InitRemembersVaultTest(unittest.TestCase):
@@ -33,12 +34,19 @@ class InitRemembersVaultTest(unittest.TestCase):
         self.root = Path(self._tmp.name)
         self.vault = self.root / "vault"
         self.config = self.root / "config.yaml"
+        # B5.2: the config writer resolves infra.config.CONFIG_PATH at call
+        # time (a module-level import would freeze it and leak into the real
+        # home). Rebind BOTH: the canonical one drives the write, mem_mod keeps
+        # the isolation guard's own assertion honest.
         self._saved_config = mem_mod.CONFIG_PATH
+        self._saved_infra_config = infra_config.CONFIG_PATH
         mem_mod.CONFIG_PATH = self.config
+        infra_config.CONFIG_PATH = self.config
         self.addCleanup(self._restore)
 
     def _restore(self):
         mem_mod.CONFIG_PATH = self._saved_config
+        infra_config.CONFIG_PATH = self._saved_infra_config
 
     def _run_init(self, force=False):
         out = io.StringIO()
@@ -98,12 +106,19 @@ class UseExistingVaultTest(unittest.TestCase):
             "# 上下文索引\n", encoding="utf-8"
         )
         self.config = self.root / "config.yaml"
+        # B5.2: the config writer resolves infra.config.CONFIG_PATH at call
+        # time (a module-level import would freeze it and leak into the real
+        # home). Rebind BOTH: the canonical one drives the write, mem_mod keeps
+        # the isolation guard's own assertion honest.
         self._saved_config = mem_mod.CONFIG_PATH
+        self._saved_infra_config = infra_config.CONFIG_PATH
         mem_mod.CONFIG_PATH = self.config
+        infra_config.CONFIG_PATH = self.config
         self.addCleanup(self._restore)
 
     def _restore(self):
         mem_mod.CONFIG_PATH = self._saved_config
+        infra_config.CONFIG_PATH = self._saved_infra_config
 
     def _run_use(self, vault=None):
         out = io.StringIO()

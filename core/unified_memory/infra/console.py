@@ -7,6 +7,7 @@ this module is the side effect; nothing else may move console state.
 """
 from __future__ import annotations
 
+import json
 import sys
 
 
@@ -30,3 +31,13 @@ def ensure_utf8_console(stream=None) -> None:
 
 
 ensure_utf8_console()
+
+
+def emit_json(command: str, data: dict) -> None:
+    """Print one machine-readable JSON envelope (moved from memory.py, B5.2).
+
+    Vault-derived values carry ``untrusted: true`` on their record instead of
+    the text DATA envelope, because this stream is consumed by scripts that
+    must treat those fields as data. See docs/JSON-CONTRACT.md.
+    """
+    print(json.dumps({"ok": True, "command": command, "data": data}, ensure_ascii=False))
