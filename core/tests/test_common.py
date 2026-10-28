@@ -34,6 +34,7 @@ from unified_memory import memory as mem_mod
 from unified_memory import common
 from unified_memory import schema
 from unified_memory.infra import config as infra_config
+from unified_memory.infra import journal as infra_journal
 
 
 def index_db_name_for(vault: Path) -> str:
@@ -63,6 +64,11 @@ def _is_real_home_path(p) -> bool:
 _GUARD_ROOT = Path(tempfile.mkdtemp(prefix="um-guard-"))
 _GUARD_INDEX_DB = _GUARD_ROOT / "index.db"
 _GUARD_CONFIG = _GUARD_ROOT / "config.yaml"
+# The write-ahead journal is a THIRD real-home escape hatch: it lives in
+# ~/.unified-memory/journal/<vault-tag>.jsonl, outside the vault on purpose.
+# B4's executor writes one per apply, so without this pin every promoting test
+# left a journal behind in the developer's real home (183 files in one day).
+_GUARD_JOURNAL = _GUARD_ROOT / "journal"
 
 # Fingerprint of the user's real config, taken before any test runs.
 #
@@ -100,6 +106,10 @@ def _arm_guard() -> None:
     infra_config.CONFIG_PATH = _GUARD_CONFIG
     mem_mod.INDEX_DB = _GUARD_INDEX_DB
     os.environ["UNIFIED_MEMORY_INDEX_DB"] = str(_GUARD_INDEX_DB)
+    # Same redirect for the journal: the global covers this process, the env
+    # var covers spawned children (see infra.journal._base_dir).
+    infra_journal.JOURNAL_BASE = _GUARD_JOURNAL
+    os.environ["UNIFIED_MEMORY_JOURNAL_DIR"] = str(_GUARD_JOURNAL)
     # UNIFIED_MEMORY_VAULT keeps resolve_vault() off the real config file. It is
     # overwritten per scratch vault and only restored to the guard dir (never
     # to the real vault) so no test can reach the real one.
@@ -112,10 +122,14 @@ atexit.register(shutil.rmtree, _GUARD_ROOT, True)
 
 def assert_guard_intact() -> None:
     """Fail loudly if anything re-pointed a redirect at the real home."""
-    if _is_real_home_path(mem_mod.INDEX_DB) or _is_real_home_path(common.CONFIG_PATH):
+    if (
+        _is_real_home_path(mem_mod.INDEX_DB)
+        or _is_real_home_path(common.CONFIG_PATH)
+        or _is_real_home_path(infra_journal._base_dir())
+    ):
         raise AssertionError(
             f"test isolation guard was defeated: INDEX_DB={mem_mod.INDEX_DB} "
-            f"CONFIG_PATH={common.CONFIG_PATH}"
+            f"CONFIG_PATH={common.CONFIG_PATH} JOURNAL={infra_journal._base_dir()}"
         )
     assert_real_config_untouched()
 
@@ -219,6 +233,36 @@ class ScratchIsolationGuardTest(unittest.TestCase):
         self.assertFalse(
             str(os.environ["UNIFIED_MEMORY_INDEX_DB"]).startswith(str(self.REAL_HOME)),
             "the surviving env override points into the real home",
+        )
+
+    def test_journal_is_never_written_under_the_real_home(self):
+        """The journal is the third real-home escape hatch, and it leaked.
+
+        B4's executor appends one ``~/.unified-memory/journal/<vault-tag>.jsonl``
+        per apply — deliberately outside the vault. The vault and the index
+        were redirected; the journal was not, so every promoting test left a
+        file behind in the developer's real home (183 in one day). The redirect
+        must exist both as a global (this process) and as an env var (children).
+        """
+        vault = make_scratch_vault()
+        try:
+            path = infra_journal.journal_path(vault)
+            self.assertFalse(
+                _is_real_home_path(path),
+                f"journal_path() leaks into the real home: {path}",
+            )
+            self.assertEqual(path.parent, _GUARD_JOURNAL)
+            self.assertEqual(
+                os.environ.get("UNIFIED_MEMORY_JOURNAL_DIR"),
+                str(_GUARD_JOURNAL),
+                "the journal env override is missing, so spawned children would "
+                "write the real ~/.unified-memory/journal/",
+            )
+        finally:
+            destroy_scratch(vault)
+        self.assertFalse(
+            _is_real_home_path(infra_journal._base_dir()),
+            "destroy_scratch() un-armed the journal redirect (too-early reset)",
         )
 
     def test_a_module_that_caches_config_path_cannot_write_the_real_home(self):

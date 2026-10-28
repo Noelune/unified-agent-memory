@@ -70,12 +70,30 @@ const BLOCK = [
 
 describe('POST /decide against the real Python core', () => {
   let vault: string
+  let stateDir: string | undefined
+  let priorIndexDb: string | undefined
+  let priorJournalDir: string | undefined
   let cfg: PluginConfig
   let queue: string
   let note: string
 
+  function restoreEnv(name: string, value: string | undefined): void {
+    if (value === undefined) delete process.env[name]
+    else process.env[name] = value
+  }
+
   beforeAll(() => {
     if (!pythonPath) return
+    // The spawned core derives BOTH its index database and its write-ahead
+    // journal from the user profile. Redirect them at the source: a temp vault
+    // alone still left an index-<hash>.db in the developer's real
+    // ~/.unified-memory/ on every run.
+    stateDir = mkdtempSync(join(tmpdir(), 'dsh-decide-state-'))
+    priorIndexDb = process.env.UNIFIED_MEMORY_INDEX_DB
+    priorJournalDir = process.env.UNIFIED_MEMORY_JOURNAL_DIR
+    process.env.UNIFIED_MEMORY_INDEX_DB = join(stateDir, 'index.db')
+    process.env.UNIFIED_MEMORY_JOURNAL_DIR = join(stateDir, 'journal')
+
     vault = mkdtempSync(join(tmpdir(), 'dsh-decide-argv-'))
     const ctx = join(vault, '50-Agent-Context')
     mkdirSync(join(ctx, '情境信息'), { recursive: true })
@@ -92,6 +110,9 @@ describe('POST /decide against the real Python core', () => {
 
   afterAll(() => {
     if (vault) rmSync(vault, { recursive: true, force: true })
+    if (stateDir) rmSync(stateDir, { recursive: true, force: true })
+    restoreEnv('UNIFIED_MEMORY_INDEX_DB', priorIndexDb)
+    restoreEnv('UNIFIED_MEMORY_JOURNAL_DIR', priorJournalDir)
   })
 
   it.skipIf(!pythonPath)(

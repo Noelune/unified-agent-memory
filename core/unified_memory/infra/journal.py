@@ -38,10 +38,23 @@ from pathlib import Path
 JOURNAL_BASE = Path.home() / ".unified-memory" / "journal"
 
 
+def _base_dir() -> Path:
+    """``JOURNAL_BASE``, unless ``UNIFIED_MEMORY_JOURNAL_DIR`` overrides it.
+
+    The env override exists for the same reason ``UNIFIED_MEMORY_INDEX_DB``
+    does: a spawned child re-imports this module and cannot inherit a rebound
+    global, so the redirect has to travel through the environment. Without it
+    every test that spawns the CLI writes a journal under the developer's real
+    ``~/.unified-memory/`` (the vault itself is redirected, the journal was not).
+    """
+    override = os.environ.get("UNIFIED_MEMORY_JOURNAL_DIR")
+    return Path(override) if override else JOURNAL_BASE
+
+
 def journal_path(vault: Path) -> Path:
     """The per-vault journal file (same vault tag as the index database)."""
     tag = hashlib.sha256(str(Path(vault).resolve()).encode("utf-8")).hexdigest()[:16]
-    return JOURNAL_BASE / f"{tag}.jsonl"
+    return _base_dir() / f"{tag}.jsonl"
 
 
 def _append(record: dict) -> None:

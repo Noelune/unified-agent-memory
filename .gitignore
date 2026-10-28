@@ -63,3 +63,7 @@ credentials/
 
 # Superpowers plan workspace (scratch: ledger, briefs, review packages)
 .superpowers/
+
+# Local probes (scripts/figures-smoke.mjs writes these on every run)
+scripts/.react-shim.mjs
+scripts/.figures-shim-hook.mjs
