@@ -3,7 +3,7 @@
 > 本文档是批次 B 的**唯一进度台账**，每完成一小步立即更新，防止中断后丢失进度。
 > 历史背景：`BATCH-A-REPORT.md`（批次 A）、`BATCH-B-HANDOVER.md`（B0–B4 交接与环境坑）、`TASKBOOK-B.md`（任务书）。
 > 工作区：`C:\Users\zhaowei\workspaces\unified-agent-memory-batch-b\repo`，分支 `refactor/batch-b`。
-> 验证命令：`bash ../verify.sh`（六道门：Python 测试 / JS 测试 / setup / typecheck / bench fixture / CLI 快照 42 例）。
+> 验证命令：`bash ../verify.sh`（七道门：Python 测试 / JS 测试 / setup / typecheck / bench fixture / CLI 快照 42 例 / e2e 46 项）。
 
 ## 总览表
 
@@ -19,12 +19,12 @@
 | B5.3 | legacy 实现模块迁入 layers | ⛔ 连带阻塞（embed/digest 含 urllib 不可新建；其余依赖 B5.2 后再做） | — |
 | B5.4 | promoter/conflict/forgetter/maintenance 拆分到 ≤600 行；register_cron → infra/schedule | ⛔ 顺延（govern 命令模块引用 legacy promoter/conflict 的白名单条目依赖 B5.2） | — |
 | B5.5 | 拆 8 个 >60 行函数；ENFORCE_BUDGETS=True；白名单清空 | ⛔ 顺延（需 B5.2–B5.4 全部完成） | — |
-| 维护轮 | 全量测试 + 测试隔离修复（journal / decide 集成 / bench）+ 真实 home 清理 | ✅ 完成（2026-10-29） | `4a1a50a`、`c2de07c` |
+| 维护轮 | 全量测试 + 测试隔离修复（journal / decide 集成 / bench）+ 真实 home 清理 + 46 项真功能 e2e（发现并修掉远端两处缺陷） | ✅ 完成（2026-10-29） | `4a1a50a`、`c2de07c`、`00050f4` |
 | 收尾 | BATCH-REPORT 定稿 + push origin | ⬜ 推送待用户确认（remote=GitHub 公共仓库） | — |
 
 ## 验证基线（维护轮后，全绿）
 
-- Python 455（skipped=1 预算门）/ JS 886（41 文件）/ setup 32 / node 24 / typecheck 0
+- Python 457（skipped=1 预算门）/ JS 886（41 文件）/ setup 32 / node 24 / typecheck 0
 - `npm run check` 全链退出 0（typecheck → drift:check → sync:check → vitest → python → setup → build → node test → drift:python）
 - bench fixture：recall@5/10=0.9167、mrr/ndcg=0.9167、abstain=0.75、update_top1_ok=1.0、empty=0.25（与 after-a12 一致）
 - CLI 快照：42/42 逐字节一致；真实库副本迁移 164 memories / 130 embeddings / 752 access_log 守恒
@@ -53,7 +53,7 @@
 
 ### 维护轮（2026-10-29）：全量测试 + 测试隔离修复 + 真实 home 清理
 
-- **起因**：用户要求"完整跑所有能跑的测试，全绿"。六道门本来就绿，但复跑时发现**绿了却在污染本机真实 home**——测试隔离漏了第三个出口。
+- **起因**：用户要求"完整跑所有能跑的测试，全绿"。七道门里前六道本来就绿，但复跑时发现**绿了却在污染本机真实 home**——测试隔离漏了第三个出口。
 - **全量矩阵（实测）**：Python 455 / JS 886（41 文件）/ setup 32 / node 24 / typecheck 0 / build 成功 / drift 双侧通过 / sync 通过 / 打包审计 146 entries / bench 与 after-a12 逐字段一致 / CLI 快照 42 例逐字节 / 真实库副本迁移 164·130·752 守恒 / figures-smoke 全 PASS / 8 个模块入口 `--help` 全 OK / **托管 Python 3.13.12 跑核心套件同样 455 OK** / Python 与 JS 套件各跑两轮结果一致（无偶发）。
 - **修复 1（journal 泄漏）**：`infra/journal.py` 的 `JOURNAL_BASE` 是模块级常量，`test_common._arm_guard()` 只钉了 `CONFIG_PATH` 与 `INDEX_DB`，于是每个 promoting 测试往真实 `~/.unified-memory/journal/` 追加一个 jsonl（单日 183 个）。修复 = 新增 `UNIFIED_MEMORY_JOURNAL_DIR`（子进程可继承，与 `UNIFIED_MEMORY_INDEX_DB` 同构，默认路径不变）+ 守卫 rebind 全局并设 env + `assert_guard_intact()` 纳入检查 + 回归测试 `test_journal_is_never_written_under_the_real_home`（Python 454 → 455）。
 - **修复 2（decide 集成测试泄漏）**：`test/route-decide-integration.test.ts` 的 `runCore` 继承真实 `process.env`，每次生成一个真实 `index-<hash>.db`。修复 = `beforeAll` 把 `UNIFIED_MEMORY_INDEX_DB` / `UNIFIED_MEMORY_JOURNAL_DIR` 指到 per-file 临时目录，`afterAll` 还原原值。
@@ -61,7 +61,24 @@
 - **附带**：`scripts/figures-smoke.mjs` 自述"辅助文件已 gitignore"但实际没有，已补两条规则，跑 smoke 不再弄脏工作树。
 - **验证方法学（踩坑，写下来给下一位）**：判断"是否污染真实 home"**不能用 mtime**——本机 dsh 插件常驻，会持续写自己的 `index-71a04777…db`，按时间戳会大量误报；正确做法是比对**文件名集合差**。`stat -c %Y` 只有秒精度会漏同一秒内的变化，要用 `%y`（纳秒）。
 - **清理执行**：`~/.unified-memory/journal/` 487 个 jsonl（816 KB，全部指向 `%TEMP%\um-test-*`）+ `index-*.db` 44 个（0 记忆、仅一条 `decide:` 测试审计行，5.1 MB）**移入** `~/.unified-memory/_cleanup-backup-20261029-014758/`（531 文件 / 5.94 MB），不是直接删除，可整体还原。清理后 62 个库全部 `memories > 0`，真实库 164/130/752 完好；清理脚本 `../cleanup_home_artifacts.py`（判据：journal 的 change doc 必须落在 temp；db 必须 memories/embeddings/access_log 全 0 且 audit 仅 `decide:`）。
-- **测试结果**：清理后六道门 + `npm run check` 复验全绿，`~/.unified-memory/` 零新增。
+- **测试结果**：清理后七道门 + `npm run check` 复验全绿，`~/.unified-memory/` 零新增。
+
+#### 真实功能测试（e2e，46 项断言，`../e2e_all_features.py`）
+
+用户追问"是否做了所有功能的现实测试"后补做：不是快照比对，而是**真子进程 + 真文件 + 真 HTTP**，逐项断言效果（文件内容变了、事实能搜到、队列清空、哈希链验过、拒绝理由对）。
+
+- **覆盖**：22 个 CLI 子命令（init/use/submit/note/preview×4/accept/dismiss/decide/advise/search/show/cite/status/sync/graph/stats/doctor/gc/audit/drift/embed/digest）+ 8 个入口（promoter 的 review/apply/auto/repair-existing、forgetter 的 dry-run/apply、catchup --check、sessiondb 的 status/show/export）。
+- **新增能力的现实路径**：B3 的 `<memory-data>` 围栏（文本输出恰好一个）、B4 的 journal（写入落在 `UNIFIED_MEMORY_JOURNAL_DIR` 且记录真实 vault 路径）、B5.1 的 supersede 状态机（"已改为"把旧值移入 `## 已取代`）、远端检索走真实 loopback HTTP。
+- **边界行为**：`accept --json` 业务拒绝退出 0 且 `data.reason="conflicts"`（有代码注释说明，是为了让宿主能读到原因）；`embed` 无密钥退出 1；`digest` 无密钥退出 0 并报 0 archive。
+- **隔离自证**：整套跑完，`~/.unified-memory.yaml` 指纹不变、`~/.unified-memory/` 零新增。
+
+**由真实测试发现的两个产品缺陷（已修，`00050f4`）**——单元测试与快照都没抓到：
+
+1. **远端检索丢失引用 id**：`setup/remote_index_server.py` 对每个字符串字段都跑 `redact()`，64 位十六进制 id 命中 `HEX_SECRET` 规则变成 `<REDACTED_HEX_SECRET>`，所有远端结果渲染成 `[<REDACTED_] …`，模型回传的引用永远无法解析。修复 = 只脱敏内容字段，`id`/`doc` 原样通过（内容仍然脱敏，凭据测试照旧绿）。
+2. **`search --remote --json` 忽略 `--json`**：remote 分支无条件走人类围栏文本，是唯一不遵守自身 JSON 契约的检索模式。修复 = 与 local/hybrid 同构输出 `{"mode":"remote"|"local", "count", "results"}`。
+- 回归测试两条（`test_remote_search`：文本保留 10 位引用、JSON 携带 64 位 id 且 mode=remote），Python 455 → 457。
+
+**仍未做真实验证的路径（如实记录）**：① SiliconFlow 向量与 LLM digest 的真实网络调用（无密钥，只验了降级路径）；② `--cron` / `--cron` 注册（会在本机 `schtasks` 建真实计划任务，属系统级副作用，未执行）；③ dsh 桌面端 UI 的真实浏览器渲染（只有契约测试 + 无 DOM 的组件 smoke）；④ 跨机远端（只跑 loopback）；⑤ 真实 vault 的写操作（按硬约束只用副本，迁移验证在副本上做）。
 
 ## 删除清单
 
