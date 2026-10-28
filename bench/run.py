@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import shutil
 import statistics
 import sys
@@ -46,6 +47,20 @@ def copy_vault_to_temp(src: Path, dst: Path) -> Path:
         else:
             shutil.copy2(item, target)
     return dst
+
+
+def _pin_state(tmp_root: Path, name: str) -> None:
+    """Keep this pass's index database and journal inside the temp root.
+
+    The vault is already a temp copy, but the index DB and the write-ahead
+    journal both default to the user's real ``~/.unified-memory/``. Without
+    this pin every ``--fixture-only`` verification left an ``index-<hash>.db``
+    in the developer's profile. One DB per pass, so the fixture rows can never
+    bleed into the real-vault pass.
+    """
+    memory_mod.INDEX_DB = tmp_root / f"index-{name}.db"
+    os.environ["UNIFIED_MEMORY_INDEX_DB"] = str(memory_mod.INDEX_DB)
+    os.environ["UNIFIED_MEMORY_JOURNAL_DIR"] = str(tmp_root / "journal")
 
 
 def _patch_embed_off() -> None:
@@ -165,6 +180,7 @@ def main() -> int:
         # fixture pass
         fixture_vault = golden_fixture.build_fixture_vault(tmp_root / "fixture")
         memory_mod.UNIFIED_MEMORY_VAULT = fixture_vault
+        _pin_state(tmp_root, "fixture")
         index.update_index(fixture_vault)
         _patch_embed_off()
         fixture_rows = _evaluate(fixture_vault, golden_fixture.GOLDEN)
@@ -176,6 +192,7 @@ def main() -> int:
                 raise SystemExit("--vault is required unless --fixture-only")
             real_vault = copy_vault_to_temp(Path(args.vault), tmp_root / "real")
             memory_mod.UNIFIED_MEMORY_VAULT = real_vault
+            _pin_state(tmp_root, "real")
             index.update_index(real_vault)
             from build_golden import build as build_real  # noqa: E402
 
@@ -199,6 +216,7 @@ def main() -> int:
                 else copy_vault_to_temp(Path(args.vault), tmp_root / "lat")
             )
             memory_mod.UNIFIED_MEMORY_VAULT = lat_vault
+            _pin_state(tmp_root, "latency")
             index.update_index(lat_vault)
             items = (
                 golden_fixture.GOLDEN
