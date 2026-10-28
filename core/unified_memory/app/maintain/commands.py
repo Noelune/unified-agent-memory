@@ -12,7 +12,7 @@ from argparse import Namespace
 from pathlib import Path
 
 from . import drift as drift_mod
-from ... import health as health_mod
+from . import health as health_mod
 from ...infra.config import resolve_vault
 from ...infra.console import emit_json
 from ...infra.vault import ensure_vault

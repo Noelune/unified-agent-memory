@@ -13,9 +13,9 @@ import sys
 from argparse import Namespace
 
 from ... import index as index_mod
-from ... import preview as preview_mod
+from . import preview as preview_mod
 from ... import search as search_mod
-from ... import stats as stats_mod
+from . import stats as stats_mod
 from ...domain import envelope
 from ...domain.markdown import encode_untrusted, redact
 from ...domain.model import Evidence

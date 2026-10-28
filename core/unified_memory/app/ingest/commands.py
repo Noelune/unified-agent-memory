@@ -16,8 +16,8 @@ from argparse import Namespace
 from pathlib import Path
 
 from . import digest as digest_mod
-from ... import preview as preview_mod
-from ... import inbox as inbox_mod
+from ..query import preview as preview_mod
+from . import inbox as inbox_mod
 from ... import promoter as promoter_mod
 from ...domain.markdown import looks_like_credential
 from ...infra import config as config_mod

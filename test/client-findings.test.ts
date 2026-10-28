@@ -31,7 +31,8 @@ import type { DoctorIssue } from '../src/client/types.ts'
 const CONSOLE = readFileSync(new URL('../src/client/Console.tsx', import.meta.url), 'utf8')
 const STYLES = readFileSync(new URL('../src/client/styles.ts', import.meta.url), 'utf8')
 
-const HEALTH_PY = new URL('../core/unified_memory/health.py', import.meta.url)
+// B5.3: health.doctor moved to app/maintain/health.py; the old path is a shim.
+const HEALTH_PY = new URL('../core/unified_memory/app/maintain/health.py', import.meta.url)
 // B5.2: cmd_doctor (and the fallback envelope it mints) moved out of
 // memory.py into app/maintain/commands.py — memory.py is a shim now.
 const DOCTOR_CLI_PY = new URL('../core/unified_memory/app/maintain/commands.py', import.meta.url)

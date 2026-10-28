@@ -140,9 +140,9 @@ WHITELIST: dict[str, set[str]] = {
         "unified_memory.sessiondb",
     },
     "subprocess": {
-        # B5.3: drift moved to app/maintain/drift.py (its --git-precommit path
-        # shells out to git). B5.4 moves the cron registration in forgetter and
-        # promoter to infra/schedule and clears those two entries.
+        # B5.3: drift moved to app/maintain/drift.py (--git-precommit shells
+        # out to git). B5.4 moves forgetter/promoter cron registration into
+        # infra/schedule and clears the other two.
         "unified_memory.app.maintain.drift",
         "unified_memory.forgetter",
         "unified_memory.promoter",
@@ -150,16 +150,15 @@ WHITELIST: dict[str, set[str]] = {
     "lazy_import": {
         "unified_memory.app.ingest.digest",
         "unified_memory.app.maintain.drift",
+        "unified_memory.app.maintain.health",
         "unified_memory.embed",
-        "unified_memory.health",
         "unified_memory.maintenance",
         "unified_memory.promoter",
         "unified_memory.search",
         # B5.2: cmd_search reaches remote_search through the memory shim inside
         # the function, because the shim imports surface.cli and a module-level
-        # import would close the cycle. Removed by B5.3, which moves the HTTP
-        # client into app.remote (the SSRF blocker that kept it on the shim is
-        # gone — see BATCH-REPORT.md).
+        # import would close the cycle. Removed when the HTTP client moves into
+        # app.remote.
         "unified_memory.app.query.commands",
     },
     # third-party imports: core is dependency-free; drift's optional PyYAML is
@@ -167,22 +166,21 @@ WHITELIST: dict[str, set[str]] = {
     "third_party": {
         "unified_memory.app.maintain.drift",
     },
-    # Cross-layer imports. B5.2 moved the 22 command bodies into app/, and they
-    # still call the flat legacy implementations that B5.3/B5.4 migrate into
-    # app/*: promoter+conflict (govern), digest+inbox (ingest), health+drift
-    # (maintain), search+preview+index+stats (query), embed+graph+index
-    # (system). Each entry disappears with its migration; the set must be
-    # empty by B5.5.
+    # Cross-layer imports: the app modules still call the flat legacy
+    # implementations that B5.3/B5.4 migrate into app/*. Each entry disappears
+    # with its migration; the set must be empty by B5.5.
     "layers": {
         "unified_memory.app.govern.commands",
         "unified_memory.app.ingest.commands",
         "unified_memory.app.ingest.digest",
-        "unified_memory.app.maintain.commands",
         "unified_memory.app.query.commands",
+        "unified_memory.app.query.preview",
         "unified_memory.app.system",
         # drift's optional PyYAML import is the one sanctioned third-party
         # exception (B0 comment); inside a layer it trips the same rule.
         "unified_memory.app.maintain.drift",
+        # health still reads the legacy conflict queue and index facade.
+        "unified_memory.app.maintain.health",
     },
 }
 

@@ -1,130 +1,21 @@
 # -*- coding: utf-8 -*-
-"""stats — read-only aggregates that feed the visualization console.
+"""stats — compatibility shim (batch B5.3).
 
-Every query here is a SELECT executed through infra.store (B2); nothing in
-this module writes. The browser half cannot run SQL (it may only import
-react), so all aggregation happens below and travels over one read-only
-route.
-
-Date keys are the first 10 characters of the stored ISO-8601 timestamps, which
-every writer in this codebase emits as local time with a 'T' separator.
+The implementation moved to ``app.query.stats``; this module keeps the
+historical import path (tests, health) working for one minor (taskbook §0.7).
 """
 from __future__ import annotations
 
-import json
-from datetime import date, timedelta
-from pathlib import Path
-
-from .domain.markdown import redact
-from .domain.policy import NON_SUBMISSION_FILES
-from .infra.store import (
-    stats_access_per_day,
-    stats_daily_created,
-    stats_importance_counts,
-    stats_scalar,
-    stats_top_accessed,
-    stats_type_counts,
+from .app.query.stats import (  # noqa: F401  (re-exported)
+    _day,
+    _inbox_count,
+    _scalar,
+    _span,
+    access_counts,
+    build,
+    daily_counts,
+    envelope,
+    importance_counts,
+    top_accessed,
+    type_counts,
 )
-from .preview import INBOX_REL
-
-
-def _day(value: str | None) -> str:
-    return (value or "")[:10]
-
-
-def _span(days: list[str]) -> list[str]:
-    """Every date from min to max inclusive. Empty input -> empty output."""
-    if not days:
-        return []
-    lo, hi = min(days), max(days)
-    start = date.fromisoformat(lo)
-    end = date.fromisoformat(hi)
-    out, cur = [], start
-    while cur <= end:
-        out.append(cur.isoformat())
-        cur += timedelta(days=1)
-    return out
-
-
-def daily_counts(vault: Path) -> list[dict]:
-    """Memories created per day, zero-filled across the full span."""
-    seen = stats_daily_created(vault)
-    return [{"date": d, "count": seen.get(d, 0)} for d in _span(list(seen))]
-
-
-def type_counts(vault: Path) -> list[dict]:
-    """Active memories per type, most common first."""
-    return stats_type_counts(vault)
-
-
-def importance_counts(vault: Path) -> list[dict]:
-    """Active memories per importance band, highest band first."""
-    return stats_importance_counts(vault)
-
-
-def top_accessed(vault: Path, limit: int = 20) -> list[dict]:
-    """The most-recalled memories. Rows nobody ever recalled are excluded.
-
-    ``label`` is vault content and is redacted; the record carries
-    untrusted=True so consumers never treat it as instructions.
-    """
-    rows = stats_top_accessed(vault, limit)
-    return [
-        {"id": r["id"], "label": redact(r["line"] or ""),
-         "count": r["access_count"], "untrusted": True}
-        for r in rows
-    ]
-
-
-def access_counts(vault: Path) -> list[dict]:
-    """Recall events per day, zero-filled across the full span."""
-    seen = stats_access_per_day(vault)
-    return [{"date": d, "count": seen.get(d, 0)} for d in _span(list(seen))]
-
-
-def build(vault: Path) -> dict:
-    """Every aggregate the console draws. One round trip, all read-only."""
-    daily = daily_counts(vault)
-    access = access_counts(vault)
-    types = type_counts(vault)
-    importance = importance_counts(vault)
-    top = top_accessed(vault)
-
-    all_days = [d["date"] for d in daily] + [d["date"] for d in access]
-    span = {"start": min(all_days) if all_days else None,
-            "end": max(all_days) if all_days else None}
-
-    totals = {
-        "memories": sum(t["count"] for t in types),
-        "vectors": _scalar(vault, "SELECT COUNT(*) AS n FROM embeddings"),
-        "accesses": sum(a["count"] for a in access),
-        "inbox": _inbox_count(vault),
-    }
-    return {"daily": daily, "access": access, "types": types,
-            "importance": importance, "top": top, "span": span, "totals": totals}
-
-
-def _scalar(vault: Path, sql: str) -> int:
-    """One-column count of a query this module owns (executed in the store).
-
-    No exception is swallowed. The previous ``except Exception: return 0``
-    turned a broken index (missing table, corrupt file, locked db) into a
-    plausible "0 vectors", which a user cannot tell apart from a genuinely
-    empty table — a hidden error, not a graceful fallback. The SQL here is a
-    module-owned literal, so any failure is a real defect and must surface.
-    """
-    return stats_scalar(vault, sql)
-
-
-def _inbox_count(vault: Path) -> int:
-    inbox = Path(vault) / INBOX_REL
-    if not inbox.is_dir():
-        return 0
-    # README.md is documentation and 前缀登记.md is a bookkeeping registry;
-    # neither is a pending submission.
-    return sum(1 for path in inbox.glob("*.md") if path.name not in NON_SUBMISSION_FILES)
-
-
-def envelope(data: dict) -> str:
-    """Wrap in the same JSON envelope every other CLI command uses."""
-    return json.dumps({"ok": True, "command": "stats", "data": data}, ensure_ascii=False)

@@ -95,7 +95,7 @@ class OrphanIndexReportTest(unittest.TestCase):
         destroy_scratch(self.vault)
 
     def _report(self, items: list[dict]) -> dict:
-        with patch("unified_memory.health._orphan_indexes", return_value=items), \
+        with patch("unified_memory.app.maintain.health._orphan_indexes", return_value=items), \
              patch("unified_memory.embed.configured", return_value=False):
             return health.doctor(self.vault)
 
