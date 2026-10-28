@@ -305,7 +305,7 @@ class DigestStateSourceTest(unittest.TestCase):
         self.assertEqual(report["pending"], 1)
 
     def test_unavailable_database_degrades_to_a_reported_skip(self):
-        from unified_memory import digest
+        from unified_memory.app.ingest import digest
 
         sessiondb.os.environ[sessiondb.DB_ENV] = str(self.dir / "missing.db")
         report = digest.digest(self.vault, source="state")
@@ -313,7 +313,7 @@ class DigestStateSourceTest(unittest.TestCase):
         self.assertTrue(any("state.db" in s for s in report["skipped"]))
 
     def test_an_unknown_source_is_refused(self):
-        from unified_memory import digest
+        from unified_memory.app.ingest import digest
 
         with self.assertRaises(ValueError):
             digest.digest(self.vault, source="telepathy")
@@ -321,7 +321,7 @@ class DigestStateSourceTest(unittest.TestCase):
     def _fake_llm(self, facts):
         from unittest import mock
 
-        from unified_memory import digest
+        from unified_memory.app.ingest import digest
 
         return mock.patch.object(digest, "chat_extract_facts", return_value=list(facts))
 
@@ -329,7 +329,7 @@ class DigestStateSourceTest(unittest.TestCase):
         import os
         from unittest import mock
 
-        from unified_memory import digest
+        from unified_memory.app.ingest import digest
 
         os.environ["SILICONFLOW_API_KEY"] = "test-key"
         try:

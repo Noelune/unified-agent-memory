@@ -148,7 +148,7 @@ WHITELIST: dict[str, set[str]] = {
         "unified_memory.promoter",
     },
     "lazy_import": {
-        "unified_memory.digest",
+        "unified_memory.app.ingest.digest",
         "unified_memory.app.maintain.drift",
         "unified_memory.embed",
         "unified_memory.health",
@@ -176,6 +176,7 @@ WHITELIST: dict[str, set[str]] = {
     "layers": {
         "unified_memory.app.govern.commands",
         "unified_memory.app.ingest.commands",
+        "unified_memory.app.ingest.digest",
         "unified_memory.app.maintain.commands",
         "unified_memory.app.query.commands",
         "unified_memory.app.system",

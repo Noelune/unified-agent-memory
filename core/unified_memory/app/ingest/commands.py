@@ -15,7 +15,7 @@ import time
 from argparse import Namespace
 from pathlib import Path
 
-from ... import digest as digest_mod
+from . import digest as digest_mod
 from ... import preview as preview_mod
 from ... import inbox as inbox_mod
 from ... import promoter as promoter_mod
