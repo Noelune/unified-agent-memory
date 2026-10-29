@@ -88,6 +88,65 @@ def archive_settled_source(vault: Path, entry: dict, *, locked: bool = False) ->
     archive_sources(vault, {source}, locked=locked)
 
 
+def _record_decision_audit(vault: Path, entry: dict, choice: str, why: str) -> None:
+    """The audit row both decide branches append (identical shape)."""
+    record_audit(
+        vault, "adjudicator", "decide:" + choice,
+        str(entry.get("新", ""))[:120], why[:200],
+    )
+
+
+def _apply_replace(vault: Path, entry: dict, choice: str, why: str) -> dict:
+    """``用新`` / ``并存``: rewrite the canonical note and dequeue under one lock."""
+    target = _resolve_target(vault, entry)
+    with file_lock(vault):
+        existing = read_maybe(target)
+        # A JSON entry stores `旧` already bare; a hand-written block stores
+        # the whole markdown line, stamp and bullet included. Normalize both
+        # before comparing, or 用新 finds nothing to remove on the block
+        # shape and quietly appends the new fact beside the old one.
+        raw_old = str(entry.get("旧", "")).strip()
+        old = _comparable(raw_old) if raw_old else ""
+        if choice == "用新" and old:
+            # Retire, do not delete: `promote` has always moved the old line
+            # under 已取代 (via _move_to_superseded), and this path deleted
+            # it outright — so the note claimed the old value had never
+            # existed and the only record of it was the adjudication log.
+            # Two writers of the same fact, two different meanings.
+            existing = move_to_superseded(existing, lambda ln: _comparable(ln) == old)
+        new = entry.get("新", "").strip()
+        prior = active_fact_lines(existing)
+        if new and new not in prior:
+            existing = append_active_facts(
+                existing,
+                [f"- {new}{write_stamp(entry.get('来源', 'inbox'))}"],
+            )
+        atomic_write(target, existing)
+        record_adjudication(vault, entry, choice, why=why, locked=True)
+        remove_conflict(vault, entry, locked=True)
+        archive_settled_source(vault, entry, locked=True)
+        _record_decision_audit(vault, entry, choice, why)
+    return {
+        "ok": True, "reason": None, "choice": choice, "applied": True,
+        "target": str(target.relative_to(vault)) if target.is_relative_to(vault) else str(target),
+    }
+
+
+def _record_only(vault: Path, entry: dict, choice: str, why: str) -> dict:
+    """``保留旧`` / ``跳过``: record and dequeue under one lock.
+
+    Canonical notes are not touched; recording and dequeuing happen together so
+    another process cannot observe a half-resolved conflict.
+    """
+    with file_lock(vault):
+        record_adjudication(vault, entry, choice, why=why, locked=True)
+        remove_conflict(vault, entry, locked=True)
+        archive_settled_source(vault, entry, locked=True)
+        _record_decision_audit(vault, entry, choice, why)
+    return {"ok": True, "reason": None, "choice": choice, "applied": False,
+            "target": None}
+
+
 def decide(vault: Path, entry: dict, choice: str, why: str = "") -> dict:
     """Resolve ONE pending conflict.
 
@@ -123,54 +182,8 @@ def decide(vault: Path, entry: dict, choice: str, why: str = "") -> dict:
                 "applied": False, "target": None}
 
     if choice in ("用新", "并存"):
-        target = _resolve_target(vault, entry)
-        with file_lock(vault):
-            existing = read_maybe(target)
-            # A JSON entry stores `旧` already bare; a hand-written block stores
-            # the whole markdown line, stamp and bullet included. Normalize both
-            # before comparing, or 用新 finds nothing to remove on the block
-            # shape and quietly appends the new fact beside the old one.
-            raw_old = str(entry.get("旧", "")).strip()
-            old = _comparable(raw_old) if raw_old else ""
-            if choice == "用新" and old:
-                # Retire, do not delete: `promote` has always moved the old line
-                # under 已取代 (via _move_to_superseded), and this path deleted
-                # it outright — so the note claimed the old value had never
-                # existed and the only record of it was the adjudication log.
-                # Two writers of the same fact, two different meanings.
-                existing = move_to_superseded(existing, lambda ln: _comparable(ln) == old)
-            new = entry.get("新", "").strip()
-            prior = active_fact_lines(existing)
-            if new and new not in prior:
-                existing = append_active_facts(
-                    existing,
-                    [f"- {new}{write_stamp(entry.get('来源', 'inbox'))}"],
-                )
-            atomic_write(target, existing)
-            record_adjudication(vault, entry, choice, why=why, locked=True)
-            remove_conflict(vault, entry, locked=True)
-            archive_settled_source(vault, entry, locked=True)
-            record_audit(
-                vault, "adjudicator", "decide:" + choice,
-                str(entry.get("新", ""))[:120], why[:200],
-            )
-        return {
-            "ok": True, "reason": None, "choice": choice, "applied": True,
-            "target": str(target.relative_to(vault)) if target.is_relative_to(vault) else str(target),
-        }
-
-    # 保留旧 and 跳过: do not touch canonical; record and dequeue together so
-    # another process cannot observe a half-resolved conflict.
-    with file_lock(vault):
-        record_adjudication(vault, entry, choice, why=why, locked=True)
-        remove_conflict(vault, entry, locked=True)
-        archive_settled_source(vault, entry, locked=True)
-        record_audit(
-            vault, "adjudicator", "decide:" + choice,
-            str(entry.get("新", ""))[:120], why[:200],
-        )
-    return {"ok": True, "reason": None, "choice": choice, "applied": False,
-            "target": None}
+        return _apply_replace(vault, entry, choice, why)
+    return _record_only(vault, entry, choice, why)
 
 
 def adjudicate(vault: Path) -> None:

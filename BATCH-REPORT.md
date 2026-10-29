@@ -237,6 +237,16 @@
 - **删除**：fts_search 内联回退体（约 48 行）迁入 `_fts_fallback`；逻辑零删除。
 - **遗留风险**：search_index.py 506 行仍超软限 450（硬限内；软限仅记录不断言）。
 
+### B5.5c-2g 拆 decide（83 → 39 行，✅ 2026-10-30）
+
+- **调研**：decide 83 行 = 状态机校验 + 用新/并存落盘分支（锁内：取代旧值 → 追加新值 → 落盘 → 记录裁决 → 出队 → 归档 → 审计）+ 保留旧/跳过记录分支。两分支的审计块**逐字节相同**（各 4 行）。测试面：test_state（DECISIONS 一致性）、test_promoter 的 decide 用例、快照 decide case、e2e decide 入口。
+- **选定方案**：`_apply_replace`（用新/并存，锁内七步原序保留）+ `_record_only`（保留旧/跳过）+ `_record_decision_audit`（消除两处重复审计块）；decide 只留校验 + 分派。**放弃方案**：把七个锁内步骤再分段——它们共享 `existing` 局部变量链与同一把锁，拆开要传中间态。
+- **设计**：锁语义不变（落盘与出队仍同一把锁）；返回 dict 三种形状逐字节不变；decide docstring（24 行）原样保留。
+- **虚拟项目验证**：test_state + test_promoter 36 例 + 全量 469。
+- **测试结果**：七道门全绿（469 / 886 / 32 / typecheck / bench 一致 / 快照 42 逐字节 / e2e 46）。
+- **删除**：两处重复的 record_audit 块（合入 `_record_decision_audit`）；分支体逻辑零删除。
+- **遗留风险**：无——decide.py 6 defs。
+
 ## B5.5 接手说明存档（2026-10-29 交棒点，已被上节取代）
 
 **一句话状态**：B5.2 / B5.3 / B5.4（a/b/c）已入库并全绿，`git status` 干净，HEAD = `e5fb47e`；**只剩 B5.5**——清空架构白名单 + 翻预算门。下面每条都是本轮实测数据，不需要重新探查。
