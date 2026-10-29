@@ -84,6 +84,101 @@ def _backfill_fts_lex(conn: sqlite3.Connection) -> int:
         return 0
 
 
+def _rebuild_doc_rows(conn: sqlite3.Connection, rel: str, text: str, now: str) -> None:
+    """Rebuild one changed note's memory rows (parse -> diff-purge -> insert)."""
+    old_rows = conn.execute(
+        "SELECT id, line, access_count, created_at, updated_at, version "
+        "FROM memories WHERE doc = ?",
+        (rel,),
+    ).fetchall()
+    old_ids = {r["id"] for r in old_rows}
+    # Reinforcement state is matched per (doc, line), not by id: the id
+    # became doc-scoped (occurrence identity, batch A), so an unchanged
+    # line keeps its stats through the one-time id remap and later edits.
+    old_stats = {
+        r["line"]: (r["access_count"], r["created_at"], r["updated_at"], r["version"])
+        for r in old_rows
+    }
+    records = _doc_records(rel, text, now, old_stats)
+    new_ids = {record[0] for record in records}
+    _purge_doc_rows(conn, rel, old_ids, new_ids)
+    _insert_doc_rows(conn, records)
+
+
+def _doc_records(rel: str, text: str, now: str, old_stats: dict) -> list[tuple]:
+    """Parse one note's text into memory row tuples (INSERT layout below)."""
+    records: list[tuple] = []
+    for status, bare, raw_line in doc_lines(text):
+        # Occurrence identity (batch A): the id scopes a fact to ITS note,
+        # so the same sentence promoted into two notes stays two rows with
+        # two provenances instead of one row that silently keeps only the
+        # last writer. text_hash remains the cross-doc duplicate signal.
+        occ_id = hashlib.sha256((rel + "\x1f" + bare).encode("utf-8")).hexdigest()
+        text_hash = hashlib.sha256(bare.encode("utf-8")).hexdigest()
+        created, agent = parse_write_stamp(raw_line)
+        mem_type = classify_type(bare)
+        prior = old_stats.get(bare)
+        records.append(
+            (
+                occ_id,
+                text_hash,
+                rel,
+                bare,
+                mem_type,
+                salience_for(mem_type),
+                status,
+                agent,
+                prior[1] if prior and prior[1] else (created or now),
+                prior[2] if prior and prior[2] else now,
+                prior[0] if prior else 0,
+                prior[3] if prior else 1,
+            )
+        )
+    return records
+
+
+def _purge_doc_rows(conn: sqlite3.Connection, rel: str, old_ids: set[str], new_ids: set[str]) -> None:
+    """Delete the derived rows the rebuild replaces (surviving ids keep vectors)."""
+    # Vanished lines lose every derived row, including their vector.
+    for mid in old_ids - new_ids:
+        _fts_lex_delete(conn, mid)
+        conn.execute("DELETE FROM embeddings WHERE memory_id = ?", (mid,))
+    # Rewrite the note's memory rows. Kept ids keep their embedding row;
+    # their FTS rows are re-created below because FTS5 rows carry no
+    # update semantics (INSERT OR REPLACE appends).
+    conn.execute("DELETE FROM memories WHERE doc = ?", (rel,))
+    for mid in old_ids:
+        _fts_lex_delete(conn, mid)
+
+
+def _insert_doc_rows(conn: sqlite3.Connection, records: list[tuple]) -> None:
+    """Insert the memory + fts_lex rows for one note's records."""
+    seen: set[str] = set()
+    for record in records:
+        mid = record[0]
+        if mid in seen:
+            continue  # the same fact twice in one note is one memory
+        seen.add(mid)
+        # Tuple layout: (occ_id, text_hash, rel, bare, type, salience,
+        # status, agent, created, updated, access, version).
+        conn.execute(
+            """INSERT OR REPLACE INTO memories
+               (id, doc, line, text_hash, type, importance, status, version,
+                superseded_by, source_agent, project, created_at, updated_at,
+                access_count, metadata_json)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, '', ?, ?, ?, '{}')""",
+            (
+                record[0], record[2], record[3], record[1], record[4],
+                record[5], record[6], record[11], record[7], record[8],
+                record[9], record[10],
+            ),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO fts_lex (memory_id, tokens) VALUES (?, ?)",
+            (mid, " ".join(cjk_tokens(record[3]))),
+        )
+
+
 def update_memories(conn: sqlite3.Connection, vault: Path, sweep_orphans: bool = False) -> int:
     """Re-parse canonical notes into memories/embeddings records.
 
@@ -114,86 +209,16 @@ def update_memories(conn: sqlite3.Connection, vault: Path, sweep_orphans: bool =
         conn.execute("DELETE FROM fts WHERE path = ?", (rel,))
         conn.execute("INSERT INTO fts (path, title, content) VALUES (?, ?, ?)", (rel, title, text))
 
-        old_rows = conn.execute(
-            "SELECT id, line, access_count, created_at, updated_at, version "
-            "FROM memories WHERE doc = ?",
-            (rel,),
-        ).fetchall()
-        old_ids = {r["id"] for r in old_rows}
-        # Reinforcement state is matched per (doc, line), not by id: the id
-        # became doc-scoped (occurrence identity, batch A), so an unchanged
-        # line keeps its stats through the one-time id remap and later edits.
-        old_stats = {
-            r["line"]: (r["access_count"], r["created_at"], r["updated_at"], r["version"])
-            for r in old_rows
-        }
-
-        records: list[tuple] = []
-        for status, bare, raw_line in doc_lines(text):
-            # Occurrence identity (batch A): the id scopes a fact to ITS note,
-            # so the same sentence promoted into two notes stays two rows with
-            # two provenances instead of one row that silently keeps only the
-            # last writer. text_hash remains the cross-doc duplicate signal.
-            occ_id = hashlib.sha256((rel + "\x1f" + bare).encode("utf-8")).hexdigest()
-            text_hash = hashlib.sha256(bare.encode("utf-8")).hexdigest()
-            created, agent = parse_write_stamp(raw_line)
-            mem_type = classify_type(bare)
-            prior = old_stats.get(bare)
-            records.append(
-                (
-                    occ_id,
-                    text_hash,
-                    rel,
-                    bare,
-                    mem_type,
-                    salience_for(mem_type),
-                    status,
-                    agent,
-                    prior[1] if prior and prior[1] else (created or now),
-                    prior[2] if prior and prior[2] else now,
-                    prior[0] if prior else 0,
-                    prior[3] if prior else 1,
-                )
-            )
-        new_ids = {record[0] for record in records}
-
-        # Vanished lines lose every derived row, including their vector.
-        for mid in old_ids - new_ids:
-            _fts_lex_delete(conn, mid)
-            conn.execute("DELETE FROM embeddings WHERE memory_id = ?", (mid,))
-
-        # Rewrite the note's memory rows. Kept ids keep their embedding row;
-        # their FTS rows are re-created below because FTS5 rows carry no
-        # update semantics (INSERT OR REPLACE appends).
-        conn.execute("DELETE FROM memories WHERE doc = ?", (rel,))
-        for mid in old_ids:
-            _fts_lex_delete(conn, mid)
-
-        seen: set[str] = set()
-        for record in records:
-            mid = record[0]
-            if mid in seen:
-                continue  # the same fact twice in one note is one memory
-            seen.add(mid)
-            # Tuple layout: (occ_id, text_hash, rel, bare, type, salience,
-            # status, agent, created, updated, access, version).
-            conn.execute(
-                """INSERT OR REPLACE INTO memories
-                   (id, doc, line, text_hash, type, importance, status, version,
-                    superseded_by, source_agent, project, created_at, updated_at,
-                    access_count, metadata_json)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, '', ?, ?, ?, '{}')""",
-                (
-                    record[0], record[2], record[3], record[1], record[4],
-                    record[5], record[6], record[11], record[7], record[8],
-                    record[9], record[10],
-                ),
-            )
-            conn.execute(
-                "INSERT OR REPLACE INTO fts_lex (memory_id, tokens) VALUES (?, ?)",
-                (mid, " ".join(cjk_tokens(record[3]))),
-            )
+        _rebuild_doc_rows(conn, rel, text, now)
         changed += 1
+    _remove_stale_docs(conn, current_paths)
+    if sweep_orphans:
+        _sweep_orphan_rows(conn, current_paths)
+    return changed
+
+
+def _remove_stale_docs(conn: sqlite3.Connection, current_paths: set[str]) -> None:
+    """Delete rows for notes deleted from the vault."""
     # Remove stale docs (deleted from the vault).
     stale = [
         row["path"]
@@ -208,23 +233,22 @@ def update_memories(conn: sqlite3.Connection, vault: Path, sweep_orphans: bool =
         conn.execute("DELETE FROM docs WHERE path = ?", (old,))
         conn.execute("DELETE FROM fts WHERE path = ?", (old,))
         conn.execute("DELETE FROM memories WHERE doc = ?", (old,))
+
+
+def _sweep_orphan_rows(conn: sqlite3.Connection, current_paths: set[str]) -> None:
+    """Sweep memories whose doc is not a currently indexed note."""
     # A logic-version upgrade clears `docs`, so a note deleted from the vault
-    # no longer appears in the stale list above. Sweep memories whose doc is
+    # no longer appears in the stale list. Sweep memories whose doc is
     # not a currently indexed note, whatever the docs table says.
-    orphaned = (
-        [
-            row for row in conn.execute("SELECT id, doc FROM memories").fetchall()
-            if row["doc"] not in current_paths
-        ]
-        if sweep_orphans
-        else []
-    )
+    orphaned = [
+        row for row in conn.execute("SELECT id, doc FROM memories").fetchall()
+        if row["doc"] not in current_paths
+    ]
     for row in orphaned:
         mid = row["id"]
         _fts_lex_delete(conn, mid)
         conn.execute("DELETE FROM embeddings WHERE memory_id = ?", (mid,))
         conn.execute("DELETE FROM memories WHERE id = ?", (mid,))
-    return changed
 
 
 # Bump when the parsing/classification logic changes in a way that must be

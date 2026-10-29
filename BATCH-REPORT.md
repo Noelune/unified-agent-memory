@@ -196,6 +196,17 @@
 - **删除**：原循环体内联裁决树与 3 处重复的 pending 条目字面量（合入 `_entry`）；review 内与 `_verdict`/`_adjudicated_facts` 重复的两段注释下放。逻辑零删除。
 - **遗留风险**：`_verdict` 返回字符串 kind（6 值），调用方按 kind 计数——若后续加裁决种类需同步改两处；已用注释钉住。
 
+### B5.5c-2c 拆 update_memories（141 → ~30 行，✅ 2026-10-30）
+
+- **调研**：update_memories 141 行 = 逐笔记哈希跳过 + 单笔记重建（读旧态 → 解析行记录 → 差异清理 → 插入）+ 陈旧文档清理 + 孤儿清扫。返回值语义：只数"重新解析的文档数"，清理路径不计数。关键不变量：occurrence-identity id（doc+行哈希）、幸存行保强化计数与向量、FTS5 无更新语义必须删重插。
+- **选定方案**：`_rebuild_doc_rows` + `_doc_records`（解析为行元组）+ `_purge_doc_rows`（差异清理，幸存 id 保向量）+ `_insert_doc_rows`（插入 + fts_lex）+ `_remove_stale_docs` / `_sweep_orphan_rows`（尾部清理）；update_memories 缩为"跳过 → 重建 → 清理"编排。**放弃方案**：把 docs/fts 的 upsert 也下放助手——它读取 digest 与标题且与重建共享 rel/text，拆开参数翻倍。
+- **设计**：`now` 时间戳整个 run 一个值（原语义），参数下传；清理助手不改变 changed 计数；注释随代码迁移。
+- **虚拟项目验证**：全量 Python 469 OK（skipped=1）。
+- **测试结果**：七道门全绿（469 / 886 / 32 / typecheck / bench 一致 / 快照 42 逐字节 / e2e 46）。
+- **删除**：update_memories 内联重建与清理体（约 110 行）重组为 6 个私有助手，逻辑零删除。
+- **⚠ 新发现：接手说明的债务清单是每模块最差项**——fix 完 141 行的 update_memories 后暴露被掩盖的 `fts_search`（93 行）；同理 `_ensure_schema`(75) 底下还藏着 `_migrate_to_v5`(64)。**真实初始债务 = 14 个超 60 行函数 + claims.py 24 defs = 15 项，不是 13 项**。已全量重枚举（ast 全函数遍历），完整清单见 B5.5d 节。
+- **遗留风险**：search_index.py 494 行超软限 450（硬限 600 内，门只断硬限；`fts_search` 拆分后文件将回到软限内）。
+
 ## B5.5 接手说明存档（2026-10-29 交棒点，已被上节取代）
 
 **一句话状态**：B5.2 / B5.3 / B5.4（a/b/c）已入库并全绿，`git status` 干净，HEAD = `e5fb47e`；**只剩 B5.5**——清空架构白名单 + 翻预算门。下面每条都是本轮实测数据，不需要重新探查。
