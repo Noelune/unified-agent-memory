@@ -10,7 +10,8 @@ import unittest
 from pathlib import Path
 
 from test_common import destroy_scratch, make_scratch_vault
-from unified_memory import embed, index
+from unified_memory import index
+from unified_memory.infra.providers import embed
 
 
 class EmbedTest(unittest.TestCase):

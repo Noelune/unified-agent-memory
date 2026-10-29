@@ -55,7 +55,7 @@ class DigestTest(unittest.TestCase):
 
     def test_digest_skips_without_api_key(self):
         self._write_session("2026-08-16.md", "body\n")
-        with patch("unified_memory.embed.configured", return_value=False):
+        with patch("unified_memory.infra.providers.embed.configured", return_value=False):
             report = digest.digest(self.vault)
         self.assertEqual(report["pending"], 1)
         self.assertIn("no SiliconFlow API key", report["skipped"][0])
@@ -64,7 +64,7 @@ class DigestTest(unittest.TestCase):
 
     def test_digest_writes_facts_and_advances_cursor(self):
         self._write_session("2026-08-16.md", "body\n")
-        with patch("unified_memory.embed.configured", return_value=True), patch(
+        with patch("unified_memory.infra.providers.embed.configured", return_value=True), patch(
             "unified_memory.app.ingest.digest.chat_extract_facts", return_value=["用户喜欢深色主题", "决策：用向量检索"]
         ):
             report = digest.digest(self.vault)
@@ -75,13 +75,13 @@ class DigestTest(unittest.TestCase):
         self.assertEqual(len(files), 1)
         self.assertIn("用户喜欢深色主题", files[0].read_text(encoding="utf-8"))
         # Idempotent: cursor advanced, a second run sees nothing new.
-        with patch("unified_memory.embed.configured", return_value=True):
+        with patch("unified_memory.infra.providers.embed.configured", return_value=True):
             report2 = digest.digest(self.vault)
         self.assertEqual(report2["pending"], 0)
 
     def test_cursor_is_not_advanced_when_the_inbox_write_fails(self):
         self._write_session("2026-08-16.md", "body\n")
-        with patch("unified_memory.embed.configured", return_value=True), patch(
+        with patch("unified_memory.infra.providers.embed.configured", return_value=True), patch(
             "unified_memory.app.ingest.digest.chat_extract_facts", return_value=["用户喜欢深色主题"]
         ), patch("unified_memory.app.ingest.digest._write_digest_facts", return_value=0):
             report = digest.digest(self.vault)
@@ -89,7 +89,7 @@ class DigestTest(unittest.TestCase):
         self.assertTrue(any("could not write inbox" in item for item in report["skipped"]))
         # The same archive must still be pending: losing the extracted facts
         # permanently was the previous behaviour.
-        with patch("unified_memory.embed.configured", return_value=True), patch(
+        with patch("unified_memory.infra.providers.embed.configured", return_value=True), patch(
             "unified_memory.app.ingest.digest.chat_extract_facts", return_value=["用户喜欢深色主题"]
         ):
             second = digest.digest(self.vault)

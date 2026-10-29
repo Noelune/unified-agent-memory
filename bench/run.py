@@ -64,7 +64,10 @@ def _pin_state(tmp_root: Path, name: str) -> None:
 
 
 def _patch_embed_off() -> None:
-    import unified_memory.embed as em
+    # Patch the implementation module, not the legacy shim: consumers import
+    # infra.providers.embed directly since B5.5c, so rebinding the shim's
+    # attribute would silently leave the offline channel on the network path.
+    import unified_memory.infra.providers.embed as em
 
     em.embed_query_cached = lambda *a, **k: None  # type: ignore[method-assign]
 
@@ -205,7 +208,7 @@ def main() -> int:
             try:
                 import importlib
 
-                import unified_memory.embed as em
+                import unified_memory.infra.providers.embed as em
 
                 importlib.reload(em)
             except Exception:  # noqa: BLE001 — latency pass is best-effort

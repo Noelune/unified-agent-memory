@@ -298,6 +298,19 @@
 - **删除**：claims.py 的 97 行 stats 段（迁出，非删除语义）；claims.py 297 行、17 defs。
 - **遗留风险**：无。
 
+### B5.5c-2n embed 迁入 infra/providers + layers 白名单收口（4 → 2 documented，✅ 2026-10-30）
+
+- **背景**：embed.py 的物理迁移曾被 Mimosa SSRF 规则阻塞（新文件含 urlopen 被整文件拦截，BATCH-REPORT「阻塞记录」）；2026-10-30 主人停用插件后解除。git mv 一次通过（探针即迁移本身，未再遇到拦截）。
+- **调研**：layers 白名单 4 条的实际违规面 = digest:45(embed)、health:24(embed)、commands:16(search)+74(memory shim)、system:18(embed)+19(graph)。**接手说明"迁移 embed 则 4 条随清"的判断不全对**：迁移 embed 只清 digest/health/system:18；commands:74（remote_search HTTP 客户端按 B5.2 决策留 shim）与 system:19（graph facade 按任务书 B5.3 决策保留）是**不可清的 documented 永久例外**。
+- **选定方案**：`git mv embed.py → infra/providers/embed.py` + 旧路径显式再导出 shim（含 `__main__` 块，`python -m unified_memory.embed` 不变）；搬家文件内 `from . import index` 改 `..store` 真名（infra 不依赖 legacy facade）；digest/health/system/search 四处导入重指向实现模块；layers 白名单 4 → 2 条（commands = remote_search shim 例外，system = graph facade 例外，理由全部写进白名单注释）。**放弃方案**：search.py 保持走 shim——会让 patch 语义分裂成两套（一半打 shim 一半打 impl），统一为"patch 打实现模块"。
+- **过程中抓到的两类真实缺陷（都在第一轮验证现形）**：
+  1. **我自己写的 `app/system.py` 相对导入层级错误**（`...` 超出顶层包，42 个测试模块导入失败）——system.py 在包内一层深，需两个点。全量测试的 ImportError 当场抓住。
+  2. **SECRETS_PATH 重绑失效（真实隔离缺陷）**：test_embed 通过 shim 重绑 `SECRETS_PATH` 隔离真实 secrets 文件；拆分后 impl 读自己的全局，重绑 shim 变成无操作 → **测试期间实现模块读的是真实 `~/.unified-memory/secrets.yaml`**（configured()=True 暴露）。这是 B5.2 "CONFIG_PATH 冻结在导入时刻"同类问题的 shim 版。修复 = 全部测试导入与 patch 目标统一改指 `unified_memory.infra.providers.embed`（test_embed/test_embed_circuit/test_hot_path/test_search/test_digest/test_health 共 6 文件，断言一字未改）。
+- **白名单结果**：`layers` 从 4 条减到 2 条 documented 永久例外（batch C 才能清）；`sqlite3`/`writes`/`subprocess`/`lazy_import`/`third_party` 五类保持清空状态。
+- **测试结果**：七道门全绿（469 / 886 / 32 / typecheck / bench 一致 / 快照 42 逐字节 / e2e 46），架构测试 7 例绿（白名单与实测违规精确相等）。
+- **删除**：无逻辑删除——embed.py 337 行实现整体搬迁（git mv 保历史），旧路径留 41 行 shim。
+- **遗留风险**：shim 的 SECRETS_PATH 等配置再导出对"经 legacy 路径重绑"的调用方是陷阱——已通过统一"测试打实现模块"消除测试面风险；外部调用方（若有）在 shim 退场（下个 minor）时一并清理。
+
 ## B5.5 接手说明存档（2026-10-29 交棒点，已被上节取代）
 
 **一句话状态**：B5.2 / B5.3 / B5.4（a/b/c）已入库并全绿，`git status` 干净，HEAD = `e5fb47e`；**只剩 B5.5**——清空架构白名单 + 翻预算门。下面每条都是本轮实测数据，不需要重新探查。

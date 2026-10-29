@@ -20,7 +20,7 @@ class DoctorTest(unittest.TestCase):
         destroy_scratch(self.vault)
 
     def test_clean_vault_reports_ok(self):
-        with patch("unified_memory.embed.configured", return_value=False):
+        with patch("unified_memory.infra.providers.embed.configured", return_value=False):
             report = health.doctor(self.vault)
         self.assertTrue(report["ok"])
         self.assertEqual(report["inbox"]["count"], 0)
@@ -33,18 +33,18 @@ class DoctorTest(unittest.TestCase):
         # this field was hardcoded False no matter what the user configured.
         # Both directions are pinned: the field must follow the provider, not
         # stick to either value.
-        with patch("unified_memory.embed.configured", return_value=True):
+        with patch("unified_memory.infra.providers.embed.configured", return_value=True):
             report = health.doctor(self.vault)
         self.assertTrue(report["embeddings"]["configured"])
 
-        with patch("unified_memory.embed.configured", return_value=False):
+        with patch("unified_memory.infra.providers.embed.configured", return_value=False):
             report = health.doctor(self.vault)
         self.assertFalse(report["embeddings"]["configured"])
 
     def test_sync_conflict_copy_is_an_error(self):
         ctx = common.canonical_dir(self.vault)
         (ctx / "prefs 2.md").write_text("# copy\n\n- duplicate truth\n", encoding="utf-8")
-        with patch("unified_memory.embed.configured", return_value=False):
+        with patch("unified_memory.infra.providers.embed.configured", return_value=False):
             report = health.doctor(self.vault)
         self.assertFalse(report["ok"])
         self.assertIn("sync-conflict-copies", [issue["code"] for issue in report["issues"]])
@@ -55,7 +55,7 @@ class DoctorTest(unittest.TestCase):
         stale.write_text("- old pending fact\n", encoding="utf-8")
         old = time.time() - 10 * 86400
         os.utime(stale, (old, old))
-        with patch("unified_memory.embed.configured", return_value=False):
+        with patch("unified_memory.infra.providers.embed.configured", return_value=False):
             report = health.doctor(self.vault)
         self.assertIn("inbox-stale", [issue["code"] for issue in report["issues"]])
 
@@ -80,7 +80,7 @@ class DoctorTest(unittest.TestCase):
             "- 真事实三\n",
             encoding="utf-8",
         )
-        with patch("unified_memory.embed.configured", return_value=False):
+        with patch("unified_memory.infra.providers.embed.configured", return_value=False):
             report = health.doctor(self.vault)
         self.assertEqual(report["canonical"]["unclassifiedLines"], 3)
 
@@ -110,7 +110,7 @@ class OrphanIndexReportTest(unittest.TestCase):
 
     def _report(self, items: list[dict]) -> dict:
         with patch("unified_memory.app.maintain.health._orphan_indexes", return_value=items), \
-             patch("unified_memory.embed.configured", return_value=False):
+             patch("unified_memory.infra.providers.embed.configured", return_value=False):
             return health.doctor(self.vault)
 
     def _issue(self, report: dict) -> dict:

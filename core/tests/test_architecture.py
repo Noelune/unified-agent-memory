@@ -152,19 +152,18 @@ WHITELIST: dict[str, set[str]] = {
     # moved to module level.
     "third_party": set(),  # B5.5b: PyYAML lives in infra/config_yaml (decision A).
     # Cross-layer imports. B5.5b cleared everything except the modules that
-    # read the four legacy implementations whose physical move is blocked by
-    # the security scanner's SSRF rule (new files containing urllib calls are
-    # rejected — see BATCH-REPORT.md): embed (provider), plus index/search,
-    # which are built on top of it. Each entry documents which legacy name it
-    # is waiting for; all of them disappear when embed moves into
-    # infra/providers.
+    # Two documented permanent exceptions (they cannot clear without breaking
+    # adjudicated decisions; see BATCH-REPORT.md B5.5c-2n):
     "layers": {
-        # embed (legacy) — SSRF-blocked migration.
-        "unified_memory.app.ingest.digest",
-        "unified_memory.app.maintain.health",
-        "unified_memory.app.system",
-        # search + index facades (depend on embed).
+        # app.query.commands lazily imports the memory shim for remote_search —
+        # the remote-index HTTP client deliberately stays on the legacy shim
+        # (B5.2 decision; new files with urlopen were SSRF-blocked by the
+        # scanner until the plugin was disabled on 2026-10-30). Documented
+        # exception until batch C moves the client into app.remote.
         "unified_memory.app.query.commands",
+        # app.system imports the legacy graph facade, which the taskbook
+        # (§B5.3) keeps on purpose — its migration is a batch-C item.
+        "unified_memory.app.system",
     },
 }
 

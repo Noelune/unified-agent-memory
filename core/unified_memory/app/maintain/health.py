@@ -21,7 +21,7 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from ... import embed as embed_mod
+from ...infra.providers import embed as embed_mod
 from ...domain.markdown import bare_fact_line, redact
 from ...domain.policy import (
     CONFLICT_FILE,

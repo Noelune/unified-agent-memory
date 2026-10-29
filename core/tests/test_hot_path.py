@@ -14,7 +14,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from test_common import destroy_scratch, make_scratch_vault
-from unified_memory import embed, index
+from unified_memory import index
+from unified_memory.infra.providers import embed
 
 
 class HotPathBudgetTests(unittest.TestCase):

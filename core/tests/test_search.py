@@ -32,14 +32,14 @@ class HybridSearchTest(unittest.TestCase):
     def setUp(self):
         self.vault = make_scratch_vault()
         # Isolate from any real SiliconFlow key so tests never hit the network.
-        import unified_memory.embed as emb
+        import unified_memory.infra.providers.embed as emb
 
         self._old_secrets = emb.SECRETS_PATH
         self._old_key = os.environ.pop("SILICONFLOW_API_KEY", None)
         emb.SECRETS_PATH = Path(__file__).parent / "no-such-secrets.yaml"
 
     def tearDown(self):
-        import unified_memory.embed as emb
+        import unified_memory.infra.providers.embed as emb
 
         emb.SECRETS_PATH = self._old_secrets
         if self._old_key is not None:
@@ -173,7 +173,7 @@ class QueryCacheTest(unittest.TestCase):
     def test_repeated_query_reuses_the_cached_vector(self):
         from unittest.mock import patch
 
-        import unified_memory.embed as emb
+        import unified_memory.infra.providers.embed as emb
 
         calls = []
         vector = [0.1] * emb.EMBED_DIMS

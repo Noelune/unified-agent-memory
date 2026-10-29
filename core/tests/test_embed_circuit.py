@@ -15,7 +15,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from test_common import destroy_scratch, make_scratch_vault
-from unified_memory import embed as emb
+from unified_memory.infra.providers import embed as emb
 
 
 class EmbedCircuitTest(unittest.TestCase):

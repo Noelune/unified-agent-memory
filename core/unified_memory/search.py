@@ -26,7 +26,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from . import embed, graph as graph_mod, index
+from . import graph as graph_mod, index
+from .infra.providers import embed
 from .domain import envelope
 from .domain.markdown import encode_untrusted, redact
 from .domain.model import Evidence

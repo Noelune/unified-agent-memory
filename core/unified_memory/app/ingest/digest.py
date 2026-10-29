@@ -42,8 +42,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from ... import embed
-from ...infra import config as config_mod
+from ...infra.providers import embed
 from ...infra import sessiondb
 from ...domain.markdown import looks_like_credential, redact
 from ...infra.config import parse_config, resolve_vault
