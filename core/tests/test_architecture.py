@@ -171,7 +171,7 @@ WHITELIST: dict[str, set[str]] = {
 # Size budgets (recorded at B0, asserted from B5)
 # ---------------------------------------------------------------------------
 
-ENFORCE_BUDGETS = False  # flip to True at the end of B5
+ENFORCE_BUDGETS = True  # opened at the end of B5 (2026-10-30): every breach is fixed
 FILE_SOFT_LIMIT = 450
 FILE_HARD_LIMIT = 600
 FILE_HARD_LIMIT_EXEMPT = frozenset({PKG_NAME + ".surface.cli"})  # cap is 600 anyway

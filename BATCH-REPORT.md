@@ -21,7 +21,7 @@
 | B5.2 | 拆 memory.py → surface/cli.py + app 命令模块 + 119 行 shim                              | ✅ 完成（阻塞已解除，2026-10-29）        | `d247aa1`                     |
 | B5.3 | legacy 实现模块迁入 layers（drift/digest/preview/stats/health/inbox 六件）                    | ✅ 完成（2026-10-29）              | `9f1fad2`、`3e38f78`、`699745a` |
 | B5.4 | promoter/conflict/forgetter/maintenance 拆分；register_cron → infra/schedule            | ✅ 完成（分 a/b/c 三步，2026-10-29）    | `e5bd84c`、`8289874`、`e5fb47e` |
-| B5.5 | 白名单收口（lazy/third_party/sqlite3/writes ✅ 清空；layers 剩 4 条 documented embed 依赖）；build_parser 拆分 ✅；**剩 10 条函数/def 拆分 + 翻门 → 下一批次** | 🔶 部分完成 | `73f9436`、`dcb8c0b` |
+| B5.5 | 白名单收口（五类全空；layers 留 2 条 documented 永久例外）；build_parser 拆分 ✅；14 个超预算函数 + claims defs 拆分 ✅；**ENFORCE_BUDGETS=True 已翻开** | ✅ 完成（第四阶段 2026-10-30） | `73f9436`、`dcb8c0b`、`cfacf50`–`ac67bf7` |
 | 维护轮  | 全量测试 + 测试隔离修复（journal / decide 集成 / bench）+ 真实 home 清理 + 46 项真功能 e2e（发现并修掉远端两处缺陷） | ✅ 完成（2026-10-29）              | `4a1a50a`、`c2de07c`、`00050f4` |
 | D1    | 修 doctor embeddings.configured 恒 False（双向测试钉住）                                    | ✅ 完成（第四阶段第 0 步）             | `5e2ac18`                     |
 | B5.5a | sessiondb → infra/sessiondb.py（sqlite3 + writes 白名单清空）                              | ✅ 完成（第四阶段）                   | `4cba03b`                     |
@@ -29,16 +29,16 @@
 | B5.5c-1 | build_parser 拆 5 族子函数（155 → 5×~20）                                          | ✅ 完成（第四阶段）                   | `dcb8c0b`                     |
 | 收尾   | BATCH-REPORT 定稿 + push origin                                                     | ⬜ 推送待用户确认（remote=GitHub 公共仓库） | —                             |
 
-## 验证基线（B5.4c 后，全绿，2026-10-29 22:20 实测）
+## 验证基线（B5.5d 后，全绿，预算门已翻开，2026-10-30 实测）
 
-- Python **468**（skipped=1 预算门）/ JS 886（41 文件）/ setup 32 / node 24 / typecheck 0
+- Python **469**（**预算门 ENFORCE_BUDGETS=True 已翻开，无 skip**）/ JS 886（41 文件）/ setup 32 / typecheck 0
 - `bash ../verify.sh` 七道门全绿：Python / JS / setup / typecheck / bench fixture / CLI 快照 42 例逐字节 / e2e 46 项
-- `npm run check` 全链退出 0（typecheck → drift:check → sync:check → vitest → python → setup → build → node test → drift:python）
-- bench fixture：recall@5/10=0.9167、mrr/ndcg=0.9167、abstain=0.75、update_top1_ok=1.0、empty=0.25（与 after-a12 一致，B5.2–B5.4 未触碰检索路径）
-- CLI 快照：42/42 逐字节一致；真实库副本迁移 164 memories / 130 embeddings / 752 access_log 守恒
+- bench fixture：recall@5/10=0.9167、mrr/ndcg=0.9167、abstain=0.75、update_top1_ok=1.0、empty=0.25（与 after-a12 一致，B5.2–B5.5 全程未触碰检索算法与排序权重）
+- CLI 快照：42/42 逐字节一致
 - 隔离：Python 套件、vitest、bench 跑完后 `~/.unified-memory/` **零新增文件**
-- 结构指标（B5.4c 后实测，67 个模块 / 10235 行）：**>600 行文件 0 个**（拆分前 2 个：promoter 1055、conflict 619）；>450 软限 1 个（`infra/store/search_index.py` 470）；memory.py 119、promoter.py shim 103、conflict.py shim 55、maintenance.py shim 17
-- 剩余预算债：**12 个 >60 行函数 + 1 个 >20 def 文件**（清单见「B5.5 接手说明」）
+- 结构指标（B5.5d 后实测，70 个模块）：**>600 行文件 0 个、>60 行函数 0 个、>20 顶层 def 文件 0 个（全部由翻开的预算门断言）**；>450 软限 2 个（`app/maintain/drift.py` 456、`infra/store/search_index.py` 506，软限仅记录不断言）；shim 清单：memory.py 119、promoter.py 103、conflict.py 55、maintenance.py 17、embed.py 41
+- 白名单：`layers` 剩 **2 条 documented 永久例外**（remote_search HTTP 客户端留 memory shim——B5.2 决策；graph legacy facade——任务书 B5.3 决策）；`sqlite3`/`writes`/`subprocess`/`lazy_import`/`third_party` 五类**全空**
+- 债务结论：接手说明账面 13 项，实际 15 项（`fts_search` 93 与 `_migrate_to_v5` 64 被每模块最差项的记账方式掩盖）——**全部清偿**
 
 ## 逐项详情
 
