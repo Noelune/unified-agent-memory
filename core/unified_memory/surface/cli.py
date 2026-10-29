@@ -72,6 +72,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="memory", description="unified agent memory CLI")
     sub = parser.add_subparsers(dest="command", required=True)
 
+    _add_system_parsers(sub)
+    _add_query_parsers(sub)
+    _add_ingest_parsers(sub)
+    _add_govern_parsers(sub)
+    _add_maintain_parsers(sub)
+    return parser
+
+
+def _add_system_parsers(sub: argparse._SubParsersAction) -> None:
+    """init / use / search / show / submit / status."""
     p_init = sub.add_parser("init", help="create the vault structure")
     p_init.add_argument("--vault", required=True)
     p_init.add_argument("--force", action="store_true")
@@ -105,6 +115,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_status.add_argument("--json", action="store_true", help="emit a machine-readable JSON envelope")
     p_status.set_defaults(fn=cmd_status)
 
+
+def _add_query_parsers(sub: argparse._SubParsersAction) -> None:
+    """sync / embed / digest / preview / graph."""
     p_sync = sub.add_parser("sync", help="update the derived index and top up vectors (maintenance, not retrieval)")
     p_sync.add_argument("--limit", type=int, default=400, help="max memory lines to embed per run")
     p_sync.add_argument("--no-embed", action="store_true", help="skip the vector top-up (index only)")
@@ -141,6 +154,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_graph = sub.add_parser("graph", help="build the lightweight concept graph (optional, feeds hybrid search)")
     p_graph.set_defaults(fn=cmd_graph)
 
+
+def _add_ingest_parsers(sub: argparse._SubParsersAction) -> None:
+    """note / dismiss."""
     p_note = sub.add_parser("note", help="print one inbox submission")
     p_note.add_argument("name")
     p_note.add_argument("--json", action="store_true", help="emit a machine-readable JSON envelope")
@@ -151,6 +167,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_dismiss.add_argument("--json", action="store_true", help="emit a machine-readable JSON envelope")
     p_dismiss.set_defaults(fn=cmd_dismiss_cli)
 
+
+def _add_govern_parsers(sub: argparse._SubParsersAction) -> None:
+    """accept / decide / advise / stats."""
     # The positive counterpart of `dismiss`: promote ONE submission. Separate
     # from `promoter --apply`, which executes the whole pending list.
     p_accept = sub.add_parser("accept", help="promote one inbox submission into canonical notes")
@@ -182,6 +201,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_stats.add_argument("--json", action="store_true", help="emit the JSON envelope")
     p_stats.set_defaults(fn=cmd_stats_cli)
 
+
+def _add_maintain_parsers(sub: argparse._SubParsersAction) -> None:
+    """doctor / gc / drift / audit / cite."""
     p_doctor = sub.add_parser("doctor", help="read-only health report (vault, index, queues)")
     p_doctor.add_argument("--json", action="store_true", help="emit the machine-readable report")
     p_doctor.add_argument("--strict", action="store_true", help="exit non-zero on warnings too")
@@ -215,8 +237,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_cite.add_argument("--ids", help="comma/space separated 10-char short ids")
     p_cite.add_argument("--json", action="store_true", help="machine-readable output")
     p_cite.set_defaults(fn=cmd_cite)
-
-    return parser
 
 
 def main(argv: list[str] | None = None) -> None:
