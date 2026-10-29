@@ -130,12 +130,8 @@ def _matches_any(module: str, prefixes: tuple[str, ...]) -> bool:
 # ---------------------------------------------------------------------------
 
 WHITELIST: dict[str, set[str]] = {
-    "sqlite3": {
-        "unified_memory.sessiondb",
-    },
-    "writes": {
-        "unified_memory.sessiondb",
-    },
+    "sqlite3": set(),
+    "writes": set(),
     "subprocess": set(),  # B5.4: register_job (cron) and drift's git probe both
     # go through infra/schedule.run_command — this rule needs no entry any more.
     "lazy_import": {

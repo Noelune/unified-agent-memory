@@ -24,7 +24,7 @@ import unittest
 from pathlib import Path
 
 from test_common import destroy_scratch, make_scratch_vault
-from unified_memory import sessiondb
+from unified_memory.infra import sessiondb
 
 
 def _ts(date: str, hour: int = 12) -> float:

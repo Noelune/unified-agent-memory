@@ -195,7 +195,7 @@ def _units(vault: Path, source: str, cursor: str) -> list[tuple[str, str, str]]:
     date inside SQL.
     """
     if source == "state":
-        from ... import sessiondb
+        from ...infra import sessiondb
 
         return [
             (f"state.db {day}", day, transcript)
@@ -216,7 +216,7 @@ def digest(vault: Path, dry_run: bool = False, limit: int = 0, source: str = "ar
     avail_files = len(_archive_files(vault))
     cursor = _cursor(vault, cursor_key)
     if source == "state":
-        from ... import sessiondb
+        from ...infra import sessiondb
 
         try:
             pending = _units(vault, source, cursor)
