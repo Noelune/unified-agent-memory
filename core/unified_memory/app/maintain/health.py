@@ -38,7 +38,7 @@ from ...infra.store import (
     vacuum_index,
 )
 from ...infra.vault import canonical_dir, ensure_vault
-from ...conflict import read_conflicts
+from ...app.govern.queue import read_conflicts
 
 ACCESS_RETENTION_DAYS = 180
 QUERY_CACHE_RETENTION_DAYS = 30

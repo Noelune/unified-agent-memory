@@ -53,15 +53,8 @@ from .infra.vault import (
     read_maybe,
     situation_dir,
 )
-from .conflict import (
-    CONFLICT_SIM_THRESHOLD,
-    append_conflict,
-    classify_against,
-    read_conflicts,
-    record_adjudication,
-    remove_conflict,
-    similarity,
-)
+from .app.govern.queue import append_conflict, read_conflicts, record_adjudication, remove_conflict
+from .domain.conflict import CONFLICT_SIM_THRESHOLD, classify_against, similarity
 
 # --------------------------------------------------------------------------
 # Classification rules (keyword -> canonical target). Neutral & generic.

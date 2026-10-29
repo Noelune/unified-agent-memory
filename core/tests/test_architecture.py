@@ -134,7 +134,8 @@ WHITELIST: dict[str, set[str]] = {
         "unified_memory.sessiondb",
     },
     "writes": {
-        "unified_memory.conflict",
+        # B5.4: conflict split — the queue I/O moved to app/govern/queue.py and
+        # appends through infra.vault.atomic_write, so the entry is gone.
         "unified_memory.forgetter",
         "unified_memory.promoter",
         "unified_memory.sessiondb",

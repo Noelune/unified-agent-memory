@@ -2,8 +2,8 @@
 """app.govern.commands — decide / advise / accept bodies.
 
 Moved verbatim from memory.py (batch B5). The legacy ``promoter`` and
-``conflict`` imports are recorded in test_architecture's layers whitelist;
-they move into app/govern in the follow-up promoter/conflict split.
+The conflict queue now lives next door (``app/govern/queue.py``), so this
+module no longer reaches into the flat legacy namespace for it.
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import sys
 from argparse import Namespace
 from pathlib import Path
 
-from ... import conflict as conflict_mod
+from . import queue as conflict_mod
 from ... import promoter as promoter_mod
 from ...domain.markdown import collapse_whitespace
 from ...infra.config import resolve_vault

@@ -30,12 +30,12 @@ from ...domain.policy import (
 )
 from ...infra.store import forgetting_candidates
 from ...infra.vault import canonical_dir
-from ...conflict import (
+from ...app.govern.queue import read_conflicts
+from ...domain.conflict import (
     ADVICE_CHOICE,
     ADVICE_WHY,
     describe,
     entry_key,
-    read_conflicts,
     split_change,
 )
 
