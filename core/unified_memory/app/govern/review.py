@@ -110,6 +110,103 @@ def _best_overlap(fact: str, existing: list[str], min_sim: float) -> str | None:
     return best_line if best_sim >= min_sim else None
 
 
+def _entry(
+    vault: Path,
+    clean: str,
+    doc_id: str,
+    target: Path,
+    src_name: str,
+    supersede: str | None = None,
+) -> dict:
+    """Build a pending-list entry (shared by pending and supersede kinds)."""
+    entry = {
+        "fact": clean,
+        "doc": doc_id,
+        "target": str(target.relative_to(vault)) if target.is_relative_to(vault) else str(target),
+        "source": src_name,
+    }
+    if supersede is not None:
+        entry["supersede"] = supersede
+    return entry
+
+
+def _verdict(
+    vault: Path,
+    clean: str,
+    src_name: str,
+    adjudicated: set[str],
+    existing_cache: dict[Path, list[str]],
+) -> tuple[str, dict | None]:
+    """Decide one submitted fact and do the queue I/O it needs.
+
+    Returns (kind, entry). kind ∈ settled | duplicate | supersede | conflict |
+    cross | pending; entry is the pending-list entry for supersede/pending and
+    None otherwise. Queue writes (append_conflict) happen here, exactly where
+    the inline loop did them — same module, same layer, same order.
+    """
+    if bare_fact_line(f"- {clean}") in adjudicated:
+        # A human already ruled on this fact; honouring the adjudication log
+        # is what makes adjudication final (see _adjudicated_facts).
+        return "settled", None
+    doc_id = classify(clean)
+    target = target_path(vault, doc_id)
+    # Canonical notes do not change during a review pass, so parse each target
+    # once instead of once per submitted fact. On a large inbox that turns an
+    # O(facts × lines) file-read loop into one read per note.
+    #
+    # Only *active* facts are compared. Reading the whole note made history
+    # indistinguishable from truth: once an old value moved under 已取代 it
+    # stayed in the pool, so the replacement that had just superseded it was
+    # reported as a fresh conflict on every run.
+    if target not in existing_cache:
+        existing_cache[target] = active_fact_lines(
+            read_maybe(target), drop_examples=True
+        )
+    existing = existing_cache[target]
+    status, hit = classify_against(clean, existing)
+    if status == "duplicate":
+        return "duplicate", None
+    if status == "conflict":
+        if hit and SUPERSESSION_RE.search(clean):
+            # Replacement cue: keep both in history, mark old superseded.
+            return "supersede", _entry(vault, clean, doc_id, target, src_name, supersede=hit)
+        append_conflict(vault, clean, hit or "", src_name, doc_id)
+        return "conflict", None
+    # Below the conflict threshold, a replacement cue with a looser
+    # topic overlap still supersedes (e.g. "端口已改为 9090" vs "端口为 8080").
+    if SUPERSESSION_RE.search(clean):
+        topic_hit = _best_overlap(clean, existing, min_sim=0.3)
+        if topic_hit:
+            return "supersede", _entry(vault, clean, doc_id, target, src_name, supersede=topic_hit)
+    # Contradictions living in ANOTHER note are invisible to the
+    # target-note comparison above; recall candidates corpus-wide and
+    # apply the same subject/value rules before queueing.
+    cross = _cross_doc_hit(vault, clean, target)
+    if cross is not None:
+        append_conflict(vault, clean, cross[1], src_name, doc_id, cross_doc=cross[0])
+        return "cross", None
+    return "pending", _entry(vault, clean, doc_id, target, src_name)
+
+
+def _print_review(result: dict) -> None:
+    """Print the human summary; data comes from the result dict, bytes unchanged."""
+    pending = result["pending"]
+    duplicates = result["duplicates"]
+    conflicts = result["conflicts"]
+    cross_conflicts = result["cross_conflicts"]
+    supersessions = result["supersessions"]
+    settled = result["adjudicated"]
+    settled_note = f", {settled} already adjudicated" if settled else ""
+    cross_note = f", {cross_conflicts} cross-doc" if cross_conflicts else ""
+    print(
+        f"review: {len(pending)} pending, {duplicates} duplicate(s), "
+        f"{conflicts} conflict(s){cross_note}, {supersessions} supersession(s){settled_note}"
+    )
+    for p in pending:
+        mark = f" [取代→{p['supersede'][:40]}]" if p.get("supersede") else ""
+        print(f"  -> {p['doc']:6s} | {p['fact'][:60]}{mark}")
+
+
 def review(vault: Path, verbose: bool = True, only: set[str] | None = None) -> dict:
     """Build the pending list.
 
@@ -126,113 +223,36 @@ def review(vault: Path, verbose: bool = True, only: set[str] | None = None) -> d
     # miss candidates that a just-written note holds. Incremental and cheap.
     update_index(vault)
     pending: list[dict] = []
-    duplicates = 0
-    conflicts = 0
-    cross_conflicts = 0
-    supersessions = 0
+    duplicates = conflicts = cross_conflicts = supersessions = settled = 0
     conflicted_sources: set[str] = set()
-    settled = 0
     source_files: set[str] = set()
-    # Conflicts a human already ruled on. Without this the inbox submission
-    # keeps re-raising the same conflict forever: `保留旧`/`跳过` leave both the
-    # submission and the canonical value untouched, so the next pass reaches
-    # the identical verdict. The adjudication log is the record of "asked and
-    # answered"; honouring it is what makes adjudication final.
+    # Conflicts a human already ruled on (why this matters: see _verdict).
     adjudicated = _adjudicated_facts(vault)
-    # Canonical notes do not change during a review pass, so parse each target
-    # once instead of once per submitted fact. On a large inbox that turns an
-    # O(facts × lines) file-read loop into one read per note.
-    #
-    # Only *active* facts are compared. Reading the whole note made history
-    # indistinguishable from truth: once an old value moved under 已取代 it
-    # stayed in the pool, so the replacement that had just superseded it was
-    # reported as a fresh conflict on every run.
     existing_cache: dict[Path, list[str]] = {}
     for src in sorted(inbox.glob("*.md")):
-        if src.name in NON_SUBMISSION_FILES:
-            continue
-        if only is not None and src.name not in only:
+        if src.name in NON_SUBMISSION_FILES or (only is not None and src.name not in only):
             continue
         source_files.add(src.name)
         for fact in fact_lines(src.read_text(encoding="utf-8", errors="replace")):
             clean = redact(fact.strip())
-            if bare_fact_line(f"- {clean}") in adjudicated:
+            kind, entry = _verdict(vault, clean, src.name, adjudicated, existing_cache)
+            if kind == "settled":
                 settled += 1
-                continue
-            doc_id = classify(clean)
-            target = target_path(vault, doc_id)
-            if target not in existing_cache:
-                existing_cache[target] = active_fact_lines(
-                    read_maybe(target), drop_examples=True
-                )
-            existing = existing_cache[target]
-            status, hit = classify_against(clean, existing)
-            if status == "duplicate":
+            elif kind == "duplicate":
                 duplicates += 1
-                continue
-            if status == "conflict":
-                if hit and SUPERSESSION_RE.search(clean):
-                    # Replacement cue: keep both in history, mark old superseded.
-                    supersessions += 1
-                    pending.append(
-                        {
-                            "fact": clean,
-                            "doc": doc_id,
-                            "target": str(target.relative_to(vault)) if target.is_relative_to(vault) else str(target),
-                            "source": src.name,
-                            "supersede": hit,
-                        }
-                    )
-                    continue
+            elif kind == "supersede":
+                supersessions += 1
+                pending.append(entry)
+            elif kind == "conflict":
                 conflicts += 1
                 conflicted_sources.add(src.name)
-                append_conflict(vault, clean, hit or "", src.name, doc_id)
-                continue
-            # Below the conflict threshold, a replacement cue with a looser
-            # topic overlap still supersedes (e.g. "端口已改为 9090" vs "端口为 8080").
-            if SUPERSESSION_RE.search(clean):
-                topic_hit = _best_overlap(clean, existing, min_sim=0.3)
-                if topic_hit:
-                    supersessions += 1
-                    pending.append(
-                        {
-                            "fact": clean,
-                            "doc": doc_id,
-                            "target": str(target.relative_to(vault)) if target.is_relative_to(vault) else str(target),
-                            "source": src.name,
-                            "supersede": topic_hit,
-                        }
-                    )
-                    continue
-            # Contradictions living in ANOTHER note are invisible to the
-            # target-note comparison above; recall candidates corpus-wide and
-            # apply the same subject/value rules before queueing.
-            cross = _cross_doc_hit(vault, clean, target)
-            if cross is not None:
+            elif kind == "cross":
                 conflicts += 1
                 cross_conflicts += 1
                 conflicted_sources.add(src.name)
-                append_conflict(vault, clean, cross[1], src.name, doc_id, cross_doc=cross[0])
-                continue
-            pending.append(
-                {
-                    "fact": clean,
-                    "doc": doc_id,
-                    "target": str(target.relative_to(vault)) if target.is_relative_to(vault) else str(target),
-                    "source": src.name,
-                }
-            )
-    if verbose:
-        settled_note = f", {settled} already adjudicated" if settled else ""
-        cross_note = f", {cross_conflicts} cross-doc" if cross_conflicts else ""
-        print(
-            f"review: {len(pending)} pending, {duplicates} duplicate(s), "
-            f"{conflicts} conflict(s){cross_note}, {supersessions} supersession(s){settled_note}"
-        )
-        for p in pending:
-            mark = f" [取代→{p['supersede'][:40]}]" if p.get("supersede") else ""
-            print(f"  -> {p['doc']:6s} | {p['fact'][:60]}{mark}")
-    return {
+            else:
+                pending.append(entry)
+    result = {
         "pending": pending,
         "duplicates": duplicates,
         "conflicts": conflicts,
@@ -242,6 +262,9 @@ def review(vault: Path, verbose: bool = True, only: set[str] | None = None) -> d
         "source_files": source_files,
         "conflicted_sources": conflicted_sources,
     }
+    if verbose:
+        _print_review(result)
+    return result
 
 
 def _adjudicated_facts(vault: Path) -> set[str]:

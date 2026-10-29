@@ -186,6 +186,16 @@
 - **过程记录（第一轮验证抓到自己引入的缺陷）**：初版 helper 命名 `_*_issue` 与 client-findings.test.ts 的朴素子串计数 `_issue(` 撞车（helper 名以 `_issue(` 结尾被计入，8≠24 红）。这是该 JS 测试的设计意图——「parse failure is loud」的防呆尺子抓到了命名疏忽。全部改名为 `_flag_*`，raw 计数回到 9（1 def + 8 调用）。
 - **遗留风险**：health.py 19/20 defs——后续在此文件加函数前先清点。
 
+### B5.5c-2b 拆 review（132 → 58 行，✅ 2026-10-30）
+
+- **调研**：`review()` 132 行 = 设置 + 双层循环（每事实的裁决树 ~68 行 + 计数器）+ 冗长输出 + 返回。顺序敏感点：冲突入队（`append_conflict`）与计数器在同一事实迭代内；`_cross_doc_hit` 在 supersede 检查之后（同优先级路径）；verbose 输出在返回前。测试面：test_promoter 等治理套件、快照 review case、e2e promoter 四入口。
+- **选定方案**：`_verdict`（单事实裁决树，返回 (kind, entry)，队列 I/O 原位保留在同一模块同一层）+ `_entry`（pending/supersede 条目共用构造器，消除原 3 处重复字典字面量）+ `_print_review`（数据改从 result 字典取，字节不变）+ `review` 编排（分派计数）。**放弃方案**：把裁决树按 status 分裂成多个小函数——同一事实的六种裁决共享 classify/target/cache 前置，撕开要传 5 个参数还多一层间接。
+- **设计**：计数器留 review、I/O 留 `_verdict`（原位置）；`review` 58 行；文件 12 defs。迁移中三次自查抓住自己引入的笔误（参数错位、注释重复放置），靠 ast + 指标实测（62 → 58 行两轮收缩：合并跳过条件、链式计数器、重复注释下放 `_verdict`）。
+- **虚拟项目验证**：ast.parse + test_promoter/test_conflict_formats/test_accept/test_auto_promote_archive 92 例 + 全量 469。
+- **测试结果**：七道门全绿（469 / 886 / 32 / typecheck / bench 一致 / 快照 42 逐字节 / e2e 46）。
+- **删除**：原循环体内联裁决树与 3 处重复的 pending 条目字面量（合入 `_entry`）；review 内与 `_verdict`/`_adjudicated_facts` 重复的两段注释下放。逻辑零删除。
+- **遗留风险**：`_verdict` 返回字符串 kind（6 值），调用方按 kind 计数——若后续加裁决种类需同步改两处；已用注释钉住。
+
 ## B5.5 接手说明存档（2026-10-29 交棒点，已被上节取代）
 
 **一句话状态**：B5.2 / B5.3 / B5.4（a/b/c）已入库并全绿，`git status` 干净，HEAD = `e5fb47e`；**只剩 B5.5**——清空架构白名单 + 翻预算门。下面每条都是本轮实测数据，不需要重新探查。
