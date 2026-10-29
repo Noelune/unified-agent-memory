@@ -267,6 +267,17 @@
 - **删除**：_ensure_schema 内联建表/索引体（约 70 行）与 _migrate_to_v5 的两段重映射循环（21 行）迁入 4 个助手；逻辑零删除。
 - **遗留风险**：schema.py 18 defs（限 20）。
 
+### B5.5c-2j 拆 cmd_search + cmd_doctor（67+67 → 12+15 行，✅ 2026-10-30）
+
+- **调研**：两个 67 行命令体。cmd_search = 三模式（hybrid/remote/local）各自独立输出（remote 含远端失败回退本地 + lazy import memory shim）；cmd_doctor = 获取+失败兜底 → JSON/文本渲染 → 严格退出码。测试面：快照 search/doctor 全 case、e2e 两种模式、test_remote_json 回归。
+- **选定方案**：cmd_search → `_search_hybrid/_search_remote/_search_local` 三模式助手 + 分派；cmd_doctor → `_doctor_report`（永不抛，映射为错误报告）+ `_print_doctor`（人类面板）。**放弃方案**：模式助手返回 dict 由 cmd_search 统一渲染——三种模式输出形状本就不同（id vs match 字段），统一层是假抽象。
+- **设计**：remote 分支的 lazy import 与注释原位保留（HTTP 客户端仍驻 memory shim）；错误消息与 JSON envelope 逐字节不变。
+- **虚拟项目验证**：全量 469。
+- **测试结果**：七道门全绿（469 / 886 / 32 / typecheck / bench 一致 / 快照 42 逐字节 / e2e 46）。
+- **删除**：两处内联模式/渲染体（约 100 行）迁入 5 个助手；逻辑零删除。
+- **遗留风险**：无——两文件 5/10 defs。
+- **过程记录**：cmd_doctor 主体替换的 Edit 一次严重损坏（整函数被替成一行乱码），ast 当场抓红，单次小 Edit 恢复；坚持"每步 ast 验证"的流程把损害限制在一步内。
+
 ## B5.5 接手说明存档（2026-10-29 交棒点，已被上节取代）
 
 **一句话状态**：B5.2 / B5.3 / B5.4（a/b/c）已入库并全绿，`git status` 干净，HEAD = `e5fb47e`；**只剩 B5.5**——清空架构白名单 + 翻预算门。下面每条都是本轮实测数据，不需要重新探查。

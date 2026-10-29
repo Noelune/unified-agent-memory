@@ -18,12 +18,10 @@ from ...infra.console import emit_json
 from ...infra.vault import ensure_vault
 
 
-def cmd_doctor(args: Namespace) -> None:
-    """Read-only health report over vault, index and lifecycle queues."""
-
-    vault = resolve_vault()
+def _doctor_report(vault: Path) -> dict:
+    """Run doctor, mapping any failure to an error report (never raises)."""
     try:
-        report = health_mod.doctor(vault)
+        return health_mod.doctor(vault)
     except Exception as exc:  # noqa: BLE001 — doctor must report, not crash
         code = "vault-missing" if isinstance(exc, RuntimeError) else "doctor-failed"
         hint = (
@@ -31,7 +29,7 @@ def cmd_doctor(args: Namespace) -> None:
             if code == "vault-missing"
             else "Check the index database; `memory gc --apply` can rebuild derived tables."
         )
-        report = {
+        return {
             "ok": False,
             "vault": str(vault),
             "issues": [
@@ -43,44 +41,55 @@ def cmd_doctor(args: Namespace) -> None:
                 }
             ],
         }
+
+
+def _print_doctor(report: dict) -> None:
+    """The human doctor panel (JSON mode bypasses this)."""
+    if "index" in report:
+        idx = report["index"]
+        print(
+            f"index: {idx['memories']} memories ({idx['active']} active, "
+            f"{idx['superseded']} superseded), {idx['vectors']} vectors, "
+            f"{idx['bytes'] / 1e6:.1f} MB, "
+            f"journal={idx['journalMode']}"
+        )
+        print(
+            f"inbox: {report['inbox']['count']} file(s)"
+            + (
+                f" (oldest {report['inbox']['oldestDays']}d)"
+                if report["inbox"].get("oldestDays") is not None
+                else ""
+            )
+        )
+        print(
+            f"canonical: {report['canonical']['files']} note(s), "
+            f"{len(report['canonical']['duplicateLines'])} duplicate line(s), "
+            f"{len(report['canonical']['conflictCopies'])} conflict copy/copies"
+        )
+        print(f"conflicts: {report['conflicts']['count']}")
+        print(
+            f"embeddings: {report['embeddings']['coverage'] * 100:.0f}% coverage "
+            f"(configured={report['embeddings']['configured']})"
+        )
+    issues = report.get("issues", [])
+    if issues:
+        print("issues:")
+        for issue in issues:
+            print(f"  [{issue['severity']}] {issue['code']}: {issue['message']}")
+            if issue.get("hint"):
+                print(f"           -> {issue['hint']}")
+    else:
+        print("no issues found")
+
+
+def cmd_doctor(args: Namespace) -> None:
+    """Read-only health report over vault, index and lifecycle queues."""
+    vault = resolve_vault()
+    report = _doctor_report(vault)
     if getattr(args, "json", False):
         emit_json("doctor", report)
     else:
-        if "index" in report:
-            idx = report["index"]
-            print(
-                f"index: {idx['memories']} memories ({idx['active']} active, "
-                f"{idx['superseded']} superseded), {idx['vectors']} vectors, "
-                f"{idx['bytes'] / 1e6:.1f} MB, "
-                f"journal={idx['journalMode']}"
-            )
-            print(
-                f"inbox: {report['inbox']['count']} file(s)"
-                + (
-                    f" (oldest {report['inbox']['oldestDays']}d)"
-                    if report["inbox"].get("oldestDays") is not None
-                    else ""
-                )
-            )
-            print(
-                f"canonical: {report['canonical']['files']} note(s), "
-                f"{len(report['canonical']['duplicateLines'])} duplicate line(s), "
-                f"{len(report['canonical']['conflictCopies'])} conflict copy/copies"
-            )
-            print(f"conflicts: {report['conflicts']['count']}")
-            print(
-                f"embeddings: {report['embeddings']['coverage'] * 100:.0f}% coverage "
-                f"(configured={report['embeddings']['configured']})"
-            )
-        issues = report.get("issues", [])
-        if issues:
-            print("issues:")
-            for issue in issues:
-                print(f"  [{issue['severity']}] {issue['code']}: {issue['message']}")
-                if issue.get("hint"):
-                    print(f"           -> {issue['hint']}")
-        else:
-            print("no issues found")
+        _print_doctor(report)
     has_error = any(issue.get("severity") == "error" for issue in report.get("issues", []))
     has_warning = any(issue.get("severity") == "warn" for issue in report.get("issues", []))
     if has_error or (getattr(args, "strict", False) and has_warning):

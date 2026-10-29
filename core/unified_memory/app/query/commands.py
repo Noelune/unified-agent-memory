@@ -40,73 +40,86 @@ def preview_views() -> tuple[str, ...]:
     return preview_mod.VIEWS
 
 
-def cmd_search(args: Namespace) -> None:
-    vault = resolve_vault()
-    want_json = getattr(args, "json", False)
-    if getattr(args, "hybrid", False):
-        ensure_vault(vault)
-        result = search_mod.hybrid_search(
-            vault, args.query, limit=args.limit, format_=getattr(args, "format", "full"), budget=getattr(args, "budget", None)
-        )
-        if want_json:
-            results = [dict(r, untrusted=True) for r in result["results"]]
-            emit_json(
-                "search",
-                {"query": args.query, "mode": "hybrid", "count": result["count"], "streams": result["streams"], "results": results},
-            )
-            return
-        print(search_mod.render_hybrid(result["results"], args.query))
-        return
-    if args.remote:
-        rc = remote_config()
-        if rc is None:
-            raise SystemExit(
-                "remote index is not configured — set UNIFIED_MEMORY_REMOTE_URL "
-                f"(plus {REMOTE_TOKEN_ENV}) or add remote.url to the config. "
-                "See docs/DEPLOY.md."
-            )
-        url, token = rc
-        mode = "remote"
-        try:
-            # The remote HTTP client stays on the memory shim for now: new
-            # files containing urllib calls are rejected by the security
-            # scanner's SSRF rule (see BATCH-REPORT.md).
-            from ... import memory as memory_mod
-
-            results = memory_mod.remote_search(url, token, args.query, args.limit)
-        except Exception as exc:  # noqa: BLE001
-            print(f"note: remote search failed ({exc}) — fell back to local index", file=sys.stderr)
-            # Fallback needs a local vault; search_index would otherwise
-            # silently return no matches for a missing vault.
-            ensure_vault(vault)
-        
-            results = store_fts_search(vault, args.query, args.limit)["results"]
-            mode = "local"
-        if want_json:
-            # Every other search mode honours --json; this branch used to print
-            # the fenced text regardless, so a caller asking for JSON got a
-            # human panel and failed to parse it (regression test:
-            # test_remote_json_mode_returns_a_json_envelope).
-            emit_json(
-                "search",
-                {
-                    "query": args.query,
-                    "mode": mode,
-                    "count": len(results),
-                    "results": [dict(r, untrusted=True) for r in results],
-                },
-            )
-            return
-        print_memory_data(args.query, results)
-        return
+def _search_hybrid(args: Namespace, vault: Path, want_json: bool) -> None:
+    """hybrid 模式：融合检索 + 渲染/JSON。"""
     ensure_vault(vault)
+    result = search_mod.hybrid_search(
+        vault, args.query, limit=args.limit, format_=getattr(args, "format", "full"), budget=getattr(args, "budget", None)
+    )
+    if want_json:
+        results = [dict(r, untrusted=True) for r in result["results"]]
+        emit_json(
+            "search",
+            {"query": args.query, "mode": "hybrid", "count": result["count"], "streams": result["streams"], "results": results},
+        )
+        return
+    print(search_mod.render_hybrid(result["results"], args.query))
 
+
+def _search_remote(args: Namespace, vault: Path, want_json: bool) -> None:
+    """remote 模式：远端索引 + 本地回退。"""
+    rc = remote_config()
+    if rc is None:
+        raise SystemExit(
+            "remote index is not configured — set UNIFIED_MEMORY_REMOTE_URL "
+            f"(plus {REMOTE_TOKEN_ENV}) or add remote.url to the config. "
+            "See docs/DEPLOY.md."
+        )
+    url, token = rc
+    mode = "remote"
+    try:
+        # The remote HTTP client stays on the memory shim for now: new
+        # files containing urllib calls are rejected by the security
+        # scanner's SSRF rule (see BATCH-REPORT.md).
+        from ... import memory as memory_mod
+
+        results = memory_mod.remote_search(url, token, args.query, args.limit)
+    except Exception as exc:  # noqa: BLE001
+        print(f"note: remote search failed ({exc}) — fell back to local index", file=sys.stderr)
+        # Fallback needs a local vault; search_index would otherwise
+        # silently return no matches for a missing vault.
+        ensure_vault(vault)
+        results = store_fts_search(vault, args.query, args.limit)["results"]
+        mode = "local"
+    if want_json:
+        # Every other search mode honours --json; this branch used to print
+        # the fenced text regardless, so a caller asking for JSON got a
+        # human panel and failed to parse it (regression test:
+        # test_remote_json_mode_returns_a_json_envelope).
+        emit_json(
+            "search",
+            {
+                "query": args.query,
+                "mode": mode,
+                "count": len(results),
+                "results": [dict(r, untrusted=True) for r in results],
+            },
+        )
+        return
+    print_memory_data(args.query, results)
+
+
+def _search_local(args: Namespace, vault: Path, want_json: bool) -> None:
+    """local 模式：本地 FTS。"""
+    ensure_vault(vault)
     result = store_fts_search(vault, args.query, args.limit)
     if want_json:
         results = [dict(r, untrusted=True) for r in result["results"]]
         emit_json("search", {"query": args.query, "mode": "local", "count": len(results), "results": results})
         return
     print_memory_data(args.query, result["results"])
+
+
+def cmd_search(args: Namespace) -> None:
+    vault = resolve_vault()
+    want_json = getattr(args, "json", False)
+    if getattr(args, "hybrid", False):
+        _search_hybrid(args, vault, want_json)
+        return
+    if args.remote:
+        _search_remote(args, vault, want_json)
+        return
+    _search_local(args, vault, want_json)
 
 
 def cmd_show(args: Namespace) -> None:
