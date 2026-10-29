@@ -288,6 +288,16 @@
 - **删除**：组内规划体内联块（约 40 行）迁入 `_plan_group`；逻辑零删除。
 - **遗留风险**：无——promote.py 9 defs。
 
+### B5.5c-2m 拆 claims.py：stats 族迁出（24 → 17 defs，✅ 2026-10-30）
+
+- **调研**：claims.py 24 顶层 def（限 20）。函数天然聚族：access/usage 4、读 5、向量 4、query cache 2、meta 2、**stats 7**（`_day` + 6 个 stats_*，全部只读 SELECT）。stats 族自成一节（有分节注释）且只被 `app/query/stats.py` 经 `infra.store` 包导出面使用。**关键发现**：test_stats.py:315 patch `store_claims.get_conn`（验证 stats_scalar 的注入守卫——连接绕过 schema 步骤必须炸出来），迁移后 patch 目标必须跟随。
+- **选定方案**：stats 族迁入新模块 `infra/store/stats_queries.py`（106 行，7 defs）；`__init__.py` 把 7 个名字从 claims 块移到 stats_queries 块（导入方零改动）；test_stats 的 patch 目标与注释重定向到新模块（B5.3「测试跟随」先例，断言一字未改）。**放弃方案**：按读/写/查询拆三模块——读族与向量族没有独立成节，硬拆是噪音。
+- **设计**：函数体逐字迁移（含 stats_scalar 的"不吞异常"docstring）；store 包导出面与 `__all__` 不变；新模块仍全字面量 SQL。
+- **虚拟项目验证**：test_stats 19 例 + 全量 469。
+- **测试结果**：七道门全绿（469 / 886 / 32 / typecheck / bench 一致 / 快照 42 逐字节 / e2e 46）。
+- **删除**：claims.py 的 97 行 stats 段（迁出，非删除语义）；claims.py 297 行、17 defs。
+- **遗留风险**：无。
+
 ## B5.5 接手说明存档（2026-10-29 交棒点，已被上节取代）
 
 **一句话状态**：B5.2 / B5.3 / B5.4（a/b/c）已入库并全绿，`git status` 干净，HEAD = `e5fb47e`；**只剩 B5.5**——清空架构白名单 + 翻预算门。下面每条都是本轮实测数据，不需要重新探查。

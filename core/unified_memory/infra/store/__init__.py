@@ -3,7 +3,8 @@
 
 schema   connection lifecycle + idempotent DDL + v4→v10 migrations
 search_index  docs/fts/fts_lex tables: incremental rebuild + lexical search
-claims   memory-row use cases: access tracking, vectors, caches, aggregates
+claims   memory-row use cases: access tracking, vectors, caches
+stats_queries  read-only aggregates (stats.py's storage half)
 audit    the hash-chained audit log
 maintain diagnostics + reversible derived-data pruning (health/gc)
 
@@ -36,15 +37,17 @@ from .claims import (
     resolve_short_ids,
     save_vectors,
     set_meta,
+    used_count,
+    vector_count,
+    vector_search_rows,
+)
+from .stats_queries import (
     stats_access_per_day,
     stats_daily_created,
     stats_importance_counts,
     stats_scalar,
     stats_top_accessed,
     stats_type_counts,
-    used_count,
-    vector_count,
-    vector_search_rows,
 )
 from .audit import (
     audit_entry_hash,
