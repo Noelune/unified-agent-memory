@@ -143,8 +143,6 @@ WHITELIST: dict[str, set[str]] = {
         "unified_memory.app.maintain.drift",
         "unified_memory.app.maintain.health",
         "unified_memory.embed",
-        "unified_memory.maintenance",
-        "unified_memory.promoter",
         "unified_memory.search",
         # B5.2: cmd_search reaches remote_search through the memory shim inside
         # the function, because the shim imports surface.cli and a module-level
@@ -160,9 +158,9 @@ WHITELIST: dict[str, set[str]] = {
     # Cross-layer imports: the app modules still call the flat legacy
     # implementations that B5.3/B5.4 migrate into app/*. Each entry disappears
     # with its migration; the set must be empty by B5.5.
+    # B5.4c removed app.govern.commands and app.ingest.commands: the promoter
+    # facade import is gone (real names now, plus one dead import deleted).
     "layers": {
-        "unified_memory.app.govern.commands",
-        "unified_memory.app.ingest.commands",
         "unified_memory.app.ingest.digest",
         "unified_memory.app.query.commands",
         "unified_memory.app.query.preview",

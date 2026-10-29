@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 """app.govern.commands — decide / advise / accept bodies.
 
-Moved verbatim from memory.py (batch B5). The legacy ``promoter`` and
-The conflict queue now lives next door (``app/govern/queue.py``), so this
-module no longer reaches into the flat legacy namespace for it.
+Moved verbatim from memory.py (batch B5). It used to reach the whole flat
+legacy namespace twice: the conflict queue (now next door, ``app/govern/
+queue.py``) and the ``promoter`` facade. Both are gone — this module now
+imports the implementations it actually calls, so a layer reader can see
+every dependency without opening a shim.
 """
 from __future__ import annotations
 
@@ -12,8 +14,9 @@ import sys
 from argparse import Namespace
 from pathlib import Path
 
-from . import queue as conflict_mod
-from ... import promoter as promoter_mod
+from . import decide as decide_mod
+from . import queue as queue_mod
+from .promote import accept
 from ...domain.markdown import collapse_whitespace
 from ...infra.config import resolve_vault
 from ...infra.vault import ensure_vault
@@ -27,7 +30,7 @@ def cmd_accept(vault: str, name: str, as_json: bool = False) -> str:
     vault-wide `promoter --apply` would decide the other rows too.
     """
 
-    result = promoter_mod.accept(Path(vault), name)
+    result = accept(Path(vault), name)
     if as_json:
         # Same contract as dismiss: exit 0 even on a business refusal, because
         # runCore discards stdout from a failed subprocess and the panel needs
@@ -78,14 +81,14 @@ def cmd_advise(vault: str, key: str, choice: str, why: str, as_json: bool = Fals
         # as `not-found` when the key happens to be missing as well.
         result = {"ok": False, "reason": "no-reason", "key": key, "choice": choice}
     else:
-        entry = conflict_mod.find_conflict(Path(vault), key)
+        entry = queue_mod.find_conflict(Path(vault), key)
         if entry is None:
             result = {"ok": False, "reason": "not-found", "key": key, "choice": choice}
-        elif choice not in promoter_mod.ADVISABLE:
+        elif choice not in decide_mod.ADVISABLE:
             result = {"ok": False, "reason": "unknown-choice", "key": key, "choice": choice,
-                      "allowed": list(promoter_mod.ADVISABLE)}
+                      "allowed": list(decide_mod.ADVISABLE)}
         else:
-            wrote = conflict_mod.record_advice(Path(vault), entry, choice, note)
+            wrote = queue_mod.record_advice(Path(vault), entry, choice, note)
             result = {
                 "ok": wrote,
                 "reason": None if wrote else "not-found",
@@ -136,15 +139,15 @@ def cmd_decide(vault: str, key: str, choice: str, as_json: bool = False, why: st
     in `事实冲突已裁决.md` is unreadable a month later.
     """
 
-    entry = conflict_mod.find_conflict(Path(vault), key)
+    entry = queue_mod.find_conflict(Path(vault), key)
     if entry is None:
         result = {"ok": False, "reason": "not-found", "key": key, "choice": choice,
                   "applied": False, "target": None}
-    elif choice not in promoter_mod.DECISIONS:
+    elif choice not in decide_mod.DECISIONS:
         result = {"ok": False, "reason": "unknown-choice", "key": key, "choice": choice,
                   "applied": False, "target": None}
     else:
-        result = promoter_mod.decide(Path(vault), entry, choice, why=why)
+        result = decide_mod.decide(Path(vault), entry, choice, why=why)
         result["key"] = key
 
     if as_json:

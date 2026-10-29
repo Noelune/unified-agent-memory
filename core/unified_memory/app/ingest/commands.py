@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """app.ingest.commands — submit / note / dismiss / digest / cite bodies.
 
-Moved verbatim from memory.py (batch B5). Legacy imports (digest, inbox,
-index, promoter) are recorded in test_architecture's layers whitelist: their
-own migrations are either blocked by the security scanner's SSRF rule
-(digest) or scheduled as the follow-up promoter/conflict split.
+Moved verbatim from memory.py (batch B5). The remaining legacy imports (digest,
+inbox, index) are recorded in test_architecture's layers whitelist: digest's
+own migration is blocked by the security scanner's SSRF rule. The old flat
+``promoter`` import that used to sit here was dead (nothing in this module
+called it) and went away with the B5.4 split.
 """
 from __future__ import annotations
 
@@ -18,7 +19,6 @@ from pathlib import Path
 from . import digest as digest_mod
 from ..query import preview as preview_mod
 from . import inbox as inbox_mod
-from ... import promoter as promoter_mod
 from ...domain.markdown import looks_like_credential
 from ...infra import config as config_mod
 from ...infra.config import resolve_vault
