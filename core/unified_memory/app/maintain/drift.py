@@ -356,11 +356,8 @@ class DriftDetector:
 
 # ── CLI entry point ──────────────────────────────────────────────────
 
-def main(argv: Optional[List[str]] = None) -> int:
-    """Drift detection CLI entry point (python -m unified_memory.drift ...).
-
-    Returns 0 if no errors, 1 if errors found.
-    """
+def _parser() -> argparse.ArgumentParser:
+    """argparse definitions for the drift CLI."""
     parser = argparse.ArgumentParser(
         description="Detect drift between code and memory vault documentation",
     )
@@ -388,11 +385,18 @@ def main(argv: Optional[List[str]] = None) -> int:
         default=".",
         help="Repository root directory (default: current dir)",
     )
+    return parser
 
-    args = parser.parse_args(argv)
 
+def _run_report(args: argparse.Namespace) -> "Optional[DriftReport]":
+    """Run the detector, mapping env/parse failures to clean CLI errors.
+
+    YAML errors arrive as config_yaml.YAMLError (config_yaml owns the
+    optional PyYAML import), so a parse failure is reported as a parse
+    failure even on interpreters without PyYAML. Returns None after printing
+    a mapped failure, so main() can keep its int-return contract.
+    """
     repo_root = Path(args.repo_root).resolve()
-
     if args.template:
         vault_path = repo_root / VAULT_TEMPLATE_REL
     elif args.vault:
@@ -400,15 +404,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     else:
         vault_path = None  # Will try env, then template fallback
 
-    # YAML errors arrive as config_yaml.YAMLError (config_yaml owns the
-    # optional PyYAML import), so a parse failure is reported as a parse
-    # failure even on interpreters without PyYAML.
     detector = DriftDetector(repo_root=repo_root, vault_path=vault_path)
     try:
-        report = detector.run(check_git=args.git_precommit)
+        return detector.run(check_git=args.git_precommit)
     except FileNotFoundError as e:
         print(f"❌ {e}", file=sys.stderr)
-        return 1
+        return None
     except ModuleNotFoundError as e:
         if e.name != "yaml":
             raise
@@ -418,15 +419,28 @@ def main(argv: Optional[List[str]] = None) -> int:
             "one that has it.",
             file=sys.stderr,
         )
-        return 1
+        return None
     except config_yaml.YamlUnavailable as e:
         print(f"❌ {e}", file=sys.stderr)
-        return 1
+        return None
     except config_yaml.YAMLError as e:
         print(f"❌ Failed to parse driftrc.yaml: {e}", file=sys.stderr)
-        return 1
+        return None
     except Exception as e:
         print(f"❌ {e}", file=sys.stderr)
+        return None
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    """Drift detection CLI entry point (python -m unified_memory.drift ...).
+
+    Returns 0 if no errors, 1 if errors found.
+    """
+    parser = _parser()
+    args = parser.parse_args(argv)
+
+    report = _run_report(args)
+    if report is None:
         return 1
 
     report.print()

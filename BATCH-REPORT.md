@@ -247,6 +247,16 @@
 - **删除**：两处重复的 record_audit 块（合入 `_record_decision_audit`）；分支体逻辑零删除。
 - **遗留风险**：无——decide.py 6 defs。
 
+### B5.5c-2h 拆 drift main（80 → 22 行，✅ 2026-10-30）
+
+- **调研**：main 80 行 = argparse 构造（30 行）+ vault 解析 + 五分支异常映射（每分支打印 + return 1）+ report 打印 + 退出码。main 的 `int` 返回契约被外部调用方依赖（`sys.exit(main())` 与可能的 import 调用方）。测试面：快照 `drift --template` case（该 case 曾是 B5.3 层级 bug 的把关者）、test_architecture、e2e drift 入口。
+- **选定方案**：`_parser`（argparse 构造）+ `_run_report`（vault 解析 + 五分支异常映射，打印后**返回 None** 而非抛 SystemExit——保住 main 的 int 契约，避免 import 调用方拿到异常）+ main（parse → run → None→1 → print → 退出码）。**放弃方案**：_run_report 内 `raise SystemExit(1)`——对 CLI 进程等效但对函数调用方是行为变化（红线）。
+- **设计**：五条错误消息**逐字节**保留（含 driftrc.yaml 的 PyYAML 提示）；report.print() 与 strict 退出码留在 main。逻辑零改动。
+- **虚拟项目验证**：`python -m unified_memory.drift --template --repo-root .` exit 0 smoke + 全量 469。
+- **测试结果**：七道门全绿（469 / 886 / 32 / typecheck / bench 一致 / 快照 42 逐字节 / e2e 46）。
+- **删除**：main 内联 parser 块（30 行）与五分支异常块（20 行）迁入助手；逻辑零删除。
+- **遗留风险**：drift.py 456 行略超软限 450（硬限内，软限仅记录）。
+
 ## B5.5 接手说明存档（2026-10-29 交棒点，已被上节取代）
 
 **一句话状态**：B5.2 / B5.3 / B5.4（a/b/c）已入库并全绿，`git status` 干净，HEAD = `e5fb47e`；**只剩 B5.5**——清空架构白名单 + 翻预算门。下面每条都是本轮实测数据，不需要重新探查。
