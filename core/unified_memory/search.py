@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from . import embed, index
+from . import embed, graph as graph_mod, index
 from .domain import envelope
 from .domain.markdown import encode_untrusted, redact
 from .domain.model import Evidence
@@ -112,8 +112,6 @@ def hybrid_search(
 
     graph: list[dict] = []
     try:
-        from . import graph as graph_mod
-
         graph = graph_mod.expand_search(vault, query, limit=pool)
     except Exception:  # noqa: BLE001 — graph is optional, never fatal
         graph = []

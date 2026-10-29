@@ -20,7 +20,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 
-from ... import index as index_mod
+from ...infra.store import update_index as store_update_index
 from ...domain.markdown import redact
 from ...domain.policy import (
     AGENT_CONTEXT,
@@ -60,7 +60,7 @@ def build(vault: Path, view: str, limit: int = 20) -> dict:
         raise SystemExit("preview needs a vault")
     if view not in VIEWS:
         raise SystemExit(f"unknown view {view!r} — choose from {', '.join(VIEWS)}")
-    index_mod.update_index(vault)  # self-healing derived db, same as every command
+    store_update_index(vault)  # self-healing derived db, same as every command
     builders = {
         "pending": _pending,
         "conflicts": _conflicts,

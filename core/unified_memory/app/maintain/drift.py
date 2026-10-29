@@ -23,6 +23,7 @@ runtime when yaml is actually needed.
 """
 from __future__ import annotations
 
+import argparse
 import os
 import re
 import sys
@@ -30,6 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from ...infra import config_yaml
 from ...infra.schedule import run_command
 
 # ── Drift configuration ------------------------------------------------
@@ -103,14 +105,14 @@ class DriftDetector:
 
     def load_driftrc(self) -> dict:
         """Load driftrc.yaml from the repo root."""
-        import yaml  # lazy import: PyYAML may not be installed on CI/core-only setups
+        config_yaml.require_yaml()
         if self._driftrc is not None:
             return self._driftrc
         path = self.repo_root / DRIFTRC_NAME
         if not path.exists():
             raise FileNotFoundError(f"driftrc.yaml not found at {path}")
         with open(path, "r", encoding="utf-8") as f:
-            self._driftrc = yaml.safe_load(f)
+            self._driftrc = config_yaml.safe_load(f)
         return self._driftrc
 
     # ── Tool drift ─────────────────────────────────────────────────
@@ -359,8 +361,6 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     Returns 0 if no errors, 1 if errors found.
     """
-    import argparse
-
     parser = argparse.ArgumentParser(
         description="Detect drift between code and memory vault documentation",
     )
@@ -400,17 +400,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     else:
         vault_path = None  # Will try env, then template fallback
 
-    # yaml is imported lazily (see DriftDetector.load_driftrc) because PyYAML
-    # may be absent on a core-only checkout. The exception class has to be
-    # resolved the same way: `except yaml.YAMLError` at module scope evaluates
-    # the name when the handler is *reached*, so on a PyYAML-less interpreter
-    # it raised NameError and buried the real failure — including the very
-    # "PyYAML is missing" case it was supposed to explain.
-    try:
-        import yaml
-    except ModuleNotFoundError:
-        yaml = None
-
+    # YAML errors arrive as config_yaml.YAMLError (config_yaml owns the
+    # optional PyYAML import), so a parse failure is reported as a parse
+    # failure even on interpreters without PyYAML.
     detector = DriftDetector(repo_root=repo_root, vault_path=vault_path)
     try:
         report = detector.run(check_git=args.git_precommit)
@@ -427,11 +419,15 @@ def main(argv: Optional[List[str]] = None) -> int:
             file=sys.stderr,
         )
         return 1
+    except config_yaml.YamlUnavailable as e:
+        print(f"❌ {e}", file=sys.stderr)
+        return 1
+    except config_yaml.YAMLError as e:
+        print(f"❌ Failed to parse driftrc.yaml: {e}", file=sys.stderr)
+        return 1
     except Exception as e:
-        if yaml is not None and isinstance(e, yaml.YAMLError):
-            print(f"❌ Failed to parse driftrc.yaml: {e}", file=sys.stderr)
-            return 1
-        raise
+        print(f"❌ {e}", file=sys.stderr)
+        return 1
 
     report.print()
 

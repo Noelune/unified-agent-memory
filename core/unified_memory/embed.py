@@ -19,6 +19,7 @@ Stdlib only (urllib.request). Endpoint is OpenAI-compatible.
 """
 from __future__ import annotations
 
+import argparse
 import array
 import hashlib
 import json
@@ -318,8 +319,6 @@ def vector_search(vault: Path, query_vec: list[float], limit: int = 8) -> list[d
 
 
 def main(argv: list[str] | None = None) -> None:
-    import argparse
-
     parser = argparse.ArgumentParser(prog="memory embed", description="enrich the memory index with semantic vectors")
     parser.add_argument("--vault", default=None, help="vault path (default: config/env)")
     parser.add_argument("--limit", type=int, default=400, help="max memory lines to embed per run")

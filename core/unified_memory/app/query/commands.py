@@ -12,7 +12,6 @@ from __future__ import annotations
 import sys
 from argparse import Namespace
 
-from ... import index as index_mod
 from . import preview as preview_mod
 from ... import search as search_mod
 from . import stats as stats_mod
@@ -32,6 +31,7 @@ from ...infra.vault import (
     resolve_canonical_note,
 )
 from ..remote import REMOTE_TOKEN_ENV, remote_config
+from ...infra.store import fts_search as store_fts_search
 
 
 def preview_views() -> tuple[str, ...]:
@@ -80,7 +80,7 @@ def cmd_search(args: Namespace) -> None:
             # silently return no matches for a missing vault.
             ensure_vault(vault)
         
-            results = index_mod.fts_search(vault, args.query, args.limit)["results"]
+            results = store_fts_search(vault, args.query, args.limit)["results"]
             mode = "local"
         if want_json:
             # Every other search mode honours --json; this branch used to print
@@ -101,7 +101,7 @@ def cmd_search(args: Namespace) -> None:
         return
     ensure_vault(vault)
 
-    result = index_mod.fts_search(vault, args.query, args.limit)
+    result = store_fts_search(vault, args.query, args.limit)
     if want_json:
         results = [dict(r, untrusted=True) for r in result["results"]]
         emit_json("search", {"query": args.query, "mode": "local", "count": len(results), "results": results})

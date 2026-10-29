@@ -17,12 +17,13 @@ from pathlib import Path
 
 from .. import embed as embed_mod
 from .. import graph as graph_mod
-from .. import index as index_mod
 from ..domain.policy import AGENT_CONTEXT, CANONICAL_DOCS, NON_SUBMISSION_FILES, VAULT_ENV
 from ..infra import config as config_mod
 from ..infra.config import VaultMissing, parse_config, resolve_vault  # noqa: F401  (re-exported for surface)
 from ..infra.console import emit_json
 from ..infra.store import (
+    fts_search as store_fts_search,
+    index_db_for as store_index_db_for,
     memory_count,
     update_index as store_update_index,
     vector_count,
@@ -40,7 +41,7 @@ def is_agent_file_prefix(value: str) -> bool:
 
 
 def index_db_for(vault: Path) -> Path:
-    return index_mod.index_db_for(vault)
+    return store_index_db_for(vault)
 
 
 # --------------------------------------------------------------------------
@@ -243,7 +244,7 @@ def update_index(vault: Path, verbose: bool = False) -> tuple[int, bool]:
 
 
 def search_index(query: str, limit: int, vault: Path) -> dict:
-    return index_mod.fts_search(vault, query, limit)
+    return store_fts_search(vault, query, limit)
 
 
 def cmd_init(args: Namespace) -> None:
@@ -302,7 +303,7 @@ def cmd_sync(args: Namespace) -> None:
     """
     vault = resolve_vault()
     ensure_vault(vault)
-    result = index_mod.update_index(vault, verbose=False)
+    result = store_update_index(vault, verbose=False)
     changed = int(result.get("changed_docs", 0) or 0)
     limit = getattr(args, "limit", 400)
     if getattr(args, "no_embed", False):
@@ -344,6 +345,6 @@ def cmd_embed(args: Namespace) -> None:
 def cmd_graph(args: Namespace) -> None:
     vault = resolve_vault()
     ensure_vault(vault)
-    index_mod.update_index(vault)
+    store_update_index(vault)
     stats = graph_mod.graph_stats(vault)
     print(f"graph: {stats['nodes']} concept node(s), {stats['edges']} edge(s)")

@@ -21,7 +21,7 @@
 | B5.2 | 拆 memory.py → surface/cli.py + app 命令模块 + 119 行 shim                              | ✅ 完成（阻塞已解除，2026-10-29）        | `d247aa1`                     |
 | B5.3 | legacy 实现模块迁入 layers（drift/digest/preview/stats/health/inbox 六件）                    | ✅ 完成（2026-10-29）              | `9f1fad2`、`3e38f78`、`699745a` |
 | B5.4 | promoter/conflict/forgetter/maintenance 拆分；register_cron → infra/schedule            | ✅ 完成（分 a/b/c 三步，2026-10-29）    | `e5bd84c`、`8289874`、`e5fb47e` |
-| B5.5 | 拆 12 个 >60 行函数 + claims 的 24 个 def；白名单清空；ENFORCE_BUDGETS=True                        | ⬜ 待做（接手说明见下，状态已实测）            | —                             |
+| B5.5 | 拆 12 个 >60 行函数 + claims 的 24 个 def；白名单收口（lazy/third_party/sqlite3/writes ✅ 清空；layers 剩 4 条 documented embed 依赖）；ENFORCE_BUDGETS 翻门 | 🔶 白名单收口完成，预算门顺延（12 个函数拆分未做，ENFORCE_BUDGETS 仍 False） | —                             |
 | 维护轮  | 全量测试 + 测试隔离修复（journal / decide 集成 / bench）+ 真实 home 清理 + 46 项真功能 e2e（发现并修掉远端两处缺陷） | ✅ 完成（2026-10-29）              | `4a1a50a`、`c2de07c`、`00050f4` |
 | 收尾   | BATCH-REPORT 定稿 + push origin                                                     | ⬜ 推送待用户确认（remote=GitHub 公共仓库） | —                             |
 
@@ -156,7 +156,22 @@
 
 **修复记录**：① import 提到模块级（与同文件 `index_mod` 写法一致——import 坏了在导入期炸而不是变成谎话）；② 新增 `test_health.DoctorTest.test_embeddings_configured_reaches_the_report`（patch True 断言 True、patch False 断言 False，两个方向都钉）；③ 同步删除 `lazy_import` 白名单的 `app.maintain.health` 条目（修完变过期，清除 1 条白名单债）。七道门全绿。
 
-## B5.5 未完成：接手说明（2026-10-29 交棒点）
+## B5.5a + B5.5b 白名单收口（第四阶段，✅ 完成，2026-10-30）
+
+> 下方"接手说明"各表为交棒时的实测快照，保留作底稿；实际执行结果以本节为准。
+
+- **D1**（第 0 步）：`embed` 导入提到模块级（见上节），清 1 条 lazy 白名单。
+- **B5.5a**：`sessiondb` → `infra/sessiondb.py`。SQL 全字面量化（PRAGMA 探针按表展开、transcript 查询内联角色字面量——扫描器红线），顶层留 re-export shim（`python -m unified_memory.sessiondb` e2e 不变）；`app/ingest/digest.py` 两处懒加载改指 infra；`test_sessiondb` 改打实现模块（shim 不携带 os/DB_ENV 绑定）。**清掉 `sqlite3` + `writes` 两条白名单**。
+- **B5.5b**：
+  - digest 的 `config` 懒加载提到模块级；
+  - drift 的 PyYAML 按**决策点 A** 收进 `infra/config_yaml.py`（可选依赖 module-level try/except + `require_yaml`/`safe_load`/`YAMLError`，新增 `THIRD_PARTY_OK_PREFIXES` 边界常量——例外写成边界常量而非白名单条目）；
+  - drift/embed/search 的 argparse/graph 懒加载全部提到模块级（graph 与 search 已无环）；
+  - `app/query/commands` 的 `memory` 懒导入按**决策点 B** 留在 shim（HTTP 客户端不动），改记入 `LAZY_IMPORT_OK_PREFIXES`；
+  - app 模块的 `index_mod` 全部改为 store/vault 真名（`fts_search`/`index_db_for`/`update_index`/`indexed_files`）。
+- **白名单结果**：`lazy_import`/`third_party` 清空（移入前缀常量）；`layers` 从 6 条减到 4 条，剩余 4 条全部有 documented 理由——embed 的物理迁移被 SSRF 扫描器阻塞（新文件含 urlopen 被拦），index/search 是建在 embed 之上的 facade，digest/health/system 因此引用它们。等扫描器规则调整后迁移 embed，这 4 条随清。
+- **测试结果**：Python 470 / JS 886 / setup 32 / typecheck / bench / 快照 42 / e2e 46，全绿。
+
+## B5.5 接手说明存档（2026-10-29 交棒点，已被上节取代）
 
 **一句话状态**：B5.2 / B5.3 / B5.4（a/b/c）已入库并全绿，`git status` 干净，HEAD = `e5fb47e`；**只剩 B5.5**——清空架构白名单 + 翻预算门。下面每条都是本轮实测数据，不需要重新探查。
 

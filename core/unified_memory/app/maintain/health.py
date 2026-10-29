@@ -22,7 +22,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from ... import embed as embed_mod
-from ... import index as index_mod
 from ...domain.markdown import bare_fact_line, redact
 from ...domain.policy import (
     CONFLICT_FILE,
@@ -31,6 +30,8 @@ from ...domain.policy import (
     is_conflict_copy,
 )
 from ...infra.store import (
+    index_db_for as store_index_db_for,
+    update_index as store_update_index,
     get_meta,
     index_counts,
     orphan_index_report,
@@ -38,7 +39,7 @@ from ...infra.store import (
     prune_query_cache,
     vacuum_index,
 )
-from ...infra.vault import canonical_dir, ensure_vault
+from ...infra.vault import canonical_dir, ensure_vault, indexed_files as vault_indexed_files
 from ...app.govern.queue import read_conflicts
 
 ACCESS_RETENTION_DAYS = 180
@@ -80,8 +81,8 @@ def doctor(vault: Path) -> dict:
     }
     issues: list[dict] = report["issues"]
 
-    db_path = index_mod.index_db_for(vault)
-    index_mod.update_index(vault)
+    db_path = store_index_db_for(vault)
+    store_update_index(vault)
     counts = index_counts(vault)
     report["index"] = {
         "path": str(db_path),
@@ -103,7 +104,7 @@ def doctor(vault: Path) -> dict:
         "files": [p.name for p in inbox_files],
     }
 
-    canonical_files = index_mod.indexed_files(vault)
+    canonical_files = vault_indexed_files(vault)
     copies = sorted(p.name for p in ctx.glob("*.md") if is_conflict_copy(p.name))
     duplicates: list[dict] = []
     for path in canonical_files:
@@ -285,7 +286,7 @@ def gc(
     write amplification and the v8 migration drops it.
     """
     ensure_vault(vault)
-    db_path = index_mod.index_db_for(vault)
+    db_path = store_index_db_for(vault)
     cutoff = (datetime.now() - timedelta(days=older_than_days)).timestamp()
     report: dict = {
         "apply": apply,

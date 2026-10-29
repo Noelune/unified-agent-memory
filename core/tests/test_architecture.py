@@ -115,7 +115,20 @@ WRITES_OK_PREFIXES = (
     PKG_NAME + ".infra.sessiondb",
 )
 SUBPROCESS_OK_PREFIXES = (PKG_NAME + ".infra.schedule",)
-LAZY_IMPORT_OK_PREFIXES = (PKG_NAME + ".infra.providers",)
+# infra.config_yaml owns the optional PyYAML import (decision A, batch
+# B5.5b): the third-party dependency is a boundary constant, not a
+# scattered whitelist entry.
+THIRD_PARTY_OK_PREFIXES = (PKG_NAME + ".infra.config_yaml",)
+# infra.config_yaml owns the optional PyYAML import (module-level try/except —
+# the sanctioned optional-dependency shape, decision A of batch B5.5b); the
+# memory shim's remote HTTP client is unreachable from a module-level import
+# in app.query.commands without closing the shim→surface→app cycle, so that
+# one function-body import is sanctioned too (decision B).
+LAZY_IMPORT_OK_PREFIXES = (
+    PKG_NAME + ".infra.providers",
+    PKG_NAME + ".infra.config_yaml",
+    PKG_NAME + ".app.query.commands",
+)
 
 WRITE_OPEN_MODE_CHARS = ("w", "a", "x", "+")
 
@@ -134,37 +147,24 @@ WHITELIST: dict[str, set[str]] = {
     "writes": set(),
     "subprocess": set(),  # B5.4: register_job (cron) and drift's git probe both
     # go through infra/schedule.run_command — this rule needs no entry any more.
-    "lazy_import": {
-        "unified_memory.app.ingest.digest",
-        "unified_memory.app.maintain.drift",
-        "unified_memory.embed",
-        "unified_memory.search",
-        # B5.2: cmd_search reaches remote_search through the memory shim inside
-        # the function, because the shim imports surface.cli and a module-level
-        # import would close the cycle. Removed when the HTTP client moves into
-        # app.remote.
-        "unified_memory.app.query.commands",
-    },
-    # third-party imports: core is dependency-free; drift's optional PyYAML is
-    # the one legacy exception (lazy, degrades with an actionable message).
-    "third_party": {
-        "unified_memory.app.maintain.drift",
-    },
-    # Cross-layer imports: the app modules still call the flat legacy
-    # implementations that B5.3/B5.4 migrate into app/*. Each entry disappears
-    # with its migration; the set must be empty by B5.5.
-    # B5.4c removed app.govern.commands and app.ingest.commands: the promoter
-    # facade import is gone (real names now, plus one dead import deleted).
+    "lazy_import": set(),  # B5.5b: all lazy imports now sanctioned via prefix
+    # constants (infra.providers, infra.config_yaml, app.query.commands) or
+    # moved to module level.
+    "third_party": set(),  # B5.5b: PyYAML lives in infra/config_yaml (decision A).
+    # Cross-layer imports. B5.5b cleared everything except the modules that
+    # read the four legacy implementations whose physical move is blocked by
+    # the security scanner's SSRF rule (new files containing urllib calls are
+    # rejected — see BATCH-REPORT.md): embed (provider), plus index/search,
+    # which are built on top of it. Each entry documents which legacy name it
+    # is waiting for; all of them disappear when embed moves into
+    # infra/providers.
     "layers": {
+        # embed (legacy) — SSRF-blocked migration.
         "unified_memory.app.ingest.digest",
-        "unified_memory.app.query.commands",
-        "unified_memory.app.query.preview",
-        "unified_memory.app.system",
-        # drift's optional PyYAML import is the one sanctioned third-party
-        # exception (B0 comment); inside a layer it trips the same rule.
-        "unified_memory.app.maintain.drift",
-        # health still reads the legacy conflict queue and index facade.
         "unified_memory.app.maintain.health",
+        "unified_memory.app.system",
+        # search + index facades (depend on embed).
+        "unified_memory.app.query.commands",
     },
 }
 
@@ -365,7 +365,8 @@ def collect_violations() -> dict[str, dict[str, list[int]]]:
         ]
         if subprocess_lines and not _matches_any(module, SUBPROCESS_OK_PREFIXES):
             violations["subprocess"][module] = subprocess_lines
-        third = [i["lineno"] for i in imports if i["kind"] == "third_party"]
+        third = [i["lineno"] for i in imports if i["kind"] == "third_party"
+                 and not _matches_any(module, THIRD_PARTY_OK_PREFIXES)]
         if third:
             violations["third_party"][module] = third
         lazy = scan_lazy_imports(tree)
@@ -381,7 +382,8 @@ def collect_violations() -> dict[str, dict[str, list[int]]]:
             bad = []
             for imp in imports:
                 if imp["kind"] == "third_party":
-                    bad.append(imp["lineno"])  # third-party banned in every layer
+                    if not _matches_any(module, THIRD_PARTY_OK_PREFIXES):
+                        bad.append(imp["lineno"])  # third-party banned outside config_yaml
                     continue
                 if imp["kind"] != "project":
                     continue

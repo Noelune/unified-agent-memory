@@ -43,8 +43,11 @@ import urllib.request
 from pathlib import Path
 
 from ... import embed
+from ...infra import config as config_mod
+from ...infra import sessiondb
 from ...domain.markdown import looks_like_credential, redact
 from ...infra.config import parse_config, resolve_vault
+from ...infra import config as config_mod
 from ...infra.store import get_meta, record_audit, set_meta
 from ...infra.vault import atomic_create, canonical_dir
 
@@ -80,10 +83,8 @@ def _set_enabled(config_path: Path, enabled: bool) -> None:
     """Flip ``digest.enabled`` through the single config writer.
 
     This used to be a second read-modify-write of ~/.unified-memory.yaml that
-    took no lock, so racing `memory use` could silently drop ``vault:``.
+    took no lock, so racing `memory use` could silently drop `vault:`.
     """
-    from ... import config as config_mod
-
     config_mod.set_key(CONFIG_ENABLED_KEY, "true" if enabled else "false", config_path)
 
 
@@ -195,8 +196,6 @@ def _units(vault: Path, source: str, cursor: str) -> list[tuple[str, str, str]]:
     date inside SQL.
     """
     if source == "state":
-        from ...infra import sessiondb
-
         return [
             (f"state.db {day}", day, transcript)
             for day, transcript in sessiondb.dated_transcripts(since=cursor)
@@ -216,8 +215,6 @@ def digest(vault: Path, dry_run: bool = False, limit: int = 0, source: str = "ar
     avail_files = len(_archive_files(vault))
     cursor = _cursor(vault, cursor_key)
     if source == "state":
-        from ...infra import sessiondb
-
         try:
             pending = _units(vault, source, cursor)
         except sessiondb.SessionDbUnavailable as exc:
@@ -284,7 +281,6 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--on", action="store_true", help="re-enable a digest turned off with --off")
     args = parser.parse_args(argv)
     vault = Path(args.vault) if args.vault else resolve_vault()
-    from ...infra import config as config_mod
 
     if args.off and args.on:
         raise SystemExit("digest: --on and --off are mutually exclusive")
