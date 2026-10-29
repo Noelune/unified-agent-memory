@@ -342,6 +342,64 @@ def _doc_match(path: Path, query: str) -> tuple[str, str] | None:
     return None
 
 
+def _fts_fallback(vault: Path, query: str, limit: int) -> list[dict]:
+    """Doc-level FTS hits resolved back to active lines; keyword scan last.
+
+    Line-level streams supply both the document and the matched line; doc-level
+    FTS remains the fallback when no line matches — resolved to an active line
+    by ``_doc_match`` so history never leaks into results.
+    """
+    conn = get_conn(vault)
+    results: list[dict] = []
+    try:
+        if _fts_supported(conn):
+            try:
+                rows = conn.execute(
+                    "SELECT path, title, snippet(fts, 2, '[', ']', '…', 24) AS snip "
+                    "FROM fts WHERE fts MATCH ? ORDER BY rank LIMIT ?",
+                    (query, limit * 2),
+                ).fetchall()
+            except sqlite3.Error:
+                rows = []
+            for row in rows:
+                hit = _doc_match(Path(row["path"]), query)
+                if hit is None:
+                    continue
+                snippet, kind = hit
+                results.append(
+                    {
+                        "doc": redact(Path(row["path"]).name),
+                        "title": redact(row["title"]),
+                        "snippet": redact(snippet),
+                        "query": query,
+                        "match": kind,
+                    }
+                )
+                if len(results) >= limit:
+                    break
+        if not results:
+            keywords = [kw for kw in re.split(r"[\s,，]+", query) if kw]
+            for path in indexed_files(vault):
+                hit = _doc_match(path, query)
+                if hit is None:
+                    continue
+                snippet, kind = hit
+                results.append(
+                    {
+                        "doc": redact(path.name),
+                        "title": redact(path.stem),
+                        "snippet": redact(snippet),
+                        "query": query,
+                        "match": kind,
+                    }
+                )
+                if len(results) >= limit:
+                    break
+        return results
+    finally:
+        conn.close()
+
+
 def fts_search(vault: Path, query: str, limit: int) -> dict:
     """Document search with the best matching fact line as the snippet.
 
@@ -387,54 +445,8 @@ def fts_search(vault: Path, query: str, limit: int) -> dict:
             "index": str(index_db_for(vault)),
         }
 
-    conn = get_conn(vault)
-    try:
-        if _fts_supported(conn):
-            try:
-                rows = conn.execute(
-                    "SELECT path, title, snippet(fts, 2, '[', ']', '…', 24) AS snip "
-                    "FROM fts WHERE fts MATCH ? ORDER BY rank LIMIT ?",
-                    (query, limit * 2),
-                ).fetchall()
-            except sqlite3.Error:
-                rows = []
-            for row in rows:
-                hit = _doc_match(Path(row["path"]), query)
-                if hit is None:
-                    continue
-                snippet, kind = hit
-                results.append(
-                    {
-                        "doc": redact(Path(row["path"]).name),
-                        "title": redact(row["title"]),
-                        "snippet": redact(snippet),
-                        "query": query,
-                        "match": kind,
-                    }
-                )
-                if len(results) >= limit:
-                    break
-        if not results:
-            keywords = [kw for kw in re.split(r"[\s,，]+", query) if kw]
-            for path in indexed_files(vault):
-                hit = _doc_match(path, query)
-                if hit is None:
-                    continue
-                snippet, kind = hit
-                results.append(
-                    {
-                        "doc": redact(path.name),
-                        "title": redact(path.stem),
-                        "snippet": redact(snippet),
-                        "query": query,
-                        "match": kind,
-                    }
-                )
-                if len(results) >= limit:
-                    break
-        return {"ok": True, "query": query, "count": len(results), "results": results, "index": str(index_db_for(vault))}
-    finally:
-        conn.close()
+    results = _fts_fallback(vault, query, limit)
+    return {"ok": True, "query": query, "count": len(results), "results": results, "index": str(index_db_for(vault))}
 
 
 # --------------------------------------------------------------------------

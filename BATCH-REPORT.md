@@ -227,6 +227,16 @@
 - **删除**：内联三流/去重/组装体（约 55 行）重组为 3 个私有助手；逻辑零删除。
 - **遗留风险**：无——search.py 308 行回到软限内，10 defs。
 
+### B5.5c-2f 拆 fts_search（93 → 44 行，✅ 2026-10-30）
+
+- **调研**：fts_search 93 行 = 行级 lexical 直取（inner `add` 闭包 + 命中即早退）+ 文档级 FTS 回退（snippet 解析回 active 行）+ 关键词全扫描兜底。返回 dict 的两个分支形状不同（lexical 有 `id`，回退有 `match`）——都是既有输出面。测试面：test_search / test_schema 的 fts 用例、快照 search 各 case。
+- **选定方案**：抽出 `_fts_fallback`（conn 生命周期 + 两个回退循环，含 docstring 说明为何 doc-level 命中必须经 `_doc_match` 解析回 active 行）；`add` 闭包留在原位（迁出需要把 results/seen_docs 两个可变状态参数化，收益为负）。**放弃方案**：把回退两个循环再拆——它们共享 results 顺序与 limit 截断，拆开反而要传状态。
+- **设计**：fts_search 缩为"lexical → 早退 → fallback → 组装返回"；`_fts_fallback` 56 行。逻辑零改动。
+- **虚拟项目验证**：全量 Python 469。
+- **测试结果**：七道门全绿（469 / 886 / 32 / typecheck / bench 一致 / 快照 42 逐字节 / e2e 46）。
+- **删除**：fts_search 内联回退体（约 48 行）迁入 `_fts_fallback`；逻辑零删除。
+- **遗留风险**：search_index.py 506 行仍超软限 450（硬限内；软限仅记录不断言）。
+
 ## B5.5 接手说明存档（2026-10-29 交棒点，已被上节取代）
 
 **一句话状态**：B5.2 / B5.3 / B5.4（a/b/c）已入库并全绿，`git status` 干净，HEAD = `e5fb47e`；**只剩 B5.5**——清空架构白名单 + 翻预算门。下面每条都是本轮实测数据，不需要重新探查。
