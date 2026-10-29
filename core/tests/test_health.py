@@ -27,6 +27,20 @@ class DoctorTest(unittest.TestCase):
         self.assertEqual(report["conflicts"]["count"], 0)
         self.assertIsInstance(report["index"]["memories"], int)
 
+    def test_embeddings_configured_reaches_the_report(self):
+        # Defect D1 (batch B): the provider import sat inside the function with
+        # a wrong relative level and an `except Exception: pass` wrapper, so
+        # this field was hardcoded False no matter what the user configured.
+        # Both directions are pinned: the field must follow the provider, not
+        # stick to either value.
+        with patch("unified_memory.embed.configured", return_value=True):
+            report = health.doctor(self.vault)
+        self.assertTrue(report["embeddings"]["configured"])
+
+        with patch("unified_memory.embed.configured", return_value=False):
+            report = health.doctor(self.vault)
+        self.assertFalse(report["embeddings"]["configured"])
+
     def test_sync_conflict_copy_is_an_error(self):
         ctx = common.canonical_dir(self.vault)
         (ctx / "prefs 2.md").write_text("# copy\n\n- duplicate truth\n", encoding="utf-8")

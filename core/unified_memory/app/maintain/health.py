@@ -21,6 +21,7 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from ... import embed as embed_mod
 from ... import index as index_mod
 from ...domain.markdown import bare_fact_line, redact
 from ...domain.policy import (
@@ -148,8 +149,6 @@ def doctor(vault: Path) -> dict:
         "coverage": round(report["index"]["vectors"] / active, 3),
     }
     try:
-        from . import embed as embed_mod
-
         report["embeddings"]["configured"] = embed_mod.configured()
     except Exception:  # noqa: BLE001 — diagnostics must never crash
         pass

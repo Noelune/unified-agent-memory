@@ -150,16 +150,11 @@
 - **测试结果**：七道门全绿（Python 463 → **468** / JS 886 / setup 32 / typecheck / bench / 快照 42 / e2e 46）。
 - **遗留**：`review` 132 行、`decide` 83 行、`plan_promotion` 61 行超函数预算 → 归入 B5.5。
 
-### 待修缺陷 D1：`memory doctor` 的"向量是否配置"恒为 False（2026-10-29 交棒前发现，已复现，**按主人指示未修**）
+### 缺陷 D1：`memory doctor` 的"向量是否配置"恒为 False（✅ 已修复，第四阶段第 0 步）
 
-- **复现**：`python -c "from unified_memory.app.maintain import embed"` → `ImportError: cannot import name 'embed' from 'unified_memory.app.maintain'`。
-- **根因**：B5.3 把 `health` 从 `unified_memory/health.py` 搬到 `app/maintain/health.py` 时，函数体内的 `from . import embed as embed_mod`（现第 151 行）少加了一层——`.` 现在指 `app.maintain`，那里没有 `embed`。外面套着 `except Exception: pass`（注释理由是"诊断永不崩"），于是 ImportError 被**静默吞掉**，`report["embeddings"]["configured"]` 永远是 `False`。
-- **影响**：用户即使配了 `SILICONFLOW_API_KEY`，`memory doctor` 仍报告向量未配置——而"向量到底配没配"正是 doctor 存在的理由。属用户可见的诊断说谎，不是内部整洁问题。
-- **为什么测试没抓到**：`test_health` 的三处 `patch("unified_memory.embed.configured", return_value=False)` 恰好与坏行为（永远 False）取值相同，且没有任何用例断言 `report["embeddings"]["configured"]` 这个字段。
-- **建议修法（约 3 行 + 1 个测试，本喵已在本机验证可行后回退）**：
-  1. 把 import 提到模块级 `from ... import embed as embed_mod`（与同文件 `index_mod` 的写法一致），`try` 只包住 `embed_mod.configured()` 调用——这样 import 坏了会在导入期炸，而不是变成一句谎话；
-  2. 加 `test_embeddings_configured_reaches_the_report`：`patch(..., return_value=True)` 断言 `True`，`patch(..., return_value=False)` 断言 `False`（两个方向都钉，防止卡在任一值）；
-  3. 修完 `lazy_import` 白名单里的 `app.maintain.health` 会变**过期**（实测：改成模块级后该条目仍在 = 测试红），必须同步删掉——即这一步同时清掉 1 条白名单债。
+**原缺陷**：B5.3 把 `health` 搬到 `app/maintain/health.py` 时，函数体内 `from . import embed as embed_mod` 少加一层（`.` 指 `app.maintain`），ImportError 被 `except Exception: pass` 静默吞掉，`report["embeddings"]["configured"]` 恒为 False——用户配了 `SILICONFLOW_API_KEY` 也被告知向量未配置。旧测试没抓到：三处 patch 恰好与坏行为取值相同，且无用例断言该字段。
+
+**修复记录**：① import 提到模块级（与同文件 `index_mod` 写法一致——import 坏了在导入期炸而不是变成谎话）；② 新增 `test_health.DoctorTest.test_embeddings_configured_reaches_the_report`（patch True 断言 True、patch False 断言 False，两个方向都钉）；③ 同步删除 `lazy_import` 白名单的 `app.maintain.health` 条目（修完变过期，清除 1 条白名单债）。七道门全绿。
 
 ## B5.5 未完成：接手说明（2026-10-29 交棒点）
 

@@ -141,7 +141,6 @@ WHITELIST: dict[str, set[str]] = {
     "lazy_import": {
         "unified_memory.app.ingest.digest",
         "unified_memory.app.maintain.drift",
-        "unified_memory.app.maintain.health",
         "unified_memory.embed",
         "unified_memory.search",
         # B5.2: cmd_search reaches remote_search through the memory shim inside
