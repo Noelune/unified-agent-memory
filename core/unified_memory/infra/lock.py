@@ -50,6 +50,64 @@ def _remove_lock(lock_path: Path, retries: int = 20, delay: float = 0.05) -> Non
         pass
 
 
+def _read_lock_fields(lock_path: Path) -> dict:
+    """Parse ``pid=… token=…`` from the lock file; may raise on read/decode."""
+    return dict(
+        item.split("=", 1)
+        for item in lock_path.read_text(encoding="utf-8").split()
+        if "=" in item
+    )
+
+
+def _owner_alive(pid: int) -> bool:
+    """True if a process with ``pid`` exists (signal-0 probe)."""
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return True
+
+
+def _recover_stale_or_corrupt(lock_path: Path) -> bool:
+    """True → retry acquisition now; False → keep waiting.
+
+    A partially-created or corrupt lock is never removed while fresh; after
+    ten minutes no owner can safely rely on it.
+    """
+    try:
+        if time.time() - lock_path.stat().st_mtime > 600:
+            lock_path.unlink(missing_ok=True)
+            return True
+    except FileNotFoundError:
+        # The lock vanished mid-check — retry the open immediately.
+        return True
+    return False
+
+
+def _wait_notice(lock_path: Path, timeout_s: float, waiting_reported: bool) -> bool:
+    """Print the one-time wait notice; returns the (possibly flipped) flag."""
+    if waiting_reported:
+        return waiting_reported
+    print(
+        f"waiting for lock {lock_path} (held by another writer, "
+        f"up to {timeout_s:g}s)...",
+        file=sys.stderr,
+    )
+    return True
+
+
+def _raise_if_past_deadline(lock_path: Path, deadline: float, timeout_s: float) -> None:
+    if time.monotonic() >= deadline:
+        raise TimeoutError(
+            f"could not acquire {lock_path} within {timeout_s}s — another "
+            "promoter/writer holds the lock"
+        )
+
+
 @contextmanager
 def file_lock(vault: Path, timeout_s: float = 30.0, poll_s: float = 0.5):
     """Exclusive lock file at <vault>/.lock; times out with a clear error.
@@ -79,67 +137,28 @@ def file_lock(vault: Path, timeout_s: float = 30.0, poll_s: float = 0.5):
             except PermissionError:
                 # Windows: another process may be mid create/delete of the lock file;
                 # treat it as transient contention and retry.
-                if time.monotonic() >= deadline:
-                    raise TimeoutError(
-                        f"could not acquire {lock_path} within {timeout_s}s — another "
-                        "promoter/writer holds the lock"
-                    )
+                _raise_if_past_deadline(lock_path, deadline, timeout_s)
                 time.sleep(poll_s)
                 continue
             except FileExistsError:
                 try:
-                    fields = dict(
-                        item.split("=", 1)
-                        for item in lock_path.read_text(encoding="utf-8").split()
-                        if "=" in item
-                    )
-                    pid = int(fields.get("pid", "0"))
-                    try:
-                        os.kill(pid, 0)
-                        owner_is_alive = True
-                    except ProcessLookupError:
-                        owner_is_alive = False
-                    except PermissionError:
-                        owner_is_alive = True
-                    except OSError:
-                        owner_is_alive = True
-                    if not owner_is_alive:
+                    pid = int(_read_lock_fields(lock_path).  get("pid", "0"))
+                    if not _owner_alive(pid):
                         lock_path.unlink(missing_ok=True)
                         continue
                 except (FileNotFoundError, ValueError, UnicodeDecodeError):
-                    # A partially-created or corrupt lock is never removed while
-                    # fresh; after ten minutes no owner can safely rely on it.
-                    try:
-                        if time.time() - lock_path.stat().st_mtime > 600:
-                            lock_path.unlink(missing_ok=True)
-                            continue
-                    except FileNotFoundError:
+                    if _recover_stale_or_corrupt(lock_path):
                         continue
                 except FileNotFoundError:
                     continue
-                if not waiting_reported:
-                    print(
-                        f"waiting for lock {lock_path} (held by another writer, "
-                        f"up to {timeout_s:g}s)...",
-                        file=sys.stderr,
-                    )
-                    waiting_reported = True
-                if time.monotonic() >= deadline:
-                    raise TimeoutError(
-                        f"could not acquire {lock_path} within {timeout_s}s — another "
-                        "promoter/writer holds the lock"
-                    )
+                waiting_reported = _wait_notice(lock_path, timeout_s, waiting_reported)
+                _raise_if_past_deadline(lock_path, deadline, timeout_s)
                 time.sleep(poll_s)
         try:
             yield
         finally:
             try:
-                fields = dict(
-                    item.split("=", 1)
-                    for item in lock_path.read_text(encoding="utf-8").split()
-                    if "=" in item
-                )
-                if fields.get("token") == owner_token:
+                if _read_lock_fields(lock_path).get("token") == owner_token:
                     _remove_lock(lock_path)
             except (FileNotFoundError, UnicodeDecodeError, PermissionError):
                 pass
