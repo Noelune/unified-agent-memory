@@ -217,6 +217,16 @@
 - **删除**：2 处重复的字段解析块与 2 处重复的超时消息（合入助手）；循环体逻辑零删除。
 - **遗留风险**：无——file_lock 55 行（限 60），8 defs。
 
+### B5.5c-2e 拆 hybrid_search（100 → 50 行，✅ 2026-10-30）
+
+- **调研**：hybrid_search 100 行 = 三流收集（lexical/vector/graph，graph 可选）+ RRF 融合 + 每文档限额去重 + 记录组装（逐条 redact）+ 预算/格式后处理 + 访问计数 + 载荷。顺序敏感点：`record_access` 只对 selected 的 id；payload 的 streams 计数取自三流原始列表。测试面：test_search、快照 search 各 case、bench fixture（检索路径是 bench 的直接测量对象）。
+- **选定方案**：`_streams`（三流收集，"检索不调 provider"的权衡注释随之迁入）、`_diversify`（RRF 序 + MAX_PER_DOC 限额）、`_result_records`（组装 + redact）。**放弃方案**：按 B3 envelope 边界把渲染也拆给 `render_hybrid`——渲染已是独立函数，再拆只挪调用行。
+- **设计**：hybrid_search 缩为"索引刷新 → 三流 → 融合 → 去重 → 组装 → 预算 → 计数 → 载荷"八行编排；docstring 引用从"comment below"改为"_streams"。逻辑零改动。
+- **虚拟项目验证**：全量 Python 469。
+- **测试结果**：七道门全绿（469 / 886 / 32 / typecheck / bench 一致 / 快照 42 逐字节 / e2e 46）。
+- **删除**：内联三流/去重/组装体（约 55 行）重组为 3 个私有助手；逻辑零删除。
+- **遗留风险**：无——search.py 308 行回到软限内，10 defs。
+
 ## B5.5 接手说明存档（2026-10-29 交棒点，已被上节取代）
 
 **一句话状态**：B5.2 / B5.3 / B5.4（a/b/c）已入库并全绿，`git status` 干净，HEAD = `e5fb47e`；**只剩 B5.5**——清空架构白名单 + 翻预算门。下面每条都是本轮实测数据，不需要重新探查。

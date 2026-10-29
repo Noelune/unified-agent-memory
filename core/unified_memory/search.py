@@ -72,55 +72,37 @@ def rrf_fuse(
 # --------------------------------------------------------------------------
 
 
-def hybrid_search(
-    vault: Path,
-    query: str,
-    limit: int = 8,
-    format_: str = "full",
-    budget: int | None = None,
-) -> dict:
-    """Fuse lexical + vector + graph into a diversified, budget-capped
-    result set.
-
-    Returns {"ok", "query", "count", "results", "streams"} where each result
-    carries doc/line/type/importance/score and is already redacted.
+def _streams(vault: Path, query: str, pool: int) -> tuple[list[dict], list[dict], list[dict]]:
+    """Collect the lexical, vector and graph streams.
 
     Retrieval never calls the embedding provider. It refreshes the keyword index
     (a local, incremental scan) and ranks with whatever vectors already exist;
     ``memory sync`` is what fills the gaps. The trade-off is deliberate: a
     search issued right after a write ranks the new line lexically until the
     next sync, in exchange for recall latency that does not depend on a remote
-    API. See the comment below for the measurements behind that choice.
+    API. Vector top-up used to live in hybrid_search: on a changed vault it
+    fired up to 64 provider calls inside a single search (measured 117 / 256 /
+    526 ms across three runs), so it moved to ``memory sync``; a search that
+    finds stale vectors still returns results — it just ranks without the
+    newest lines until the next sync.
     """
-    index.update_index(vault)  # incremental, self-healing derived db
-    # Vector top-up used to live here. That is maintenance, not retrieval: on a
-    # changed vault it fired up to 64 provider calls inside a single search, so
-    # recall latency was whatever SiliconFlow felt like that second (measured
-    # 117 / 256 / 526 ms across three runs). `memory sync` owns that work now,
-    # and the promoter triggers it after a write. A search that finds stale
-    # vectors still returns results — it just ranks without the newest lines
-    # until the next sync, instead of blocking the turn on a network round trip.
-    query = query.strip()
-    pool = max(limit * 3, 20)
-
     lexical = index.lexical_search(vault, query, limit=pool)
-
     vec: list[dict] = []
     query_vec = embed.embed_query_cached(vault, query)
     if query_vec is not None:
         vec = embed.vector_search(vault, query_vec, limit=pool)
-
     graph: list[dict] = []
     try:
         graph = graph_mod.expand_search(vault, query, limit=pool)
     except Exception:  # noqa: BLE001 — graph is optional, never fatal
         graph = []
+    return lexical, vec, graph
 
-    fused = rrf_fuse([lexical, vec, graph])
-    # Diversify: at most MAX_PER_DOC from one note.
+
+def _diversify(fused: list[tuple[str, float]], doc_by_id: dict[str, str], limit: int) -> list[tuple[str, float]]:
+    """RRF order with at most MAX_PER_DOC hits from one note."""
     seen_docs: dict[str, int] = {}
     selected: list[tuple[str, float]] = []
-    doc_by_id = _doc_map(lexical, vec, graph)
     for mid, score in fused:
         doc = doc_by_id.get(mid, "")
         if seen_docs.get(doc, 0) >= MAX_PER_DOC:
@@ -129,8 +111,11 @@ def hybrid_search(
         selected.append((mid, score))
         if len(selected) >= limit:
             break
+    return selected
 
-    # Assemble full records for the selected ids.
+
+def _result_records(vault: Path, selected: list[tuple[str, float]]) -> list[dict]:
+    """Assemble redacted full records for the selected ids."""
     records = _records_for(vault, [mid for mid, _ in selected])
     by_id = {r["id"]: r for r in records}
     results: list[dict] = []
@@ -150,6 +135,37 @@ def hybrid_search(
                 "source_agent": rec.get("source_agent", ""),
             }
         )
+    return results
+
+
+def hybrid_search(
+    vault: Path,
+    query: str,
+    limit: int = 8,
+    format_: str = "full",
+    budget: int | None = None,
+) -> dict:
+    """Fuse lexical + vector + graph into a diversified, budget-capped
+    result set.
+
+    Returns {"ok", "query", "count", "results", "streams"} where each result
+    carries doc/line/type/importance/score and is already redacted.
+
+    Retrieval never calls the embedding provider. It refreshes the keyword index
+    (a local, incremental scan) and ranks with whatever vectors already exist;
+    ``memory sync`` is what fills the gaps. The trade-off is deliberate: a
+    search issued right after a write ranks the new line lexically until the
+    next sync, in exchange for recall latency that does not depend on a remote
+    API. See _streams for the measurements behind that choice.
+    """
+    index.update_index(vault)  # incremental, self-healing derived db
+    query = query.strip()
+    pool = max(limit * 3, 20)
+
+    lexical, vec, graph = _streams(vault, query, pool)
+    fused = rrf_fuse([lexical, vec, graph])
+    selected = _diversify(fused, _doc_map(lexical, vec, graph), limit)
+    results = _result_records(vault, selected)
 
     # Optional budget/format post-processing.
     results, budget_stats = _format_results(results, format_=format_, budget=budget)
