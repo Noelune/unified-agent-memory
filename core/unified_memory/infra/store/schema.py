@@ -55,9 +55,8 @@ def index_db_for(vault: Path, index_db: Path | None = None) -> Path:
     return base.with_name(f"index-{key}.db")
 
 
-def _ensure_schema(conn: sqlite3.Connection) -> None:
-    """Create every table (idempotent). docs/fts reuse the legacy layout so the
-    existing CLI/tests and the remote index server keep working."""
+def _ensure_core(conn: sqlite3.Connection) -> None:
+    """docs / index_meta / fts / fts_lex / memories."""
     conn.execute(
         "CREATE TABLE IF NOT EXISTS docs (path TEXT PRIMARY KEY, digest TEXT NOT NULL, title TEXT NOT NULL)"
     )
@@ -99,6 +98,10 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             metadata_json TEXT NOT NULL DEFAULT '{}'
         )"""
     )
+
+
+def _ensure_derived(conn: sqlite3.Connection) -> None:
+    """embeddings / query_cache / access_log / audit."""
     conn.execute(
         "CREATE TABLE IF NOT EXISTS embeddings (memory_id TEXT PRIMARY KEY, dim INTEGER NOT NULL, vector BLOB NOT NULL)"
     )
@@ -114,11 +117,14 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, agent TEXT NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', prev_hash TEXT, entry_hash TEXT)"
     )
+
+
+def _ensure_indexes(conn: sqlite3.Connection) -> None:
+    """Indexes for common query paths."""
     # The persisted concept graph is GONE (batch A, v8): build_graph wrote
     # 1335 nodes / 5000 capped edges that no reader ever queried —
     # expand_search always recomputed postings from `memories` in memory.
     # The v8 migration drops both tables.
-    # Indexes for common query paths.
     conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_doc ON memories(doc)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_agent ON memories(source_agent)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_status_updated ON memories(status, updated_at)")
@@ -130,6 +136,14 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     except sqlite3.Error:
         pass
     conn.execute("CREATE INDEX IF NOT EXISTS idx_access_mem ON access_log(memory_id)")
+
+
+def _ensure_schema(conn: sqlite3.Connection) -> None:
+    """Create every table (idempotent). docs/fts reuse the legacy layout so the
+    existing CLI/tests and the remote index server keep working."""
+    _ensure_core(conn)
+    _ensure_derived(conn)
+    _ensure_indexes(conn)
 
 
 def _read_version(conn: sqlite3.Connection) -> int:
@@ -192,6 +206,32 @@ def _migrate_to_v4(conn: sqlite3.Connection) -> None:
     """
 
 
+def _remap_memory_refs(conn: sqlite3.Connection, remap: dict[str, str]) -> None:
+    """Point access_log/embeddings rows at the remapped memory ids.
+
+    Two literal statements rather than a loop over table names: dynamic SQL is
+    red-lined, and the tables have different row shapes anyway.
+    """
+    for row in conn.execute(
+        "SELECT rowid AS rid, memory_id AS mid FROM access_log"
+    ).fetchall():
+        new_id = remap.get(row["mid"])
+        if new_id is not None and new_id != row["mid"]:
+            conn.execute(
+                "UPDATE access_log SET memory_id = ? WHERE rowid = ?",
+                (new_id, row["rid"]),
+            )
+    for row in conn.execute(
+        "SELECT rowid AS rid, memory_id AS mid FROM embeddings"
+    ).fetchall():
+        new_id = remap.get(row["mid"])
+        if new_id is not None and new_id != row["mid"]:
+            conn.execute(
+                "UPDATE embeddings SET memory_id = ? WHERE rowid = ?",
+                (new_id, row["rid"]),
+            )
+
+
 def _migrate_to_v5(conn: sqlite3.Connection) -> None:
     """v4 -> v5: occurrence identity.
 
@@ -235,27 +275,7 @@ def _migrate_to_v5(conn: sqlite3.Connection) -> None:
             (new_id, text_hash, old_id, old_id),
         )
         remap[old_id] = new_id
-    # Remap the two memory_id-keyed tables. Two literal statements rather than
-    # a loop over table names: dynamic SQL is red-lined, and the tables have
-    # different row shapes anyway.
-    for row in conn.execute(
-        "SELECT rowid AS rid, memory_id AS mid FROM access_log"
-    ).fetchall():
-        new_id = remap.get(row["mid"])
-        if new_id is not None and new_id != row["mid"]:
-            conn.execute(
-                "UPDATE access_log SET memory_id = ? WHERE rowid = ?",
-                (new_id, row["rid"]),
-            )
-    for row in conn.execute(
-        "SELECT rowid AS rid, memory_id AS mid FROM embeddings"
-    ).fetchall():
-        new_id = remap.get(row["mid"])
-        if new_id is not None and new_id != row["mid"]:
-            conn.execute(
-                "UPDATE embeddings SET memory_id = ? WHERE rowid = ?",
-                (new_id, row["rid"]),
-            )
+    _remap_memory_refs(conn, remap)
 
 
 def _migrate_to_v6(conn: sqlite3.Connection) -> None:

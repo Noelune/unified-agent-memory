@@ -257,6 +257,16 @@
 - **删除**：main 内联 parser 块（30 行）与五分支异常块（20 行）迁入助手；逻辑零删除。
 - **遗留风险**：drift.py 456 行略超软限 450（硬限内，软限仅记录）。
 
+### B5.5c-2i 拆 _ensure_schema + _migrate_to_v5（75+64 → 8+44 行，✅ 2026-10-30）
+
+- **调研**：同文件（infra/store/schema.py）相邻两债。`_ensure_schema` 75 行 = 三个天然表族（docs/fts/memories 主题、embeddings/缓存/审计派生族、索引族），其中两条 try/except 容错（fts_lex 建表、text_hash 索引——后者注释明确"v5 迁移稍后补建，此处失败属预期"）。`_migrate_to_v5` 64 行 = 列补加 → 旧 (doc,line) 去重（access_count 降序保最常用）→ id 重映射 → 两张 memory_id 表重映射。测试面：test_schema_migrations 6 例（含手工旧形状库升级路径）+ 真实库副本迁移守恒。
+- **选定方案**：`_ensure_core` / `_ensure_derived` / `_ensure_indexes` 三段按表族拆（任务书 B0 预算表建议的 `_ensure_core/_ensure_fts/_ensure_vectors` 分族微调为现实分组）；`_remap_memory_refs` 收编两张表的两段重映射循环（注释"两条字面量语句而非表名循环——动态 SQL 是红线"随之迁入）。**放弃方案**：每个 CREATE 一函数——18 个语句拆成 18 个函数是噪音。
+- **设计**：容错语义逐条保留（两条 try/except 原位）；SQL 全字面量（扫描器红线）；_ensure_schema 缩为三调用。
+- **虚拟项目验证**：test_schema_migrations 6 例 + 全量 469。
+- **测试结果**：七道门全绿（469 / 886 / 32 / typecheck / bench 一致 / 快照 42 逐字节 / e2e 46）。
+- **删除**：_ensure_schema 内联建表/索引体（约 70 行）与 _migrate_to_v5 的两段重映射循环（21 行）迁入 4 个助手；逻辑零删除。
+- **遗留风险**：schema.py 18 defs（限 20）。
+
 ## B5.5 接手说明存档（2026-10-29 交棒点，已被上节取代）
 
 **一句话状态**：B5.2 / B5.3 / B5.4（a/b/c）已入库并全绿，`git status` 干净，HEAD = `e5fb47e`；**只剩 B5.5**——清空架构白名单 + 翻预算门。下面每条都是本轮实测数据，不需要重新探查。
