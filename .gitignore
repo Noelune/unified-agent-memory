@@ -67,3 +67,6 @@ credentials/
 # Local probes (scripts/figures-smoke.mjs writes these on every run)
 scripts/.react-shim.mjs
 scripts/.figures-shim-hook.mjs
+
+# Mimosa security-scan plugin hook state (recreated on every session)
+.mimosa/
