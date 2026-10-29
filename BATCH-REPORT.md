@@ -21,8 +21,12 @@
 | B5.2 | 拆 memory.py → surface/cli.py + app 命令模块 + 119 行 shim                              | ✅ 完成（阻塞已解除，2026-10-29）        | `d247aa1`                     |
 | B5.3 | legacy 实现模块迁入 layers（drift/digest/preview/stats/health/inbox 六件）                    | ✅ 完成（2026-10-29）              | `9f1fad2`、`3e38f78`、`699745a` |
 | B5.4 | promoter/conflict/forgetter/maintenance 拆分；register_cron → infra/schedule            | ✅ 完成（分 a/b/c 三步，2026-10-29）    | `e5bd84c`、`8289874`、`e5fb47e` |
-| B5.5 | 拆 12 个 >60 行函数 + claims 的 24 个 def；白名单收口（lazy/third_party/sqlite3/writes ✅ 清空；layers 剩 4 条 documented embed 依赖）；ENFORCE_BUDGETS 翻门 | 🔶 白名单收口完成，预算门顺延（12 个函数拆分未做，ENFORCE_BUDGETS 仍 False） | —                             |
+| B5.5 | 白名单收口（lazy/third_party/sqlite3/writes ✅ 清空；layers 剩 4 条 documented embed 依赖）；build_parser 拆分 ✅；**剩 10 条函数/def 拆分 + 翻门 → 下一批次** | 🔶 部分完成 | `73f9436`、`dcb8c0b` |
 | 维护轮  | 全量测试 + 测试隔离修复（journal / decide 集成 / bench）+ 真实 home 清理 + 46 项真功能 e2e（发现并修掉远端两处缺陷） | ✅ 完成（2026-10-29）              | `4a1a50a`、`c2de07c`、`00050f4` |
+| D1    | 修 doctor embeddings.configured 恒 False（双向测试钉住）                                    | ✅ 完成（第四阶段第 0 步）             | `5e2ac18`                     |
+| B5.5a | sessiondb → infra/sessiondb.py（sqlite3 + writes 白名单清空）                              | ✅ 完成（第四阶段）                   | `4cba03b`                     |
+| B5.5b | layers 6→4（documented embed 依赖）；lazy/third_party 清空（PyYAML → config_yaml 决策 A；query.commands → LAZY_OK 决策 B）；app index_mod → store/vault 真名 | ✅ 完成（第四阶段）                   | `73f9436`                     |
+| B5.5c-1 | build_parser 拆 5 族子函数（155 → 5×~20）                                          | ✅ 完成（第四阶段）                   | `dcb8c0b`                     |
 | 收尾   | BATCH-REPORT 定稿 + push origin                                                     | ⬜ 推送待用户确认（remote=GitHub 公共仓库） | —                             |
 
 ## 验证基线（B5.4c 后，全绿，2026-10-29 22:20 实测）
