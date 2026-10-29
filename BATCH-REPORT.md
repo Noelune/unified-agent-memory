@@ -278,6 +278,16 @@
 - **遗留风险**：无——两文件 5/10 defs。
 - **过程记录**：cmd_doctor 主体替换的 Edit 一次严重损坏（整函数被替成一行乱码），ast 当场抓红，单次小 Edit 恢复；坚持"每步 ast 验证"的流程把损害限制在一步内。
 
+### B5.5c-2l 拆 plan_promotion（61 → 22 行，✅ 2026-10-30）
+
+- **调研**：plan_promotion 61 行 = 按目标笔记分组 + 组内规划（去重复核 → 追加行 → 取代移位 → Change 组装）+ ChangeSet 收尾（replan 回调）。replan 回调要求 plan_promotion 可重入重跑自身。测试面：test_promoter、test_accept、test_auto_promote_archive、e2e promote 路径。
+- **选定方案**：`_plan_group`（单目标笔记的组内规划，含两条既有注释随迁）；plan_promotion 留分组循环 + ChangeSet 组装。**放弃方案**：把去重复核再抽——它读写 additions/supersedes/facts 三个本地列表，拆开要传 3 个可变状态。
+- **设计**：`today` 时间戳语义不变（一个 run 一个值）；`domain_state.transition("claim", ...)` 钉住调用留在 `_plan_group` 原位置；replan 回调不变。
+- **虚拟项目验证**：全量 469。
+- **测试结果**：七道门全绿（469 / 886 / 32 / typecheck / bench 一致 / 快照 42 逐字节 / e2e 46）。
+- **删除**：组内规划体内联块（约 40 行）迁入 `_plan_group`；逻辑零删除。
+- **遗留风险**：无——promote.py 9 defs。
+
 ## B5.5 接手说明存档（2026-10-29 交棒点，已被上节取代）
 
 **一句话状态**：B5.2 / B5.3 / B5.4（a/b/c）已入库并全绿，`git status` 干净，HEAD = `e5fb47e`；**只剩 B5.5**——清空架构白名单 + 翻预算门。下面每条都是本轮实测数据，不需要重新探查。

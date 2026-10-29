@@ -27,6 +27,54 @@ from ...infra.vault import canonical_dir, canonical_path, processed_dir, read_ma
 from .review import classify, parse_pending_list, pending_sources, review, target_path
 
 
+def _plan_group(
+    vault: Path,
+    target: Path,
+    group: list[dict],
+    today: str,
+) -> Change | None:
+    """Plan one target note's changes from its pending entries."""
+    existing = read_maybe(target)
+    if existing and not existing.endswith("\n"):
+        existing += "\n"
+    # Active facts only: a value that was retired to the history section is
+    # not a duplicate of itself, so a genuine revert can be re-promoted.
+    prior = set(active_fact_lines(existing))
+    additions: list[str] = []
+    supersedes: list[str] = []
+    facts: list[tuple[str, str]] = []
+    for entry in group:
+        fact = entry.get("内容") or entry.get("fact") or ""
+        # Compare bare fact text on both sides — the previous version
+        # compared a bullet-prefixed "bare" against bullet-stripped prior
+        # lines, so this guard never fired.
+        bare = bare_fact_line(f"- {fact}")
+        if not bare or bare in prior:
+            continue
+        src = entry.get("来源") or entry.get("source") or "inbox"
+        line = f"- {fact}{write_stamp(src, today)}\n"
+        additions.append(line)
+        facts.append((src, fact))
+        prior.add(bare)
+        old_bare = entry.get("取代") or entry.get("supersede") or ""
+        if old_bare:
+            supersedes.append(old_bare)
+    if not additions:
+        return None
+    text = append_active_facts(existing, additions)
+    # Supersession: move old fact lines under 已取代 (keeps history). The
+    # CLAIM table is the contract for that move (batch B5) — the event is
+    # legal by definition, and the call pins the plan to the tables.
+    for old_bare in supersedes:
+        domain_state.transition("claim", "active", "superseded")
+        text = _move_to_superseded(text, old_bare)
+    return Change(
+        op="rewrite_doc", doc=target,
+        before_text=existing, after_text=text,
+        facts=tuple(facts),
+    )
+
+
 def plan_promotion(vault: Path, entries: list[dict]) -> ChangeSet:
     """Read-only: build the ChangeSet promote() would apply.
 
@@ -43,47 +91,9 @@ def plan_promotion(vault: Path, entries: list[dict]) -> ChangeSet:
     changes: list[Change] = []
     today = time.strftime("%Y-%m-%d")
     for target, group in grouped.items():
-        existing = read_maybe(target)
-        if existing and not existing.endswith("\n"):
-            existing += "\n"
-        # Active facts only: a value that was retired to the history section is
-        # not a duplicate of itself, so a genuine revert can be re-promoted.
-        prior = set(active_fact_lines(existing))
-        additions: list[str] = []
-        supersedes: list[str] = []
-        facts: list[tuple[str, str]] = []
-        for entry in group:
-            fact = entry.get("内容") or entry.get("fact") or ""
-            # Compare bare fact text on both sides — the previous version
-            # compared a bullet-prefixed "bare" against bullet-stripped prior
-            # lines, so this guard never fired.
-            bare = bare_fact_line(f"- {fact}")
-            if not bare or bare in prior:
-                continue
-            src = entry.get("来源") or entry.get("source") or "inbox"
-            line = f"- {fact}{write_stamp(src, today)}\n"
-            additions.append(line)
-            facts.append((src, fact))
-            prior.add(bare)
-            old_bare = entry.get("取代") or entry.get("supersede") or ""
-            if old_bare:
-                supersedes.append(old_bare)
-        if not additions:
-            continue
-        text = append_active_facts(existing, additions)
-        # Supersession: move old fact lines under 已取代 (keeps history). The
-        # CLAIM table is the contract for that move (batch B5) — the event is
-        # legal by definition, and the call pins the plan to the tables.
-        for old_bare in supersedes:
-            domain_state.transition("claim", "active", "superseded")
-            text = _move_to_superseded(text, old_bare)
-        changes.append(
-            Change(
-                op="rewrite_doc", doc=target,
-                before_text=existing, after_text=text,
-                facts=tuple(facts),
-            )
-        )
+        change = _plan_group(vault, target, group, today)
+        if change is not None:
+            changes.append(change)
     return ChangeSet(
         actor="promoter", reason="promote", changes=tuple(changes),
         replan=lambda: plan_promotion(vault, entries),
