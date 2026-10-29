@@ -19,11 +19,8 @@ from __future__ import annotations
 
 import argparse
 import json
-import platform
 import re
 import shutil
-import subprocess
-import sys
 import time
 from pathlib import Path
 from typing import Callable
@@ -43,7 +40,8 @@ from .domain.policy import (
 from .infra import vault as vault_mod
 from .infra.config import resolve_vault
 from .infra.lock import file_lock
-from .infra.schedule import core_source_dir, mark_schedule_run
+from .infra import schedule as schedule_mod
+from .infra.schedule import mark_schedule_run
 from .infra.vault import (
     atomic_write,
     canonical_dir,
@@ -962,55 +960,33 @@ def adjudicate(vault: Path) -> None:
 
 
 def register_cron(vault: Path) -> None:
-    promoter = str(Path(sys.executable).resolve())
-    module = str(Path(__file__).resolve())
-    system = platform.system()
-    # From a source checkout the scheduled interpreter does not need a prior
-    # pip install: bake the core's own directory into PYTHONPATH. Installed
-    # layouts (site-packages) have no source core and keep plain imports.
-    core = core_source_dir()
-    if system == "Windows":
-        bat = situation_dir(vault).parent / "promote_daily.bat"
-        # UTF-8 BOM so cmd.exe/PowerShell 5.1 read non-ASCII paths correctly.
-        pyline = f"set \"PYTHONPATH={core};%PYTHONPATH%\"\r\n" if core else ""
-        content = (
-            "@echo off\r\n"
-            f"chcp 65001 >nul\r\n"
-            f"{pyline}"
-            f"\"{promoter}\" -m unified_memory.promoter --auto --vault \"{vault}\"\r\n"
-        )
-        bat.write_bytes(b"\xef\xbb\xbf" + content.encode("utf-8"))
-        task = "UnifiedMemoryPromote"
-        subprocess.run(
-            ["schtasks", "/Create", "/TN", task, "/TR", f'"{bat}"', "/SC", "DAILY", "/ST", "03:00", "/F"],
-            check=False,
-        )
-        print(f"scheduled daily promotion at 03:00 via Windows Task Scheduler ({task})")
-        print(f"script: {bat}")
-    else:
-        prefix = f"PYTHONPATH={shlex_quote(str(core))} " if core else ""
-        cron = "\n".join(
-            [
-                "# unified-agent-memory daily promotion (added by promoter --cron)",
-                f"0 3 * * * {prefix}{promoter} -m unified_memory.promoter --auto --vault {shlex_quote(str(vault))} >> {shlex_quote(str(vault / 'promote.log'))} 2>&1",
-                "",
-            ]
-        )
-        existing = ""
-        crontab_path = Path.home() / ".crontab"
-        if crontab_path.exists():
-            existing = crontab_path.read_text(encoding="utf-8")
-        if "unified_memory.promoter" in existing:
-            print("cron entry already present — nothing changed")
-            return
-        crontab_path.write_text(existing + cron, encoding="utf-8")
-        subprocess.run(["crontab", str(crontab_path)], check=False)
-        print("scheduled daily promotion at 03:00 via crontab")
-        print(f"entries written to {crontab_path}")
+    """Install the daily promotion job (Windows Task Scheduler or crontab).
+
+    The platform dialogue lives in infra.schedule: this function only says what
+    the job is. See ``infra/schedule.JobSpec`` for the fields.
+    """
+    schedule_mod.register_job(
+        schedule_mod.JobSpec(
+            job="promote",
+            module="unified_memory.promoter",
+            flags=("--auto",),
+            script_dir=situation_dir(vault).parent,
+            script_name="promote_daily.bat",
+            log_name="promote.log",
+            windows_task="UnifiedMemoryPromote",
+            windows_when=("DAILY", "/ST", "03:00"),
+            cron_expr="0 3 * * *",
+            banner="# unified-agent-memory daily promotion (added by promoter --cron)",
+            windows_desc="daily promotion at 03:00",
+            posix_desc="daily promotion at 03:00",
+        ),
+        vault,
+    )
 
 
 def shlex_quote(value: str) -> str:
-    return "'" + value.replace("'", "'\\''") + "'"
+    """Kept as a thin alias: POSIX quoting now lives with the scheduler."""
+    return schedule_mod.shlex_quote(value)
 
 
 # --------------------------------------------------------------------------

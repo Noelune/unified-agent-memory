@@ -26,11 +26,7 @@ from __future__ import annotations
 
 import argparse
 import math
-import platform
 import re
-import shlex
-import subprocess
-import sys
 import time
 from pathlib import Path
 
@@ -40,7 +36,8 @@ from .domain.model import Change, ChangeSet
 from .domain.policy import CANONICAL_DOCS
 from .infra import vault as vault_mod
 from .infra.config import resolve_vault
-from .infra.schedule import core_source_dir, mark_schedule_run
+from .infra import schedule as schedule_mod
+from .infra.schedule import mark_schedule_run
 from .infra.store import forget_stats
 from .infra.vault import (
     canonical_dir,
@@ -257,50 +254,28 @@ def demote(vault: Path, dry_run: bool = True) -> list[str]:
 
 
 def register_cron(vault: Path) -> None:
-    python = str(Path(sys.executable).resolve())
-    system = platform.system()
-    # From a source checkout the scheduled interpreter does not need a prior
-    # pip install: bake the core's own directory into PYTHONPATH.
-    core = core_source_dir()
-    if system == "Windows":
-        bat = forget_dir(vault).parent / "forget_weekly.bat"
-        log = vault / "forget_weekly.log"
-        pyline = f"set \"PYTHONPATH={core};%PYTHONPATH%\"\r\n" if core else ""
-        content = (
-            "@echo off\r\n"
-            f"chcp 65001 >nul\r\n"
-            f"{pyline}"
-            f"\"{python}\" -m unified_memory.forgetter --vault \"{vault}\" --apply >> \"{log}\" 2>&1\r\n"
-            "exit /b %errorlevel%\r\n"
-        )
-        bat.write_bytes(b"\xef\xbb\xbf" + content.encode("utf-8"))
-        subprocess.run(
-            ["schtasks", "/Create", "/TN", "UnifiedMemoryForget", "/TR", f'"{bat}"', "/SC", "WEEKLY", "/D", "MON", "/ST", "04:00", "/F"],
-            check=False,
-        )
-        print("scheduled weekly reversible forget run (Mon 04:00) via Windows Task Scheduler")
-    else:
-        # Install for real, mirroring promoter.register_cron's POSIX flow so
-        # `setup.py cron` is out-of-the-box for BOTH jobs on every platform.
-        prefix = f"PYTHONPATH={shlex.quote(str(core))} " if core else ""
-        cron = "\n".join(
-            [
-                "# unified-agent-memory weekly forgetting (added by forgetter --cron)",
-                f"0 4 * * 1 {prefix}{python} -m unified_memory.forgetter --vault {shlex.quote(str(vault))} --apply >> {shlex.quote(str(vault / 'forget_weekly.log'))} 2>&1",
-                "",
-            ]
-        )
-        existing = ""
-        crontab_path = Path.home() / ".crontab"
-        if crontab_path.exists():
-            existing = crontab_path.read_text(encoding="utf-8")
-        if "unified_memory.forgetter" in existing:
-            print("cron entry already present — nothing changed")
-            return
-        crontab_path.write_text(existing + cron, encoding="utf-8")
-        subprocess.run(["crontab", str(crontab_path)], check=False)
-        print("scheduled weekly forgetting (Mon 04:00) via crontab")
-        print(f"entries written to {crontab_path}")
+    """Install the weekly forget job (Windows Task Scheduler or crontab).
+
+    The platform dialogue lives in infra.schedule: this function only says what
+    the job is. See ``infra/schedule.JobSpec`` for the fields.
+    """
+    schedule_mod.register_job(
+        schedule_mod.JobSpec(
+            job="forget",
+            module="unified_memory.forgetter",
+            flags=("--apply",),
+            script_dir=forget_dir(vault).parent,
+            script_name="forget_weekly.bat",
+            log_name="forget_weekly.log",
+            windows_task="UnifiedMemoryForget",
+            windows_when=("WEEKLY", "/D", "MON", "/ST", "04:00"),
+            cron_expr="0 4 * * 1",
+            banner="# unified-agent-memory weekly forgetting (added by forgetter --cron)",
+            windows_desc="weekly reversible forget run (Mon 04:00)",
+            posix_desc="weekly forgetting (Mon 04:00)",
+        ),
+        vault,
+    )
 
 
 def main(argv: list[str] | None = None) -> None:

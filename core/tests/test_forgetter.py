@@ -98,7 +98,9 @@ class ForgetterScheduleTest(unittest.TestCase):
             calls.append((args, kwargs))
             return subprocess.CompletedProcess(args, 0)
 
-        with patch("platform.system", return_value="Windows"), patch.object(forgetter.subprocess, "run", side_effect=capture_schedule):
+        # B5.4: the schtasks/crontab dialogue moved into infra/schedule.register_job,
+        # so subprocess is patched where it is now called.
+        with patch("platform.system", return_value="Windows"), patch("unified_memory.infra.schedule.subprocess.run", side_effect=capture_schedule):
             forgetter.register_cron(self.vault)
 
         bat = self.vault / "50-Agent-Context" / "forget_weekly.bat"

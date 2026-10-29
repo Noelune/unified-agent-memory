@@ -30,6 +30,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from ...infra.schedule import run_command
+
 # ── Drift configuration ------------------------------------------------
 
 DRIFTRC_NAME = "driftrc.yaml"
@@ -271,12 +273,10 @@ class DriftDetector:
         that's a suspect drift.
         """
         try:
-            import subprocess
-            result = subprocess.run(
-                ["git", "diff", "--cached", "--name-only"],
-                capture_output=True, text=True, cwd=self.repo_root, timeout=10,
+            result = run_command(
+                ["git", "diff", "--cached", "--name-only"], cwd=self.repo_root, timeout=10
             )
-            if result.returncode != 0:
+            if result is None or result.returncode != 0:
                 return
 
             staged_files = result.stdout.strip().split("\n")

@@ -134,20 +134,10 @@ WHITELIST: dict[str, set[str]] = {
         "unified_memory.sessiondb",
     },
     "writes": {
-        # B5.4: conflict split — the queue I/O moved to app/govern/queue.py and
-        # appends through infra.vault.atomic_write, so the entry is gone.
-        "unified_memory.forgetter",
-        "unified_memory.promoter",
         "unified_memory.sessiondb",
     },
-    "subprocess": {
-        # B5.3: drift moved to app/maintain/drift.py (--git-precommit shells
-        # out to git). B5.4 moves forgetter/promoter cron registration into
-        # infra/schedule and clears the other two.
-        "unified_memory.app.maintain.drift",
-        "unified_memory.forgetter",
-        "unified_memory.promoter",
-    },
+    "subprocess": set(),  # B5.4: register_job (cron) and drift's git probe both
+    # go through infra/schedule.run_command — this rule needs no entry any more.
     "lazy_import": {
         "unified_memory.app.ingest.digest",
         "unified_memory.app.maintain.drift",

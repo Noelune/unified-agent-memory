@@ -150,7 +150,7 @@ class ForgetterPosixCronTest(unittest.TestCase):
 
         with patch("platform.system", return_value="Linux"), \
                 patch.object(Path, "home", return_value=self.tmp), \
-                patch.object(forgetter.subprocess, "run", side_effect=capture):
+                patch("unified_memory.infra.schedule.subprocess.run", side_effect=capture):
             forgetter.register_cron(self.vault)
             forgetter.register_cron(self.vault)  # idempotent
 
