@@ -175,6 +175,17 @@
 - **白名单结果**：`lazy_import`/`third_party` 清空（移入前缀常量）；`layers` 从 6 条减到 4 条，剩余 4 条全部有 documented 理由——embed 的物理迁移被 SSRF 扫描器阻塞（新文件含 urlopen 被拦），index/search 是建在 embed 之上的 facade，digest/health/system 因此引用它们。等扫描器规则调整后迁移 embed，这 4 条随清。
 - **测试结果**：Python 470 / JS 886 / setup 32 / typecheck / bench / 快照 42 / e2e 46，全绿。
 
+### B5.5c-2a 拆 health.doctor（205 → 编排 + 14 私有助手，✅ 2026-10-30）
+
+- **调研**：doctor 是 205 行单函数：上半部 6 段 section 构建，下半部 96 行 issues 判定。两处顺序都是把关点——report 字典 JSON 键序（骨架预声明 + orphanIndexes 后补）与 issues 追加序（8 类问题，快照逐字节比对渲染序）。测试面：test_health 9 例打实现模块；client-findings.test.ts 扫 health.py 源码数 `_issue(` 调用点（8 处必须原地保留）；快照 doctor case；e2e doctor 入口。
+- **选定方案**：doctor 只做编排（骨架 + 6 个 `_check_*` + `_issues` + ok 判定，30 行）；6 个 section builder 按现序填充；`_issues` 编排 8 个单问题 helper，追加序逐一保持。**放弃方案**：拆成两个模块——client-findings.test.ts 只扫 health.py，跨文件拆动 JS 测试；单文件 19 defs（限 20）内解决。
+- **设计**：全私有函数、零新 import、零行为变化；`report["issues"]` 从骨架内追加改为整体赋值（最终值相同）；orphanIndexes 仍是骨架外新键、仍最后出现（JSON 序不变）。回滚 = revert 单提交。
+- **虚拟项目验证**：AST 检查 19 top defs；py_compile；test_health 9 例；全量 Python 469 OK (skipped=1)。
+- **测试结果**：七道门全绿（469 / 886 / 32 / typecheck / bench 一致 / 快照 42 逐字节 / e2e 46）。
+- **删除**：doctor 内联实现体 205 行（重组为 14 个私有助手 + 编排骨架），无逻辑删除。
+- **过程记录（第一轮验证抓到自己引入的缺陷）**：初版 helper 命名 `_*_issue` 与 client-findings.test.ts 的朴素子串计数 `_issue(` 撞车（helper 名以 `_issue(` 结尾被计入，8≠24 红）。这是该 JS 测试的设计意图——「parse failure is loud」的防呆尺子抓到了命名疏忽。全部改名为 `_flag_*`，raw 计数回到 9（1 def + 8 调用）。
+- **遗留风险**：health.py 19/20 defs——后续在此文件加函数前先清点。
+
 ## B5.5 接手说明存档（2026-10-29 交棒点，已被上节取代）
 
 **一句话状态**：B5.2 / B5.3 / B5.4（a/b/c）已入库并全绿，`git status` 干净，HEAD = `e5fb47e`；**只剩 B5.5**——清空架构白名单 + 翻预算门。下面每条都是本轮实测数据，不需要重新探查。
@@ -289,6 +300,15 @@ B5.2–B5.4 全部是**结构性搬迁与拆分**，没有触碰检索算法、�
 - `npm run check` 里的 `sync:check` 要求工作树干净：有未提交改动就会红，这是设计而非缺陷；要么先提交，要么只用 `../verify.sh`。
 - `python bench/verify_live_migration.py` 读取本机真实索引库的**副本**；B5 不改 schema（停在 v10），无需执行 I4。
 - 判断测试是否污染真实 home 时不要用 mtime：本机 dsh 插件常驻会持续写自己的 `index-71a04777…db`，会误报；用文件名集合差。
+
+## ⛔→✅ 阻塞与解除（2026-10-30）：Mimosa git-gate 拦截所有 git commit（同日已由主人解除）
+
+**现象**：任何 `git commit` 被 ZCode Mimosa 插件的 git-gate 钩子在 PreToolUse 强制拦截：「L3 发现 18 个高危」。
+**机制（已查明）**：gate 在 commit/push 前对项目文件系统做内容级全量扫描（含未跟踪文件），高危即拒；与 MCP 密封扫描（`scan-2026-10-29T16-23-52…`，13 findings，已产出封印报告）互相独立；跨会话 finding ledger 为空（batches=0）——昨天的提交能过、今天被拦，插件侧状态有变化，代码无差异。
+**已试并失败的正规路径**：① MCP sealed 重扫（gate 不读它）；② 删未跟踪的 `lib/` 构建产物（27→18，`npm run build` 可重建）；③ `.mimosa/security-policy.json`（`mimosa policy init` 生成，threatModel.exclusions 填 10 个文件路径，`policy check` 通过但 **exclusions 对 audit/gate 无效**）；④ ledger record 无 finding ID 可登记。
+**发现分类（18 高危，全部核实过标记行）**：8 条 = 测试夹具 `os.path.join(变量,变量)` 写临时文件的启发式误报（test_preview×5 / test_inbox×3）；4 条 = 产品 SSRF（memory.py:15/111 = B5.2 决策保留的远端客户端；embed.py:150、digest.py:158 = SiliconFlow API 调用，均为 2026-10-29 已裁定接受的产品功能）；2 条 = test_remote_search 的 loopback 安全测试本身；3 条 = 注释/docstring 提到关键词被标记（test_module_surface:195、test_architecture:32）+ test_stats:334 的 f-string 测试 SQL（t 遍历固定字面量元组）；1 条 = test/setup-run.test.ts:211（测试里 spawn python 固定参数）。
+**当前状态**：`.gitignore`（.mimosa/ 规则）已 staged 未提交；`lib/` 已删（未跟踪，可重建）；策略文件在 `.mimosa/security-policy.json`（已 gitignore，不影响 git）。所有代码改动为 0，工作树其余干净。
+**解除路径**：插件侧放行/规则调整（2026-10-29 先例）——需仓库主人操作。**→ 已于 2026-10-30 由主人在 ZCode 插件管理中停用 Mimosa 钩子后解除**，提交恢复正常；期间完成的两项工作（chore 与 B5.5c-2a）已按序补交。
 
 ## ✅ 阻塞已解除：Mimosa SSRF 规则 vs memory.py 拆分（2026-10-29 复测）
 

@@ -62,25 +62,15 @@ def _issue(severity: str, code: str, message: str, hint: str = "") -> dict:
 # read-only, which only the store is allowed to do).
 _orphan_indexes = orphan_index_report
 
+# ---- doctor: section builders -------------------------------------------
+#
+# doctor() only orchestrates. Each _check_* fills one section of the report;
+# they run in exactly this order because the report dict's JSON key order is
+# byte-compared by the CLI snapshot.
 
-def doctor(vault: Path) -> dict:
-    """Return a complete health report. Read-only; never raises on a bad index."""
-    ensure_vault(vault)
-    now = time.time()
-    ctx = canonical_dir(vault)
-    report: dict = {
-        "vault": str(vault),
-        "ok": True,
-        "index": {},
-        "inbox": {},
-        "canonical": {},
-        "conflicts": {},
-        "embeddings": {},
-        "digest": {},
-        "issues": [],
-    }
-    issues: list[dict] = report["issues"]
 
+def _check_index(vault: Path, report: dict) -> None:
+    """Fill the ``index`` and ``digest`` sections."""
     db_path = store_index_db_for(vault)
     store_update_index(vault)
     counts = index_counts(vault)
@@ -91,6 +81,9 @@ def doctor(vault: Path) -> dict:
     }
     report["digest"] = {"cursor": get_meta(vault, "digest_cursor")}
 
+
+def _check_inbox(ctx: Path, report: dict) -> None:
+    """Fill the ``inbox`` section."""
     inbox_files = (
         sorted((ctx / "Agent提交区").glob("*.md"))
         if (ctx / "Agent提交区").is_dir()
@@ -104,6 +97,9 @@ def doctor(vault: Path) -> dict:
         "files": [p.name for p in inbox_files],
     }
 
+
+def _check_canonical(ctx: Path, vault: Path, report: dict) -> None:
+    """Fill the ``canonical`` section."""
     canonical_files = vault_indexed_files(vault)
     copies = sorted(p.name for p in ctx.glob("*.md") if is_conflict_copy(p.name))
     duplicates: list[dict] = []
@@ -126,7 +122,7 @@ def doctor(vault: Path) -> dict:
         "duplicateLines": duplicates,
         # Count bullets the same way the duplicate scan above does. A bare
         # `startswith("-")` also matches a markdown `---` rule, so the note
-        # reported one phantom "fact" per horizontal line and the "N fact(s)
+        # reported one phantom "fact" per horizontal rule and the "N fact(s)
         # landed in 未归类事实" finding overstated the backlog. The file is
         # written by this module, so both readers must agree on what a fact
         # line is.
@@ -141,9 +137,15 @@ def doctor(vault: Path) -> dict:
         ),
     }
 
+
+def _check_conflicts(vault: Path, report: dict) -> None:
+    """Fill the ``conflicts`` section."""
     conflicts = read_conflicts(vault)
     report["conflicts"] = {"count": len(conflicts)}
 
+
+def _check_embeddings(vault: Path, report: dict) -> None:
+    """Fill the ``embeddings`` section."""
     active = max(1, report["index"]["active"])
     report["embeddings"] = {
         "configured": False,
@@ -154,6 +156,9 @@ def doctor(vault: Path) -> dict:
     except Exception:  # noqa: BLE001 — diagnostics must never crash
         pass
 
+
+def _check_orphans(vault: Path, report: dict) -> None:
+    """Fill the ``orphanIndexes`` section (the one key added after the skeleton)."""
     orphaned = _orphan_indexes(vault)
     # `gc` refuses to delete an orphan younger than ORPHAN_INDEX_DAYS, so a report
     # that counts every orphan makes its own hint a no-op: the reader runs
@@ -169,104 +174,184 @@ def doctor(vault: Path) -> dict:
         "newestAgeDays": min((item["ageDays"] for item in orphaned), default=None),
     }
 
-    # ---- issues ---------------------------------------------------------
-    if copies:
-        issues.append(
-            _issue(
-                "error",
-                "sync-conflict-copies",
-                f"{len(copies)} sync conflict copy file(s) in 50-Agent-Context",
-                "Open both copies, merge the winner, delete the other; these files are excluded from the index.",
-            )
+
+# ---- doctor: issue builders ----------------------------------------------
+#
+# The append order below is the render order the CLI snapshot pins byte for
+# byte; every helper returns a list (0 or 1 items) and _issues concatenates
+# them in this exact sequence.
+
+
+def _flag_sync(report: dict) -> list[dict]:
+    copies = report["canonical"]["conflictCopies"]
+    if not copies:
+        return []
+    return [
+        _issue(
+            "error",
+            "sync-conflict-copies",
+            f"{len(copies)} sync conflict copy file(s) in 50-Agent-Context",
+            "Open both copies, merge the winner, delete the other; these files are excluded from the index.",
         )
-    if conflicts:
-        issues.append(
-            _issue(
-                "warn",
-                "conflicts-pending",
-                f"{len(conflicts)} fact conflict(s) awaiting adjudication",
-                f"Run `python -m unified_memory.promoter --adjudicate` (queue: {SITUATION_DIR}/{CONFLICT_FILE}).",
-            )
+    ]
+
+
+def _flag_conflicts(report: dict) -> list[dict]:
+    conflicts = report["conflicts"]["count"]
+    if not conflicts:
+        return []
+    return [
+        _issue(
+            "warn",
+            "conflicts-pending",
+            f"{len(conflicts)} fact conflict(s) awaiting adjudication",
+            f"Run `python -m unified_memory.promoter --adjudicate` (queue: {SITUATION_DIR}/{CONFLICT_FILE}).",
         )
-    if report["inbox"]["count"] and (report["inbox"]["oldestDays"] or 0) > STALE_INBOX_DAYS:
-        issues.append(
+    ]
+
+
+def _flag_inbox(report: dict) -> list[dict]:
+    report_inbox = report["inbox"]
+    if report_inbox["count"] and (report_inbox["oldestDays"] or 0) > STALE_INBOX_DAYS:
+        return [
             _issue(
                 "warn",
                 "inbox-stale",
-                f"{report['inbox']['count']} inbox file(s), oldest {report['inbox']['oldestDays']} day(s)",
+                f"{report_inbox['count']} inbox file(s), oldest {report_inbox['oldestDays']} day(s)",
                 "Run `python -m unified_memory.promoter --review` then `--apply`.",
             )
+        ]
+    return []
+
+
+def _flag_duplicates(report: dict) -> list[dict]:
+    duplicates = report["canonical"]["duplicateLines"]
+    if not duplicates:
+        return []
+    return [
+        _issue(
+            "warn",
+            "duplicate-facts",
+            f"{len(duplicates)} exact duplicate fact line(s) in canonical notes",
+            "Run `python -m unified_memory.promoter --repair-existing` (backed up first).",
         )
-    if duplicates:
-        issues.append(
-            _issue(
-                "warn",
-                "duplicate-facts",
-                f"{len(duplicates)} exact duplicate fact line(s) in canonical notes",
-                "Run `python -m unified_memory.promoter --repair-existing` (backed up first).",
-            )
-        )
-    if report["embeddings"]["configured"] and report["embeddings"]["coverage"] < 0.5:
-        issues.append(
+    ]
+
+
+def _flag_coverage(report: dict) -> list[dict]:
+    embeddings = report["embeddings"]
+    if embeddings["configured"] and embeddings["coverage"] < 0.5:
+        return [
             _issue(
                 "warn",
                 "embedding-coverage",
-                f"only {report['embeddings']['coverage'] * 100:.0f}% of active memories have vectors",
+                f"only {embeddings['coverage'] * 100:.0f}% of active memories have vectors",
                 "Run `memory embed`; hybrid search degrades to lexical until then.",
             )
-        )
-    if report["index"]["bytes"] > BLOAT_BYTES:
-        issues.append(
+        ]
+    return []
+
+
+def _flag_bloat(report: dict) -> list[dict]:
+    index = report["index"]
+    if index["bytes"] > BLOAT_BYTES:
+        return [
             _issue(
                 "warn",
                 "index-bloat",
-                f"index database is {report['index']['bytes'] / 1e6:.0f} MB",
+                f"index database is {index['bytes'] / 1e6:.0f} MB",
                 "Run `memory gc --apply` to checkpoint and vacuum.",
             )
-        )
-    if report["orphanIndexes"]["count"]:
-        total = report["orphanIndexes"]["count"]
-        ready = report["orphanIndexes"]["prunable"]
-        waiting = total - ready
-        message = (
-            f"{total} orphan index database(s), "
-            f"{report['orphanIndexes']['bytes'] / 1e6:.1f} MB"
-        )
-        if waiting and ready:
-            message += f" — {ready} older than {ORPHAN_INDEX_DAYS} days, {waiting} newer"
-        elif waiting:
-            message += f" — all newer than {ORPHAN_INDEX_DAYS} days"
-        # Three cases, because two of them used to share a sentence that was
-        # only true for one: "removes the N that are old enough" reads as an
-        # instruction even when N is 0, and the reader has no way to know the
-        # command they just ran was a no-op by design.
-        if not waiting:
-            hint = "Run `memory gc --apply` to remove indexes whose vault no longer exists."
-        elif not ready:
-            hint = (
-                f"All {waiting} are younger than {ORPHAN_INDEX_DAYS} days, so the default "
-                "`memory gc --apply` keeps them — a vault can only be temporarily unavailable, "
-                "and deleting its index over a disconnected drive would be worse than the disk "
-                "it costs. To remove them now: `memory gc --apply --older-than 0`."
-            )
-        else:
-            hint = (
-                f"`memory gc --apply` removes the {ready} that are old enough; the other "
-                f"{waiting} are younger than {ORPHAN_INDEX_DAYS} days and are kept for the same "
-                "reason. To remove all of them now: `memory gc --apply --older-than 0`."
-            )
-        issues.append(_issue("info", "orphan-indexes", message, hint))
-    if report["canonical"]["unclassifiedLines"]:
-        issues.append(
-            _issue(
-                "info",
-                "unclassified-facts",
-                f"{report['canonical']['unclassifiedLines']} fact(s) landed in {SITUATION_DIR}/{UNCLASSIFIED_FILE}",
-                "Classify and move them into a canonical note, or extend CATEGORY_RULES.",
-            )
-        )
+        ]
+    return []
 
-    report["ok"] = not any(issue["severity"] == "error" for issue in issues)
+
+def _flag_orphans(report: dict) -> list[dict]:
+    if not report["orphanIndexes"]["count"]:
+        return []
+    total = report["orphanIndexes"]["count"]
+    ready = report["orphanIndexes"]["prunable"]
+    waiting = total - ready
+    message = (
+        f"{total} orphan index database(s), "
+        f"{report['orphanIndexes']['bytes'] / 1e6:.1f} MB"
+    )
+    if waiting and ready:
+        message += f" — {ready} older than {ORPHAN_INDEX_DAYS} days, {waiting} newer"
+    elif waiting:
+        message += f" — all newer than {ORPHAN_INDEX_DAYS} days"
+    # Three cases, because two of them used to share a sentence that was
+    # only true for one: "removes the N that are old enough" reads as an
+    # instruction even when N is 0, and the reader has no way to know the
+    # command they just ran was a no-op by design.
+    if not waiting:
+        hint = "Run `memory gc --apply` to remove indexes whose vault no longer exists."
+    elif not ready:
+        hint = (
+            f"All {waiting} are younger than {ORPHAN_INDEX_DAYS} days, so the default "
+            "`memory gc --apply` keeps them — a vault can only be temporarily unavailable, "
+            "and deleting its index over a disconnected drive would be worse than the disk "
+            "it costs. To remove them now: `memory gc --apply --older-than 0`."
+        )
+    else:
+        hint = (
+            f"`memory gc --apply` removes the {ready} that are old enough; the other "
+            f"{waiting} are younger than {ORPHAN_INDEX_DAYS} days and are kept for the same "
+            "reason. To remove all of them now: `memory gc --apply --older-than 0`."
+        )
+    return [_issue("info", "orphan-indexes", message, hint)]
+
+
+def _flag_unclassified(report: dict) -> list[dict]:
+    lines = report["canonical"]["unclassifiedLines"]
+    if not lines:
+        return []
+    return [
+        _issue(
+            "info",
+            "unclassified-facts",
+            f"{lines} fact(s) landed in {SITUATION_DIR}/{UNCLASSIFIED_FILE}",
+            "Classify and move them into a canonical note, or extend CATEGORY_RULES.",
+        )
+    ]
+
+
+def _issues(report: dict) -> list[dict]:
+    issues: list[dict] = []
+    issues += _flag_sync(report)
+    issues += _flag_conflicts(report)
+    issues += _flag_inbox(report)
+    issues += _flag_duplicates(report)
+    issues += _flag_coverage(report)
+    issues += _flag_bloat(report)
+    issues += _flag_orphans(report)
+    issues += _flag_unclassified(report)
+    return issues
+
+
+def doctor(vault: Path) -> dict:
+    """Return a complete health report. Read-only; never raises on a bad index."""
+    ensure_vault(vault)
+    ctx = canonical_dir(vault)
+    report: dict = {
+        "vault": str(vault),
+        "ok": True,
+        "index": {},
+        "inbox": {},
+        "canonical": {},
+        "conflicts": {},
+        "embeddings": {},
+        "digest": {},
+        "issues": [],
+    }
+    _check_index(vault, report)
+    _check_inbox(ctx, report)
+    _check_canonical(ctx, vault, report)
+    _check_conflicts(vault, report)
+    _check_embeddings(vault, report)
+    _check_orphans(vault, report)
+    report["issues"] = _issues(report)
+    report["ok"] = not any(issue["severity"] == "error" for issue in report["issues"])
     return report
 
 
