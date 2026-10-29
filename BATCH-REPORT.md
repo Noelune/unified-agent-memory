@@ -19,20 +19,22 @@
 | B4   | ChangeSet + executor + journal                                                    | ✅ 完成                          | `0ad04f4`                     |
 | B5.1 | domain/state.py 状态机 + decide/supersede 接线                                         | ✅ 完成                          | `72d7a9d`                     |
 | B5.2 | 拆 memory.py → surface/cli.py + app 命令模块 + 119 行 shim                              | ✅ 完成（阻塞已解除，2026-10-29）        | `d247aa1`                     |
-| B5.3 | legacy 实现模块迁入 layers                                                              | ⬜ 待做（阻塞已解除）                   | —                             |
-| B5.4 | promoter/conflict/forgetter/maintenance 拆分到 ≤600 行；register_cron → infra/schedule | ⬜ 待做                          | —                             |
-| B5.5 | 拆 8 个 >60 行函数；ENFORCE_BUDGETS=True；白名单清空                                          | ⬜ 待做                          | —                             |
+| B5.3 | legacy 实现模块迁入 layers（drift/digest/preview/stats/health/inbox 六件）                    | ✅ 完成（2026-10-29）              | `9f1fad2`、`3e38f78`、`699745a` |
+| B5.4 | promoter/conflict/forgetter/maintenance 拆分；register_cron → infra/schedule            | ✅ 完成（分 a/b/c 三步，2026-10-29）    | `e5bd84c`、`8289874`、`e5fb47e` |
+| B5.5 | 拆 12 个 >60 行函数 + claims 的 24 个 def；白名单清空；ENFORCE_BUDGETS=True                        | ⬜ 待做（接手说明见下，状态已实测）            | —                             |
 | 维护轮  | 全量测试 + 测试隔离修复（journal / decide 集成 / bench）+ 真实 home 清理 + 46 项真功能 e2e（发现并修掉远端两处缺陷） | ✅ 完成（2026-10-29）              | `4a1a50a`、`c2de07c`、`00050f4` |
 | 收尾   | BATCH-REPORT 定稿 + push origin                                                     | ⬜ 推送待用户确认（remote=GitHub 公共仓库） | —                             |
 
-## 验证基线（维护轮后，全绿）
+## 验证基线（B5.4c 后，全绿，2026-10-29 22:20 实测）
 
-- Python 457（skipped=1 预算门）/ JS 886（41 文件）/ setup 32 / node 24 / typecheck 0
+- Python **468**（skipped=1 预算门）/ JS 886（41 文件）/ setup 32 / node 24 / typecheck 0
+- `bash ../verify.sh` 七道门全绿：Python / JS / setup / typecheck / bench fixture / CLI 快照 42 例逐字节 / e2e 46 项
 - `npm run check` 全链退出 0（typecheck → drift:check → sync:check → vitest → python → setup → build → node test → drift:python）
-- bench fixture：recall@5/10=0.9167、mrr/ndcg=0.9167、abstain=0.75、update_top1_ok=1.0、empty=0.25（与 after-a12 一致）
+- bench fixture：recall@5/10=0.9167、mrr/ndcg=0.9167、abstain=0.75、update_top1_ok=1.0、empty=0.25（与 after-a12 一致，B5.2–B5.4 未触碰检索路径）
 - CLI 快照：42/42 逐字节一致；真实库副本迁移 164 memories / 130 embeddings / 752 access_log 守恒
-- 隔离：Python 套件、vitest、bench、figures-smoke 跑完后 `~/.unified-memory/` **零新增文件**
-- 结构指标（B5.3 后实测）：memory.py **119**；surface/cli.py 232；app/ 合计 1962；promoter.py 1055、conflict.py 619 未动（B5.4）；>600 行文件 2 个（promoter/conflict）；>60 行函数 8 个
+- 隔离：Python 套件、vitest、bench 跑完后 `~/.unified-memory/` **零新增文件**
+- 结构指标（B5.4c 后实测，67 个模块 / 10235 行）：**>600 行文件 0 个**（拆分前 2 个：promoter 1055、conflict 619）；>450 软限 1 个（`infra/store/search_index.py` 470）；memory.py 119、promoter.py shim 103、conflict.py shim 55、maintenance.py shim 17
+- 剩余预算债：**12 个 >60 行函数 + 1 个 >20 def 文件**（清单见「B5.5 接手说明」）
 
 ## 逐项详情
 
@@ -51,8 +53,6 @@
 - **测试结果**：六道门全绿（Python 446 / JS 886 / setup 32 / typecheck / bench 一致 / 快照 42 逐字节）。
 - **过程记录（质量红线执行证据）**：第一轮验证抓到两个自己引入的缺陷——(1) 把表 dict 当 machine 参数传入导致 `TypeError: unhashable type`（快照尺子 3 处差异当场定位到 traceback）；(2) recover 语义混淆（current==after_text 在未提交 intent 下必须回滚而非跳过——该修复属 B4 journal，已在 B4 提交内完成）。另修正测试自身一处断言笔误（rejected ≠ reject+"d"）。三轮验证后才提交。
 - **遗留风险**：无——表是纯域模型；inbox 表当前无接线点（已声明）。
-
-（B5.2 起逐项填充）
 
 ### 维护轮（2026-10-29）：全量测试 + 测试隔离修复 + 真实 home 清理
 
@@ -113,47 +113,129 @@
 - **测试结果**：每个子步七道门全绿（Python 457 / JS 886 / setup 32 / typecheck / bench / 快照 42 / e2e 46）。
 - **遗留**：`index`/`embed`/`search`/`promoter`/`conflict`/`forgetter`/`maintenance`/`sessiondb` 仍平铺（B5.4/B5.5）；`app.query.commands` 的 `memory` 懒导入仍是环，等 HTTP 客户端搬进 `app.remote` 后清除。
 
-## B5.4 / B5.5 未完成：接手说明（2026-10-29 收工点）
+### B5.4a 拆 conflict.py：纯规则下沉 domain，队列 I/O 进 app/govern
 
-B5.2、B5.3 已入库并全绿；B5.4（promoter/conflict 拆分 + cron 搬迁）与 B5.5（预算门 + 清空白名单）**未动**。下面是本轮实际探查到的结论，接手者可直接照做，不必重走弯路。
+- **调研**：619 行里混着两件事——字符二元组相似度、主体抽取、冲突分类（纯函数，零 I/O）与「读写 `事实冲突待裁决.md`」的 Markdown 块增删（全是要落盘的操作）。**选定方案**：按"是否碰 vault"切两半，纯规则 → `domain/conflict.py`（344 行），队列 I/O → `app/govern/queue.py`（326 行），旧路径留 55 行 shim。**放弃方案**：按函数名逐个挑（同一批常量被两半共用，会撕成两份真相）。
+- **设计**：先解决"障碍 1"（正则常量夹在 I/O 段内部）——把那 7 个常量跟着使用它们的那一半走，而不是上移到 `domain/markdown`：`describe`/`split_change` 是唯一使用者，放 domain 顶部即可，不必污染公共 markdown 模块。切分用 **AST 节点级切分器**（按 `ast.body` 逐节点取源码段，注释与空行原样保留），配一张"37 个顶层名 → 落哪一半"的映射表，切完 diff 断言每个名字**恰好**出现在一半里。
+- **虚拟项目验证**：切完立刻 `python -c "import unified_memory.conflict"` + 现有 457 例；`test_conflict_formats`、`test_cross_doc_conflicts`、`test_occurrence_identity` 全绿（它们覆盖两种冲突块格式、跨文档命中、同一事实多次出现）。
+- **过程中抓到的真实问题**：**第一次按行号区间切（45–242 / 420–523）直接产出 `IndentationError: unexpected indent`**——`return entry` 被切到函数外。行号切分对"函数体跨切点"毫无防护，换成 AST 节点切分后一次通过。这条写进"已知风险"给下一位。
+- **顺带修掉的边界**：`queue.record_adjudication` 原本用 `open(path,"a")` 追加，是 `writes` 白名单里 conflict 的最后一条理由；改成 `read_maybe` + `atomic_write`（内容原样拼在末尾），语义不变、写入走唯一执行器，`writes` 白名单随之删掉 `conflict`。
+- **测试结果**：七道门全绿（Python 463 / JS 886 / setup 32 / typecheck / bench / 快照 42 / e2e 46）。
+- **遗留**：`app/govern/queue.py` 326 行、`domain/conflict.py` 344 行，均在软限内。
 
-### 为什么停在这里
+### B5.4b 一个调度器：register_job 取代两份 cron 实现
 
-- 剩余两项都是"拆 1000 行级文件 + 改全部调用面"，单步风险高；本轮已连续完成 6 个模块搬迁，继续硬推会把工作树留在半红状态，违反"每个提交独立全绿"。
-- 已确认的三个技术障碍（见下）需要设计决策，不是机械操作；按任务书"方案有歧义 → 停下写明"，此处停下。
+- **调研**：`promoter --cron` 与 `forgetter --cron` 各带一份平台对话（Windows 写 `.bat` + `schtasks`，POSIX 写 crontab），两处都要引号、都要烘 PYTHONPATH、都要幂等标记，改一处必忘另一处。**选定方案**：`infra/schedule.py` 收口成唯一会 shell out 的模块，业务侧只交一个 `JobSpec`。**放弃方案**：在 schedule 里 import forgetter/promoter（这正是"障碍 3"的反向依赖环）。
+- **设计**：`JobSpec` 是 frozen dataclass（`job / module / flags / script_dir / script_name / log_name / windows_task / windows_when / cron_expr / banner / windows_desc / posix_desc`），**路径与调度参数全部由调用方传入**，schedule 不认识任何业务模块；`register_job(spec, vault)` 分派到 `_register_windows` / `_register_posix`；`run_command(args, *, cwd, timeout)` 是唯一的 subprocess 边界（失败返回 `None`，调用方降级）。Windows `.bat` 用 `atomic_write` 写，文本首字符是 `"\ufeff"`，保住 BOM 而不必开裸文件句柄。
+- **虚拟项目验证**：新增 `core/tests/test_schedule_jobs.py`（6 例）——promoter 任务是 `0 3 * * *` + `--auto` + 烘进 PYTHONPATH + 重跑幂等；forgetter 是 `0 4 * * 1` + `--apply` + 幂等；两者共存于同一份 crontab；`.bat` 以 `b"\xef\xbb\xbf"` 开头、含 `--apply` 与 `exit /b %errorlevel%`、首调是 `schtasks`；`run_command` 对不存在的二进制返回 `None`、对真命令拿到 stdout。
+- **过程中抓到的真实问题**：`test_forgetter` / `test_catchup` 两处 `patch("unified_memory.forgetter.subprocess.run")` 失效（`forgetter` 已经没有 `subprocess` 属性）——重定向到 `unified_memory.infra.schedule.subprocess.run`，**断言内容一字未改**。
+- **白名单变化**：`subprocess` 集合**清空**（drift 的 git 探针也改走 `run_command`）；`writes` 删掉 `forgetter`、`promoter`。
+- **测试结果**：七道门全绿（Python 457 → 463 / 其余同前）。
+- **遗留**：drift 的 `--git-precommit` 仍保留在 `layers` 白名单（它读 PyYAML，属 third_party 例外，B5.5 处理）。
 
-### 障碍 1：conflict.py 不能按函数边界机械切分
+### B5.4c 拆 promoter.py：facts / review / promote / decide / cron 进层
 
-`describe()` / `split_change()` 是纯函数，但它们依赖的五个正则常量（`_BULLET`、`_PROVENANCE_TAIL`、`_RECORDED_AT`、`_SOURCE_IN_STAMP`、`_WIKILINK`）定义在**队列 I/O 段内部**（第 434–441 行，夹在 `read_conflicts` 与 `describe` 之间）。按"纯函数留 domain"直接切行会得到一个缺常量的 domain 模块。
+- **调研**：1058 行里"障碍 2"说对了——`promote/review/decide/cron` 共享 `CATEGORY_RULES`、`DECISIONS`/`ADVISABLE`、`_pending_path`、`plan_promotion` 的返回结构，以及"apply 之后再刷索引"的时序。**选定方案**：按**职责**切五块，共享常量先找到它们真正的家——分类规则本就在 `domain/policy`、事实行读写是纯 domain 逻辑（新建 `domain/facts.py`）、裁决集合属 decide 自己。**放弃方案**：只做文件搬家（对 450/600 预算无帮助，障碍 2 已论证）。
+- **设计**：
+  - `domain/facts.py`（155）——哪些 bullet 是 active、事实追加到哪、被取代的值如何进 `## 已取代`；
+  - `app/govern/review.py`（342）——扫 + 分类 + 生成待晋升清单；
+  - `app/govern/promote.py`（279）——plan/apply/archive（`promote`/`apply_pending`/`accept`/`auto_promote`）；
+  - `app/govern/decide.py`（195）——对单个冲突下裁决（`decide`/`adjudicate`）；
+  - `app/govern/cli.py`（82）——argparse 入口 + 声明式 `--cron`（`JobSpec`，`module="unified_memory.promoter"`、`--auto`、`promote_daily.bat`、`UnifiedMemoryPromote`、`DAILY 03:00`）。
+  - `maintenance.py` → `app/maintain/repair.py`（`git mv`）：修复是对 vault 的 app 级操作，不该和 memory 平级。
+- **虚拟项目验证**：`test_promoter`、`test_accept`、`test_auto_promote_archive`、`test_conflict_formats`、`test_cross_doc_conflicts`、`test_repair_existing`、`test_state` 全绿；e2e 46 项（含 `promoter` 的 review/apply/auto/repair-existing 四个真入口）全过；CLI 快照 42 例逐字节一致。
+- **过程中抓到的真实问题**：① AST 切分把 `index_mod.record_audit(...)` / `update_index(...)` / `lexical_search(...)` 的调用点搬到了新模块，但表头没跟着映射 → `NameError`；改为直接 `from ...infra.store import ...` 裸调用。② 新 `promote._refresh_index` 里残留一句函数内 `from . import index as index_mod`（层级已不对且调用已不需要）→ 删除。③ `app/ingest/commands.py` 里 `from ... import promoter` 是**死导入**（整个模块没调用过）→ 删除。④ `app/govern/commands.py` 仍在用 `promoter_mod` 门面 → 改成真名（`.promote.accept`、`.decide.{decide,ADVISABLE,DECISIONS}`），`conflict_mod` 别名正名为 `queue_mod`。
+- **新增测试**：`core/tests/test_module_surface.py`（5 例）——把四个 shim（memory / conflict / promoter / maintenance）在基线 `805fad8` 的**公开面冻结成清单**，断言 ① 每个名字仍可从旧路径解析；② 有唯一实现归属的名字，shim 属性与实现模块**是同一个对象**（这才是"re-export"而非"会漂移的副本"）。两个例外写明理由：`shlex_quote` 用**行为一致**断言（它是 delegate）、`memory.INDEX_DB` 用**重绑定**断言（它整个存在的意义就是被隔离守卫 rebind）。第三条断言 shim 里不许长出新代码。
+- **白名单变化**：`layers` 删 `app.govern.commands`、`app.ingest.commands`（改真名后自然退出）；`lazy_import` 删 `promoter`、`maintenance`（shim 不做懒导入）。**没有新增任何条目**。
+- **测试结果**：七道门全绿（Python 463 → **468** / JS 886 / setup 32 / typecheck / bench / 快照 42 / e2e 46）。
+- **遗留**：`review` 132 行、`decide` 83 行、`plan_promotion` 61 行超函数预算 → 归入 B5.5。
 
-**建议方案**：先把这五个正则与 `_BOUNDARY` / `_SNAP_LIMIT` 一起上移到 `domain/markdown.py` 或新的 `domain/conflict.py` 顶部，再切分；切完用 `python -c "import unified_memory.domain.conflict"` + 现有 457 例验证。**放弃方案**：在 domain 里重复定义常量（两份真相，迟早漂移）。
+### 待修缺陷 D1：`memory doctor` 的"向量是否配置"恒为 False（2026-10-29 交棒前发现，已复现，**按主人指示未修**）
 
-### 障碍 2：promoter.py 的 1055 行不是四个独立块
+- **复现**：`python -c "from unified_memory.app.maintain import embed"` → `ImportError: cannot import name 'embed' from 'unified_memory.app.maintain'`。
+- **根因**：B5.3 把 `health` 从 `unified_memory/health.py` 搬到 `app/maintain/health.py` 时，函数体内的 `from . import embed as embed_mod`（现第 151 行）少加了一层——`.` 现在指 `app.maintain`，那里没有 `embed`。外面套着 `except Exception: pass`（注释理由是"诊断永不崩"），于是 ImportError 被**静默吞掉**，`report["embeddings"]["configured"]` 永远是 `False`。
+- **影响**：用户即使配了 `SILICONFLOW_API_KEY`，`memory doctor` 仍报告向量未配置——而"向量到底配没配"正是 doctor 存在的理由。属用户可见的诊断说谎，不是内部整洁问题。
+- **为什么测试没抓到**：`test_health` 的三处 `patch("unified_memory.embed.configured", return_value=False)` 恰好与坏行为（永远 False）取值相同，且没有任何用例断言 `report["embeddings"]["configured"]` 这个字段。
+- **建议修法（约 3 行 + 1 个测试，本喵已在本机验证可行后回退）**：
+  1. 把 import 提到模块级 `from ... import embed as embed_mod`（与同文件 `index_mod` 的写法一致），`try` 只包住 `embed_mod.configured()` 调用——这样 import 坏了会在导入期炸，而不是变成一句谎话；
+  2. 加 `test_embeddings_configured_reaches_the_report`：`patch(..., return_value=True)` 断言 `True`，`patch(..., return_value=False)` 断言 `False`（两个方向都钉，防止卡在任一值）；
+  3. 修完 `lazy_import` 白名单里的 `app.maintain.health` 会变**过期**（实测：改成模块级后该条目仍在 = 测试红），必须同步删掉——即这一步同时清掉 1 条白名单债。
 
-`promote / review / decide / cron` 共享一组模块级状态：`CATEGORY_RULES`、`DECISIONS`/`ADVISABLE`、`_pending_path`、`plan_promotion` 的返回结构，以及 `_refresh_index`/`mark_schedule_run` 的调用时序（B4 明确要求"apply 之后再刷"）。直接按函数名切会把共享常量撕成两份。
+## B5.5 未完成：接手说明（2026-10-29 交棒点）
 
-**建议方案**：先切出 `domain/policy` 已有的分类规则（`CATEGORY_RULES` 可整体下沉 domain），再按"plan / execute / adjudicate / schedule"四块切，每切一块跑一次七道门。**放弃方案**：只做文件搬家不改结构（对 B5.5 的 450/600 行预算没有帮助）。
+**一句话状态**：B5.2 / B5.3 / B5.4（a/b/c）已入库并全绿，`git status` 干净，HEAD = `e5fb47e`；**只剩 B5.5**——清空架构白名单 + 翻预算门。下面每条都是本轮实测数据，不需要重新探查。
 
-### 障碍 3：register_cron 搬进 infra/schedule 会遇到反向依赖
+### 已解除的三个障碍（别再重新论证，方案已入库）
 
-`forgetter.register_cron` 需要 `forgetter.forget_dir(vault)` 来算 `.bat` 落点；直接 import 会形成 `infra.schedule → forgetter → infra.schedule` 的环。
-
-**建议方案**：把 `register_cron` 改成 `infra.schedule.register_job(*, name, module, vault, schedule, log_path, work_dir)` 的通用形式，由调用方（forgetter/promoter）传入路径与调度参数；这样 schedule 不认识任何业务模块，subprocess/write_bytes 白名单可一次清空两条。**放弃方案**：在 schedule 里 import forgetter（环）。
-
-### 当前白名单（B5.3 收工态，接手时照此收敛）
-
-| 规则 | 剩余条目 | 清除条件 |
+| 原障碍 | 结论 | 落地提交 |
 |---|---|---|
-| sqlite3 | `sessiondb` | 移到 `infra/sessiondb.py` |
-| writes | `conflict`、`forgetter`、`promoter`、`sessiondb` | 前三个的写盘改走 `infra.vault.apply`；sessiondb 随搬家 |
-| subprocess | `app.maintain.drift`、`forgetter`、`promoter` | drift 的 `--git-precommit` 保留例外；后两个随障碍 3 |
-| lazy_import | `app.ingest.digest`、`app.maintain.drift`、`app.maintain.health`、`embed`、`maintenance`、`promoter`、`search`、`app.query.commands` | 前三个是可选依赖/环，需逐条判定；`app.query.commands` 随 HTTP 客户端搬进 `app.remote` |
-| third_party | `app.maintain.drift` | PyYAML 例外，B0 已批准 |
-| layers | `app.govern.commands`、`app.ingest.commands`、`app.ingest.digest`、`app.query.commands`、`app.query.preview`、`app.system`、`app.maintain.drift`、`app.maintain.health` | 随 B5.4 把 promoter/conflict/search/index/embed 搬进 layers |
+| 1. conflict.py 的正则常量夹在 I/O 段内部 | 按 **AST 节点级**切分 + 一张"顶层名 → 归属"映射表，常量跟使用者走（不必上移 `domain/markdown`）。**不要按行号区间切**——第一次这么做直接产出 `IndentationError` | `e5bd84c` |
+| 2. promoter.py 的共享模块级状态 | 先给共享常量找真正的家：分类规则留 `domain/policy`、事实行逻辑新建 `domain/facts`、裁决集合归 `decide`，再按职责切五块 | `e5fb47e` |
+| 3. register_cron 的反向依赖环 | `infra/schedule.JobSpec` + `register_job(spec, vault)`：路径与调度参数全由调用方传入，schedule 不认识任何业务模块 | `8289874` |
 
-### 预算门（B5.5）现状
+### 当前白名单（实测，6 类规则 / 15 个条目；`subprocess` 已空）
 
-`ENFORCE_BUDGETS` 仍为 `False`。翻 True 前必须解决：`promoter.py` 1055 行、`conflict.py` 619 行（>600 硬限），以及 8 个 >60 行函数（`health.doctor` 207、`build_parser` 155、`search_index.update_memories` 141、`promoter.review` 132、`search.hybrid_search` 102、`infra.lock.file_lock` 94、`drift.main` 86、`store/schema._ensure_schema` 75）。
+| 规则 | 剩余条目 | 清除条件（已核实） |
+|---|---|---|
+| sqlite3 | `sessiondb` | `git mv` 到 `infra/sessiondb.py`（`SQLITE3_OK_PREFIXES` 里已写好该前缀，只需删白名单条目）；改 `from .domain.markdown` → `from ..domain.markdown` |
+| writes | `sessiondb` | 同上（`export_markdown` 故意写 markdown，`WRITES_OK_PREFIXES` 已含 `infra.sessiondb`） |
+| lazy_import | `app.ingest.digest`（4 处）、`app.maintain.drift`（3 处）、`app.maintain.health`（1 处）、`app.query.commands`（1 处）、`embed`（1 处）、`search`（1 处） | 逐条判定，见下表。**`app.maintain.health` 那条随缺陷 D1 一起消失**（修 D1 时同步删，修完变 14 条） |
+| third_party | `app.maintain.drift` | PyYAML 可选依赖，见"决策点 A" |
+| layers | `app.ingest.digest`、`app.maintain.drift`、`app.maintain.health`、`app.query.commands`、`app.query.preview`、`app.system` | 把 `index`/`embed`/`search`/`graph` 的引用改成真名或迁进层，见"决策点 B" |
+
+**lazy_import 逐条实测（file:line → 导入内容 → 性质 → 建议）**
+
+| 位置 | 导入 | 性质 | 建议 |
+|---|---|---|---|
+| `app/ingest/digest.py:85` | `from ... import config as config_mod` | 函数内导入（`set_key` 低频写配置） | 提到模块级即可（`infra.config` 无环） |
+| `app/ingest/digest.py:198`、`:219` | `from ... import sessiondb`（同一模块两次） | 可选数据源 | 提到模块级 `from ...infra import sessiondb`（B5.5a 之后） |
+| `app/maintain/drift.py:106`、`:410` | `import yaml` | 可选第三方 | 决策点 A |
+| `app/maintain/drift.py:362` | `import argparse` | 无理由懒加载 | 提到模块级（零风险） |
+| `app/maintain/health.py:151` | `from . import embed as embed_mod` | 层级已错（`app/maintain` 下没有 embed） | 决策点 B 之后提到模块级 |
+| `app/query/commands.py:74` | `from ... import memory as memory_mod` | 环：shim 导入 surface.cli | 把 `remote_search` 留在 shim 是 B5.2 的既定决策；此处可改为调用 `app.remote` 的真名（`remote_config` 已在 `app.remote`），但要确认 HTTP 客户端仍在 shim 里——**若搬不动，就在注释里写明"永久例外"并从白名单移入 `LAZY_IMPORT_OK_PREFIXES` 式的显式常量** |
+| `embed.py:321` | `import argparse` | 无理由懒加载 | 提到模块级 |
+| `search.py:115` | `from . import graph as graph_mod` | 环：`graph` 反向依赖 `search` | 拆环（把 `expand_search` 需要的 store 读取提到 `infra.store`）或把 graph 作为既定 facade 显式豁免 |
+
+**决策点 A（PyYAML）**：`drift` 的 YAML 读取是可选依赖，B0 已批准。翻预算门时这条必须有个正式归属，二选一：① 把 YAML 读取搬进 `infra/config_yaml.py`，模块级 `try: import yaml / except ModuleNotFoundError: yaml = None`，并新增 `THIRD_PARTY_OK_PREFIXES = (PKG + ".infra.config_yaml",)`——**推荐**，把例外写成边界常量而不是模块白名单；② 保留 `app.maintain.drift` 白名单条目——**不推荐**，任务书要求 B5 结束时白名单为空。
+
+**决策点 B（index / embed / search / graph）**：`index.py` 已是 `infra.store` 的 facade（B2），app 模块可以直接改成 `from ...infra.store import <真名>`，这条是机械活。`embed.py`(337)、`search.py`(294)、`graph.py`(140) 是真实实现，其中 `embed.py` 含 urllib——**Mimosa 扫描器对本仓库曾整文件拦截含 urlopen 的改写，`git mv` 也会被拦**。所以：能 `git mv` 就搬进 `infra/providers`（embed）与 `infra/store`（search 的检索原语）；**搬不动就按 `graph` 的先例留 facade，并在任务书 §0.7 意义上写明理由，不要用 getattr/字符串拼接绕过扫描器**（质量红线）。
+
+### 预算门（`ENFORCE_BUDGETS = True` 前的全部债，实测 13 条）
+
+文件行数已达标：**>600 行文件 0 个**（拆分前 2 个），>450 软限只剩 `infra/store/search_index.py` 470。剩余全是函数/定义数：
+
+| 模块 | 项 | 行数 | 建议切法 |
+|---|---|---|---|
+| `app/maintain/health.py` | `doctor` | 207 | 按检查项切：`_check_vault` / `_check_index` / `_check_embeddings` / `_check_audit`，`doctor` 只做编排 |
+| `surface/cli.py` | `build_parser` | 155 | 按子命令族拆 `_add_query_parsers` / `_add_ingest_parsers` / `_add_govern_parsers` / `_add_maintain_parsers` |
+| `infra/store/search_index.py` | `update_memories` | 141 | 拆"解析 → 差异计算 → 落库"三段 |
+| `app/govern/review.py` | `review` | 132 | 拆"扫描候选 → 分类 → 写待晋升清单"三段（B5.4c 已按此边界分组） |
+| `search.py` | `hybrid_search` | 102 | 拆"候选池 → 融合 → 渲染"（与 B3 的 envelope 边界对齐） |
+| `infra/lock.py` | `file_lock` | 94 | 拆"获取 → 等待/超时 → 释放"，或抽 `_LockHandle` 上下文对象 |
+| `app/maintain/drift.py` | `main` | 86 | argparse 与执行分离（`build_parser` + `run`） |
+| `app/govern/decide.py` | `decide` | 83 | 按"校验 → 状态机迁移 → 落盘 → 审计"四段拆 |
+| `infra/store/schema.py` | `_ensure_schema` | 75 | 按表族拆 `_ensure_core` / `_ensure_fts` / `_ensure_vectors` |
+| `app/maintain/commands.py` | `cmd_doctor` | 67 | 与 `doctor` 一起拆（它只是渲染层） |
+| `app/query/commands.py` | `cmd_search` | 67 | 拆"参数归一 → 三种模式分派 → 输出" |
+| `app/govern/promote.py` | `plan_promotion` | 61 | 拆"解析条目 → 解析目标 → 组装 ChangeSet" |
+| `infra/store/claims.py` | 24 个顶层 def | 24（限 20） | 按"读 / 写 / 查询"拆成两三个模块 |
+
+### 建议执行顺序（每步一个提交，每步 `bash ../verify.sh` 七道门全绿）
+
+0. **先修缺陷 D1**（约 3 行 + 1 个测试，见上文）：它是用户可见的诊断说谎，且修完顺带清掉 1 条 `lazy_import` 白名单。放在最前面，后面的白名单数字才对得上。
+1. **B5.5a** `sessiondb` → `infra/sessiondb.py` + 旧路径 shim（清 `sqlite3`、`writes` 两条白名单）。
+2. **B5.5b** layers 六条 + lazy_import 六条（含决策点 A/B）。改完先跑 `test_architecture` 拿精确集合，再动白名单——**白名单必须与实测完全相等，多一条（过期）也会红**。
+3. **B5.5c** 上表 13 条预算债，按行数从大到小逐个拆，每拆 2–3 个跑一次七道门。
+4. **B5.5d** `ENFORCE_BUDGETS = True` + `WHITELIST` 删空 + 更新本文件"验证基线/白名单/预算"三节 + 收尾报告。
+
+### 接手时的环境与流程坑（已踩过，别再踩）
+
+- 验证一律 `bash ../verify.sh`（七道门）。本机默认 `python` 是 AutoClaw vendored 3.13（`._pth` 冻结 `sys.path`），直接跑会有假红。
+- 单模块跑测试：`PYTHONPATH='core;core/tests' python -m unittest test_xxx`（Windows 用分号；用冒号会 `ModuleNotFoundError`）。全量：在 repo 根 `python -m unittest discover -s core/tests`。
+- `npm run check` 里的 `sync:check` **要求工作树干净**，有未提交改动必红——要么先提交，要么只用 `../verify.sh`。
+- **patch 必须打实现模块**（`unified_memory.app.<layer>.<module>.<name>`），打 shim 是独立绑定、到不了被测代码。
+- 判断是否污染真实 home 用**文件名集合差**，不要用 mtime（dsh 插件常驻会持续写自己的 `index-*.db`）。
+- 每个提交的说明里要写清**删掉了什么**（任务书要求）；本文件"删除清单"同步追加一行。
 
 ## 删除清单
 
@@ -164,15 +246,31 @@ B5.2、B5.3 已入库并全绿；B5.4（promoter/conflict 拆分 + cron 搬迁�
 - B5.2（阻塞回滚）：无删除——拆分件完整保存在 `../attic/b5.2-prepared.tar.gz`，解阻塞后解包即得。
 - B5.2：`memory.py` 的 1305 行实现（argparse 语法、dispatch、22 个命令体、内置模板常量、vault 引导、`emit_json`）全部搬走；`emit_json` 的旧定义从 memory.py 删除（改由 `infra.console` 提供）；`surface/cli.py` 里对 `infra.config` 的直接依赖删除（`VaultMissing` 经 `app.system` 再导出）。
 - B5.3：`drift.py`(445)、`digest.py`(314)、`health.py`(322)、`preview.py`(245)、`stats.py`(130)、`inbox.py`(115) 六份实现搬进 layers，旧路径只留显式 re-export shim（合计 118 行）；`graph.py` 按任务书保留 legacy facade，未动。
+- B5.4a：`conflict.py` 的 619 行实现（37 个顶层名）切成 `domain/conflict.py`(344) + `app/govern/queue.py`(326)，旧路径只留 55 行 shim；`queue.record_adjudication` 里 `open(path,"a")` 的追加写删除（改 `read_maybe` + `atomic_write`）。
+- B5.4b：`promoter.register_cron` 与 `forgetter.register_cron` 两份平台对话（各含 `.bat` 文本、`schtasks`/`crontab` 分支、PYTHONPATH 烘焙、幂等标记）删除，合并为 `infra/schedule.register_job(JobSpec, vault)`；`drift` 的 `subprocess.run` 直调删除，改走 `schedule.run_command`。`subprocess` 白名单随之清空。
+- B5.4c：`promoter.py` 的 1058 行实现（81 个顶层名）切成 `domain/facts.py`(155) + `app/govern/{review 342, promote 279, decide 195, cli 82}`，旧路径只留 103 行 shim；`maintenance.py` 的 127 行实现搬为 `app/maintain/repair.py`(125)，旧路径留 17 行 shim；`app/ingest/commands.py` 里从未被调用的 `from ... import promoter` 删除；`app/govern/commands.py` 的 `promoter` 门面依赖删除（改真名）；新模块里一句残留的函数内 `from . import index as index_mod` 删除。
 - 维护轮：`~/.unified-memory/journal/*.jsonl` 487 个（816 KB）+ `index-*.db` 44 个（5.1 MB）移入 `_cleanup-backup-20261029-014758/`（531 文件 / 5.94 MB，可整体还原）；备份确认无误后可删该目录。`scripts/` 下两个 smoke 辅助文件改为忽略，不再产生未跟踪文件。
 
 
 ## bench 前后对比
 
-见"验证基线"；每项若影响检索路径则附前后数据。
+B5.2–B5.4 全部是**结构性搬迁与拆分**，没有触碰检索算法、索引 schema（停在 v10）或排序权重，因此指标必须逐字段不变——这是判断"拆分是否悄悄改了行为"的第二把尺子（第一把是 42 例 CLI 快照）。
+
+| 指标 | after-a12（基线） | B5.4c 后实测 | 判定 |
+|---|---|---|---|
+| recall@5 / recall@10 | 0.9167 / 0.9167 | 0.9167 / 0.9167 | 一致 |
+| mrr / ndcg | 0.9167 / 0.9167 | 0.9167 / 0.9167 | 一致 |
+| abstain | 0.75 | 0.75 | 一致 |
+| update_top1_ok | 1.0 | 1.0 | 一致 |
+| empty | 0.25 | 0.25 | 一致 |
+
+延迟（latency_p50/p95）在 verify.sh 第 5 道门里被显式跳过（机器负载相关，不可比），未做前后对比。真实库副本迁移守恒 164 memories / 130 embeddings / 752 access_log 在维护轮验证后未再变化（B5.2–B5.4 不改 schema）。
 
 ## 已知风险
 
+- **拆分只能用 AST 节点级切分，不能用行号区间**：B5.4a 第一次按行号切 `conflict.py`（45–242 / 420–523）直接产出 `IndentationError: unexpected indent`——`return entry` 被切到函数外。行号切分对"函数体跨切点"零防护；AST 切分 + "顶层名 → 归属"映射 + 切完 diff 断言每个名字恰好出现一次，才是可复现的做法。
+- **patch 打在 shim 上等于没打**：旧路径是 re-export，`patch("unified_memory.promoter.accept")` 改的是 shim 的独立绑定，被测代码用的是实现模块的全局。必须打 `unified_memory.app.<layer>.<module>.<name>`。`tests/test_module_surface.py` 用"同一对象"断言把这个约定钉住。
+- **shim 有退场期**：`memory.py`(119)、`promoter.py`(103)、`conflict.py`(55)、`index.py`(66)、`maintenance.py`(17) 等按任务书 §0.7 只活一个 minor；下个 minor 要连同一批 patch 目标一起清理，不能只删文件。
 - 本机 `python` 默认解析到 AutoClaw vendored Python（`._pth` 冻结 sys.path），验证必须用 `../verify.sh`（已封装 Python311 + UNIFIED_MEMORY_PYTHON）。
 - `npm run check` 里的 `sync:check` 要求工作树干净：有未提交改动就会红，这是设计而非缺陷；要么先提交，要么只用 `../verify.sh`。
 - `python bench/verify_live_migration.py` 读取本机真实索引库的**副本**；B5 不改 schema（停在 v10），无需执行 I4。
@@ -207,17 +305,19 @@ B5.2、B5.3 已入库并全绿；B5.4（promoter/conflict 拆分 + cron 搬迁�
 2. 或改为 diff 扫描模式：只扫新增/修改行，迁移类提交（逐字搬移）不整文件重扫；
 3. 或对 `embed.py`/`digest.py`/`memory.py` 三个既有 urllib 文件签发一次性迁移许可。
 
-解除后：解包 `attic/b5.2-prepared.tar.gz` 到 `core/unified_memory/`，按 §9 顺序做 B5.3–B5.5，每步 `bash ../verify.sh`。
+解除后（**已于 2026-10-29 完成**）：`attic/b5.2-prepared.tar.gz` 已解包入库（`d247aa1`），B5.3（`9f1fad2`/`3e38f78`/`699745a`）与 B5.4（`e5bd84c`/`8289874`/`e5fb47e`）已按 §9 顺序做完，只剩 B5.5。本节保留作为历史记录。
 
 ## 待办发现
 
-1. **Mimosa SSRF 规则与本项目迁移冲突**（本批次最大发现）：任何新建/改写的 .py 含 `urllib`/`urlopen`/动态 URL 即被整文件拦截，导致 embed/digest/memory 三个含出站调用的模块无法物理迁移。解除路径三选一，见"阻塞记录"节。
-2. `~/.unified-memory.yaml` 曾被某次 e2e 测试指到临时目录（`Temp\uam-e2e\vault`），2026-10-27 已改回真实 vault（索引哈希 `71a04777…` 核对确认）。建议测试框架避免测试直写用户全局配置。**2026-10-29 复检**：配置仍指向真实 vault、mtime 停在 2026-10-27，未复现；同期发现并修掉了 journal 与两处索引库的同类泄漏（见"维护轮"）。
+1. **Mimosa SSRF 规则与本项目迁移冲突**（本批次最大发现）：任何新建/改写的 .py 含 `urllib`/`urlopen`/动态 URL 即被整文件拦截，导致 embed/digest/memory 三个含出站调用的模块无法物理迁移。**2026-10-29 复测已解除**（探针写入成功），但 `embed.py` 的迁移仍未被验证过——B5.5 若要把 embed 搬进 `infra/providers`，先做同样的最小探针再动手。
+2. `~/.unified-memory.yaml` 曾被某次 e2e 测试指到临时目录（`Temp\uam-e2e\vault`），2026-10-27 已改回真实 vault（索引哈希 `71a04777…` 核对确认）。建议测试框架避免测试直写用户全局配置。**2026-10-29 复检**：配置仍指向真实 vault、mtime 停在 2026-10-27，未复现；同期发现并修掉了 journal 与两处索引库的同类泄漏（见"维护轮"）。B5.2 期间同类问题又出现过一次（拆分件把 `CONFIG_PATH` 冻在导入时刻），已修并全量改为调用时 `config_mod.default_path()`。
 3. 用户 vault 的 git 仓库有 **427 个未提交变更**、`.githooks` 为空——做任何"以 git 为记忆事务日志"类功能前必须先清基线。
 4. `README.md` 被 canonical 索引收录（7 条事实行）——模板说明文件混进了事实库，可考虑在 indexed_files 里排除。
+5. **shim 退场计划缺失**：B5.2–B5.4 留下 5 个 shim（memory/promoter/conflict/index/maintenance 等），任务书 §0.7 只写"活一个 minor"但没有到期清单。建议在下个 minor 开头做一次"shim 退场"提交，同时把测试里所有 `unified_memory.<旧路径>` 的 import 与 patch 目标清干净。
+6. **`memory doctor` 的向量配置状态恒为 False（缺陷 D1，未修）**：B5.3 搬迁遗留的错误相对导入被 `except Exception` 吞掉，用户配了 key 也被告知未配置。复现、根因与建议修法见「逐项详情 → 待修缺陷 D1」，修它同时清掉 1 条 `lazy_import` 白名单。
 
 ## 建议的下一批次方向
 
-1. **解除 Mimosa SSRF 阻塞后先做 B5.2–B5.5**（拆分件已在 attic，`BATCH-B-HANDOVER.md` §9 有三步顺序）。
+1. **先做 B5.5**（唯一剩余项）：白名单清空 + 13 条预算债 + 翻 `ENFORCE_BUDGETS`。执行顺序与逐条诊断见上一节，数据全部实测过。
 2. 之后进入批次 C：Claim Ledger（block ID + 双时间 + as-of）、abstain 置信下限、`PROTECTED_RE` 收敛为白名单（三项均在总方案 §7 缺陷清单）。
-3. 独立小批：若扫描器未解除，embed/digest 迁移可用"新增文件不含 urllib、由既有文件继续承担 HTTP"的折中——需先评审。
+3. 收尾：B5.5 全绿后再定稿本文件并请主人决定是否 `git push -u origin refactor/batch-b`（remote 是 GitHub 公共仓库，不擅自推送）。
