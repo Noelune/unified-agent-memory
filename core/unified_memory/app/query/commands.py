@@ -50,7 +50,7 @@ def _search_hybrid(args: Namespace, vault: Path, want_json: bool) -> None:
         results = [dict(r, untrusted=True) for r in result["results"]]
         emit_json(
             "search",
-            {"query": args.query, "mode": "hybrid", "count": result["count"], "streams": result["streams"], "results": results},
+            {"query": args.query, "mode": "hybrid", "count": result["count"], "confidence": result["confidence"], "streams": result["streams"], "results": results},
         )
         return
     print(search_mod.render_hybrid(result["results"], args.query))

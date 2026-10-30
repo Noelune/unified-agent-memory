@@ -28,6 +28,37 @@ class RrfFuseTest(unittest.TestCase):
         self.assertEqual(fused[0][0], "only-in-a")
 
 
+class ConfidenceFloorTest(unittest.TestCase):
+    """Batch C1: absolute abstain floor + relative tail floor."""
+
+    def test_absolute_floor_suppresses_weak_top(self):
+        kept, abstained = search._apply_confidence_floor([("a", 0.015), ("b", 0.010)])
+        self.assertEqual(kept, [])
+        self.assertTrue(abstained)
+
+    def test_absolute_floor_keeps_normal_top(self):
+        kept, abstained = search._apply_confidence_floor([("a", 0.0164), ("b", 0.0145)])
+        self.assertEqual(kept, [("a", 0.0164), ("b", 0.0145)])
+        self.assertFalse(abstained)
+
+    def test_relative_floor_drops_the_tail(self):
+        kept, abstained = search._apply_confidence_floor(
+            [("a", 0.03), ("b", 0.02), ("c", 0.005)]
+        )
+        self.assertEqual(kept, [("a", 0.03), ("b", 0.02)])
+        self.assertFalse(abstained)
+
+    def test_relative_floor_keeps_double_stream_husks(self):
+        # 0.0145 >= 0.25 × 0.0311: RRF followers that are real hits stay.
+        kept, _abstained = search._apply_confidence_floor([("a", 0.0311), ("b", 0.0145)])
+        self.assertEqual(kept, [("a", 0.0311), ("b", 0.0145)])
+
+    def test_empty_selection_is_not_an_abstain(self):
+        kept, abstained = search._apply_confidence_floor([])
+        self.assertEqual(kept, [])
+        self.assertFalse(abstained)
+
+
 class HybridSearchTest(unittest.TestCase):
     def setUp(self):
         self.vault = make_scratch_vault()
@@ -53,6 +84,24 @@ class HybridSearchTest(unittest.TestCase):
         self.assertEqual(result["ok"], True)
         self.assertEqual(result["streams"]["vector"], 0)
         self.assertTrue(any("indigo" in r["line"] for r in result["results"]))
+
+    def test_hybrid_reports_high_confidence_for_a_real_hit(self):
+        prefs = common.canonical_path(self.vault, "prefs")
+        prefs.write_text(prefs.read_text(encoding="utf-8") + "\n- prefers indigo terminal prompts\n", encoding="utf-8")
+        result = search.hybrid_search(self.vault, "indigo", limit=5)
+        self.assertEqual(result["confidence"], "high")
+
+    def test_hybrid_abstains_on_graph_only_noise(self):
+        # A graph-only rank-0 hit scores 0.9/61 ≈ 0.01475 < ABSTAIN_TOP_SCORE:
+        # the absolute floor must empty the set and flag low confidence.
+        from unittest.mock import patch
+
+        weak = [{"id": "x1", "doc": "a.md", "line": "junk"}]
+        with patch.object(search, "_streams", return_value=([], [], weak)):
+            result = search.hybrid_search(self.vault, "anything", limit=5)
+        self.assertEqual(result["count"], 0)
+        self.assertEqual(result["confidence"], "low")
+        self.assertEqual(result["results"], [])
 
     def test_hybrid_uses_bigram_stream_for_chinese(self):
         prefs = common.canonical_path(self.vault, "prefs")

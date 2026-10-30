@@ -36,6 +36,17 @@ from .infra.store import records_for_ids
 RRF_K = 60
 DEFAULT_WEIGHTS = (1.0, 1.0, 0.9)  # lexical, vector, graph
 MAX_PER_DOC = 3
+
+# Abstain floors (batch C1, PLAN.md «弃答与置信度»). RRF scores are rank-based:
+# a single-stream rank-0 hit is 1/61 ≈ 0.0164 (lexical or vector) or
+# 0.9/61 ≈ 0.0148 (graph only), a double-stream hit ≈ 0.031. ε = 0.016 is
+# calibrated on bench/golden_fixture.py: it only suppresses graph-only
+# no-support hits and keeps every measured true hit (bench numbers recorded in
+# BATCH-REPORT.md batch C1 — abstain 0.75 and recall@10 0.9167 both unchanged;
+# the one residual false positive returns byte-identical rows to a true query,
+# so no score rule can separate them).
+ABSTAIN_TOP_SCORE = 0.016
+TAIL_RATIO = 0.25
 FORMATS = ("full", "compact", "narrative")
 
 
@@ -115,6 +126,21 @@ def _diversify(fused: list[tuple[str, float]], doc_by_id: dict[str, str], limit:
     return selected
 
 
+def _apply_confidence_floor(selected: list[tuple[str, float]]) -> tuple[list[tuple[str, float]], bool]:
+    """Apply the abstain floors to the diversified selection.
+
+    Returns (kept, abstained). The absolute floor drops the whole set when the
+    top RRF score is below ABSTAIN_TOP_SCORE (nothing better than noise); the
+    relative floor drops the tail below TAIL_RATIO × top (weak followers).
+    """
+    if not selected:
+        return selected, False
+    top = selected[0][1]
+    if top < ABSTAIN_TOP_SCORE:
+        return [], True
+    return [pair for pair in selected if pair[1] >= TAIL_RATIO * top], False
+
+
 def _result_records(vault: Path, selected: list[tuple[str, float]]) -> list[dict]:
     """Assemble redacted full records for the selected ids."""
     records = _records_for(vault, [mid for mid, _ in selected])
@@ -149,8 +175,10 @@ def hybrid_search(
     """Fuse lexical + vector + graph into a diversified, budget-capped
     result set.
 
-    Returns {"ok", "query", "count", "results", "streams"} where each result
-    carries doc/line/type/importance/score and is already redacted.
+    Returns {"ok", "query", "count", "confidence", "results", "streams"} where
+    each result carries doc/line/type/importance/score and is already
+    redacted. ``confidence`` is "low" when the abstain floor suppressed the
+    candidates (see _apply_confidence_floor), "high" otherwise.
 
     Retrieval never calls the embedding provider. It refreshes the keyword index
     (a local, incremental scan) and ranks with whatever vectors already exist;
@@ -166,6 +194,7 @@ def hybrid_search(
     lexical, vec, graph = _streams(vault, query, pool)
     fused = rrf_fuse([lexical, vec, graph])
     selected = _diversify(fused, _doc_map(lexical, vec, graph), limit)
+    selected, abstained = _apply_confidence_floor(selected)
     results = _result_records(vault, selected)
 
     # Optional budget/format post-processing.
@@ -179,6 +208,7 @@ def hybrid_search(
         "ok": True,
         "query": query,
         "count": len(results),
+        "confidence": "low" if abstained else "high",
         "results": results,
         "streams": {
             "lexical": len(lexical),

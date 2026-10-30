@@ -320,6 +320,17 @@
 - **任务书 §B5 验收对照**：I1 快照逐字节 ✓；I2 bench 一致 ✓；I3 全绿 ✓；I4 schema 停在 v10 未动、无需迁移复验 ✓；8 个模块入口 ✓（e2e）；预算门 ✓。**两项偏差（均为既有裁定，非本阶段引入）**：memory.py 119 行（>20——用户裁定 INDEX_DB 与 remote_search 原位保留）；白名单未空（2 条 documented 永久例外：remote_search shim / graph facade——均为前阶段决策，batch C 才能清）。
 - **删除**：无。
 
+### C1 abstain 置信下限（✅ 2026-10-31，验收目标经实测证伪后由主人裁定口径）
+
+- **调研（为什么这项目标在本 fixture 上不可达——实证）**：① 实测 16 条 golden 查询的 RRF 分数只有三档：单流 rank-0 ≈ 0.0164、lexical+graph 双流 ≈ 0.0309–0.0311、自然空 0；② 唯一误命中「用户的小学班主任叫什么」（abstain 组，要求空）返回的两行与真查询「回答风格上有什么要求」**完全逐字节相同**（同两行、同分 0.0309）——一条要求空、一条要求这两行。任何确定性检索函数对两者输出必须相同，故「abstain ≥0.85（=4/4）且 recall@10 不降」数学上不可同时成立。ε∈(0.0164, 0.0309) 可让 abstain=1.0 但必杀 exact 查询「203.0.113.10」（recall→0.8333）。**主人裁决（2026-10-31）：机制如实实现，目标标注不可达并附证据。**
+- **选定方案**：`ABSTAIN_TOP_SCORE = 0.016`（介于 graph-only rank-0 0.9/61≈0.0148 与 lexical/vector rank-0 1/61≈0.0164 之间：只抑制"零支持"的 graph-only 命中）+ `TAIL_RATIO = 0.25`（丢弃低于 0.25×top 的尾部）；`_apply_confidence_floor(selected) -> (kept, abstained)` 纯函数，在 _diversify 之后、_result_records 之前应用；payload 新增 `confidence: high|low`；CLI hybrid JSON envelope 同步携带。**放弃方案**：ε=0.029（牺牲 exact 命中，违反 recall 不降）；改 fixture（篡改测量基准，需专门授权且本轮未获）。
+- **设计**：绝对地板触发时整集置空且 `record_access` 不计数（未展示给用户的抑制行不算"被使用"）；相对地板只裁尾。文本渲染零变化。
+- **虚拟项目验证**：新增 7 例——5 例纯地板单测（绝对触发/正常保留/相对裁尾/双流尾保/空集非弃答）+ 2 例集成（graph-only 弱流 → count=0, confidence=low；正常命中 → confidence=high）。test_search 20 例绿。
+- **bench 前后对比（fixture，实测原样）**：recall@5/10 0.9167→0.9167；mrr 0.9167→0.9167；ndcg@10 0.9167→0.9167；**abstain_accuracy 0.75→0.75**（目标 ≥0.85 不可达，见上）；update_top1_ok 1.0→1.0；empty_result_rate 0.25→0.25。快照 42 例**零差异**（hybrid 两个快照 case 的分数均高于 ε；`search --hybrid --json` 未被快照覆盖，新字段由单测钉住）。
+- **测试结果**：七道门全绿（469 → **476** Python：+7；其余同基线）。
+- **删除**：无——纯新增机制与字段。
+- **遗留风险**：真实 vault 中 graph-only 命中会被抑制（设计中即"零支持才弃"）；abstain 目标 0.85 因 fixture 查询对碰撞记录为不可达，后续如需达标须先修 fixture 语义（如替换仅靠泛词"用户"触发的查询）。
+
 ## B5.5 接手说明存档（2026-10-29 交棒点，已被上节取代）
 
 **一句话状态**：B5.2 / B5.3 / B5.4（a/b/c）已入库并全绿，`git status` 干净，HEAD = `e5fb47e`；**只剩 B5.5**——清空架构白名单 + 翻预算门。下面每条都是本轮实测数据，不需要重新探查。
