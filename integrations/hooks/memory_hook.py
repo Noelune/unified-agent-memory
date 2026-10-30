@@ -121,12 +121,12 @@ DISCIPLINE_TEXT = (
 def state_dir() -> Path:
     """Hook state directory (markers, digest queue).
 
-    Defaults to ``~/.unified-memory/hooks`` — the same namespace as the
-    existing ``~/.unified-memory.yaml``; ``UNIFIED_MEMORY_HOOK_STATE`` points
-    it at a scratch directory for tests and sandboxes.
+    Delegates to core's infra.hookstate — the ONE owner of the path rule, so
+    the writer (this script) and the drain (digest --queue) can never drift.
     """
-    override = os.environ.get(STATE_ENV, "")
-    return Path(override) if override else Path.home() / ".unified-memory" / "hooks"
+    from unified_memory.infra import hookstate
+
+    return hookstate.state_dir()
 
 
 def looks_memory_sensitive(text: str) -> bool:
@@ -272,6 +272,12 @@ def _prompt_submit(vault: Path, payload: dict, raw_text: str) -> str:
     return "\n".join(parts)
 
 
+def hookstate_queue_path() -> Path:
+    from unified_memory.infra import hookstate
+
+    return hookstate.queue_path()
+
+
 def _session_end(payload: dict) -> str:
     """Queue the finished session's transcript for E3's digest --queue drain."""
     transcript = str(payload.get("transcript_path", "") or "").strip()
@@ -283,7 +289,7 @@ def _session_end(payload: dict) -> str:
         "path": transcript,
         "session_id": str(payload.get("session_id", "") or ""),
     }
-    queue = state_dir() / "queue.jsonl"
+    queue = hookstate_queue_path()
     try:
         queue.parent.mkdir(parents=True, exist_ok=True)
         with queue.open("a", encoding="utf-8") as handle:

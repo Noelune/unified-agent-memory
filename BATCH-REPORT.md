@@ -398,6 +398,17 @@
 - **新增**：上述三文件 + 1 测试文件（4 例）。
 - **遗留风险**：`type: "exec"` 形式以任务书对官方文档的核验为准；若 Claude Code 实际只接受 shell 字符串形式，改 snippet 一处 + 测试常量即可（单一事实源在 snippet）。
 
+### E3 写侧沉淀通道：transcript 适配器 + digest --queue（✅ 2026-10-31）
+
+- **调研**：digest 主循环只认识 `(label, date, transcript-text)` 三元组（E0 档案确认的天然 seam）——适配器只需产出同形态文本，digest 主体零重写。queue 的写入方是 E1 钩子（integrations，不归 core 架构测试管），读取方是 core 的 digest——路径规则必须有**单一事实源**。
+- **选定方案**：① `infra/transcripts/claude_code.py`——JSONL → "用户:/助手:" 文本（坏行跳过、非 user/assistant 行跳过、content 数组取 text 块拼接、**每行出口过 `redact()`**）；② `infra/hookstate.py`——`UNIFIED_MEMORY_HOOK_STATE`（默认 `~/.unified-memory/hooks`）+ `queue_path()/done_path()` 的唯一归属，memory_hook 的 `state_dir()` 改为委托（写入方与排水方永不漂移）；③ digest 新增 `--queue`/`--source queue`：读 queue.jsonl → 逐条适配器→抽取（沿用 --dry-run 语义），成功后把 path 记入同目录 `queue.done`（幂等），坏条目与缺失 transcript 跳过。**放弃方案**：重写 digest 主体（任务书明确"宁可加参数"）；done 标记用 `open("a")`（违反 B4 writes 边界——只有 infra.vault 能写文件，改用 `read_maybe + atomic_write`，与 B5.4a `record_adjudication` 同款先例）。
+- **设计**：幂等语义 = queue.done 一行一个 path；抽取失败（LLM None）**不**标记 done（下轮重试）；空事实也标记（该会话无持久内容，已处理）；queue 模式**永不触碰** archive 的两个 cursor（测试钉住）。`--queue` 与 `--source` 互斥。
+- **过程中抓到的自伤缺陷**：① digest() 加 queue 分支后 65 行**触发我自己在 B5.5d 翻开的预算门**——抽出 `_pending_units`（三态返回：pending/degraded/queue-paths）后 52 行；② `_pending_units` 初版丢弃了 queue_paths 返回值（NameError，测试当场红）。
+- **虚拟项目验证**：`core/tests/test_digest_queue.py` 11 例——适配器 4（user/assistant 行、数组 content 拼接、坏行/非对话行跳过、逐行 redact）+ 队列 7（写 inbox+标记 done、幂等、dry-run 不写不标记、坏条目跳过、抽取失败不标记可重试、archive cursor 零接触、缺 transcript 静默）。LLM 全程 patch，真实 home 零接触。
+- **测试结果**：七道门全绿（Python 510 / JS 886 / setup 32 / typecheck / bench 一致 / 快照 42 逐字节 / e2e 46）。
+- **新增**：`infra/transcripts/{__init__,claude_code}.py`、`infra/hookstate.py`、digest 的 queue 接缝、11 例测试。
+- **遗留风险**：SessionEnd 硬崩溃不触发（官方文档事实）——cron 归档 digest 仍是兜底（HOOKS.md 已写明）；queue.done 无限增长（每会话一行，量级可忽略，批次 D 可做归档裁剪）。
+
 ## B5.5 接手说明存档（2026-10-29 交棒点，已被上节取代）
 
 **一句话状态**：B5.2 / B5.3 / B5.4（a/b/c）已入库并全绿，`git status` 干净，HEAD = `e5fb47e`；**只剩 B5.5**——清空架构白名单 + 翻预算门。下面每条都是本轮实测数据，不需要重新探查。

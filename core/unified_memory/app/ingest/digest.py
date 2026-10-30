@@ -22,6 +22,7 @@ Usage:
     python -m unified_memory.digest            (extract new sessions)
     python -m unified_memory.digest --dry-run  (preview without writing)
     python -m unified_memory.digest --source state   (read Hermes state.db too)
+    python -m unified_memory.digest --queue    (drain the hook queue, batch E3)
     python -m unified_memory.digest --off      (disable)
     python -m unified_memory.digest --on       (re-enable)
 
@@ -43,12 +44,13 @@ import urllib.request
 from pathlib import Path
 
 from ...infra.providers import embed
-from ...infra import sessiondb
+from ...infra import hookstate, sessiondb
 from ...domain.markdown import looks_like_credential, redact
 from ...infra.config import parse_config, resolve_vault
 from ...infra import config as config_mod
 from ...infra.store import get_meta, record_audit, set_meta
-from ...infra.vault import atomic_create, canonical_dir
+from ...infra.transcripts.claude_code import claude_code_transcript
+from ...infra.vault import atomic_create, atomic_write, canonical_dir, read_maybe
 
 SESSION_DIRS = ("会话归档", "Hermes会话自动归档")
 CHAT_URL = "https://api.siliconflow.cn/v1/chat/completions"
@@ -58,7 +60,7 @@ MAX_FACTS_PER_FILE = 30
 CURSOR_KEY = "digest_cursor"
 STATE_CURSOR_KEY = "digest_cursor_state"
 CONFIG_ENABLED_KEY = "digest.enabled"
-SOURCES = ("archive", "state")
+SOURCES = ("archive", "state", "queue")
 
 SYSTEM_PROMPT = (
     "你是记忆提炼助手。从下面的 Agent 会话记录中提取值得长期记忆的持久事实，例如："
@@ -186,6 +188,61 @@ def _cursor(vault: Path, key: str = CURSOR_KEY) -> str:
     return get_meta(vault, key)
 
 
+def _queue_units() -> tuple[list[tuple[str, str, str]], dict[str, str]]:
+    """Hook-queue entries -> digest work units plus their paths (done-marking).
+
+    The queue is written by the hook runtime's session-end (E1) and drained
+    here. Idempotency lives in queue.done (one path per line): already
+    processed paths are skipped; bad lines and missing transcripts are skipped
+    too (the drain never crashes on a bad entry). The transcript itself goes
+    through the platform adapter, which redacts every line at its exit.
+    """
+    queue = hookstate.queue_path()
+    if not queue.is_file():
+        return [], {}
+    done: set[str] = set()
+    done_file = hookstate.done_path()
+    if done_file.is_file():
+        done = {
+            ln.strip()
+            for ln in done_file.read_text(encoding="utf-8", errors="replace").splitlines()
+            if ln.strip()
+        }
+    units: list[tuple[str, str, str]] = []
+    paths: dict[str, str] = {}
+    for raw in queue.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(entry, dict):
+            continue
+        path = str(entry.get("path", "") or "").strip()
+        if not path or path in done:
+            continue
+        transcript_file = Path(path)
+        if not transcript_file.is_file():
+            continue
+        ts = str(entry.get("ts", "") or "")
+        label = f"claude-code {transcript_file.name}"
+        if label in paths:
+            label = f"{label} #{len(units) + 1}"
+        units.append((label, ts[:10], claude_code_transcript(transcript_file)))
+        paths[label] = path
+    return units, paths
+
+
+def _mark_queue_done(path: str) -> None:
+    """Record a processed queue path (read + atomic_write: only infra.vault may
+    open files for writing — the B4 writes boundary, same pattern
+    queue.record_adjudication uses)."""
+    done_file = hookstate.done_path()
+    atomic_write(done_file, read_maybe(done_file) + path + "\n")
+
+
 def _units(vault: Path, source: str, cursor: str) -> list[tuple[str, str, str]]:
     """Collect ``(label, date, transcript)`` work items newer than ``cursor``.
 
@@ -206,31 +263,43 @@ def _units(vault: Path, source: str, cursor: str) -> list[tuple[str, str, str]]:
     ]
 
 
+def _pending_units(vault: Path, source: str, cursor_key: str) -> tuple[list[tuple[str, str, str]], dict | None, dict[str, str]]:
+    """Collect the work units for one digest source.
+
+    Returns (pending, degraded-report-or-None, queue-paths): an unreadable
+    Hermes database is a degraded source, not a crash — the archive path still
+    works and the reason is reported instead of raising. Queue paths map each
+    unit label to its transcript path for done-marking.
+    """
+    if source == "queue":
+        pending, paths = _queue_units()
+        return pending, None, paths
+    if source == "state":
+        try:
+            return _units(vault, source, _cursor(vault, cursor_key)), None, {}
+        except sessiondb.SessionDbUnavailable as exc:
+            return [], {
+                "files": 0, "pending": 0, "written": 0, "facts": 0,
+                "skipped": [f"state.db: {exc}"], "source": source,
+            }, {}
+    return _units(vault, source, _cursor(vault, cursor_key)), None, {}
+
+
 def digest(vault: Path, dry_run: bool = False, limit: int = 0, source: str = "archive") -> dict:
     """Process units newer than the source's cursor. Returns a report dict."""
     if source not in SOURCES:
         raise ValueError(f"source must be one of {SOURCES}, got {source!r}")
     cursor_key = STATE_CURSOR_KEY if source == "state" else CURSOR_KEY
     avail_files = len(_archive_files(vault))
-    cursor = _cursor(vault, cursor_key)
-    if source == "state":
-        try:
-            pending = _units(vault, source, cursor)
-        except sessiondb.SessionDbUnavailable as exc:
-            # An unreadable or upgraded database is a degraded source, not a
-            # crash: the archive path still works and the reason is reported.
-            return {
-                "files": 0, "pending": 0, "written": 0, "facts": 0,
-                "skipped": [f"state.db: {exc}"], "source": source,
-            }
-    else:
-        pending = _units(vault, source, cursor)
+    pending, degraded, queue_paths = _pending_units(vault, source, cursor_key)
     if limit > 0:
         pending = pending[:limit]
     report = {
         "files": avail_files, "pending": len(pending), "written": 0, "facts": 0,
         "skipped": [], "source": source,
     }
+    if degraded is not None:
+        return degraded
     if not pending:
         return report
     if not embed.configured():
@@ -245,8 +314,9 @@ def digest(vault: Path, dry_run: bool = False, limit: int = 0, source: str = "ar
             written = _write_digest_facts(vault, facts)
             if facts and not written:
                 # The inbox could not allocate a file. Do NOT advance the
-                # cursor: the old code did, so the extracted facts were lost
-                # permanently even though the next run could have written them.
+                # cursor / mark the queue entry done: the old code did, so the
+                # extracted facts were lost permanently even though the next
+                # run could have written them.
                 report["skipped"].append(f"{label} (could not write inbox)")
                 continue
             report["written"] += 1 if written else 0
@@ -258,10 +328,14 @@ def digest(vault: Path, dry_run: bool = False, limit: int = 0, source: str = "ar
             print(f"[dry-run] {label}: {len(facts)} fact(s)", file=sys.stderr)
             for f in facts[:6]:
                 print(f"    - {f[:70]}", file=sys.stderr)
-        # Advance the cursor only on a real run (and only after a successful
-        # extraction) so a dry-run never consumes a session.
+        # Advance the cursor / mark the queue entry done only on a real run
+        # (and only after a successful extraction) so a dry-run never consumes
+        # a session.
         if not dry_run:
-            set_meta(vault, cursor_key, date)
+            if source == "queue":
+                _mark_queue_done(queue_paths[label])
+            else:
+                set_meta(vault, cursor_key, date)
     return report
 
 
@@ -274,13 +348,20 @@ def main(argv: list[str] | None = None) -> None:
         "--source",
         choices=SOURCES,
         default="archive",
-        help="where to read sessions from: the Markdown archive (default) or Hermes state.db",
+        help="where to read sessions from: the Markdown archive (default), Hermes state.db, or the hook queue",
+    )
+    parser.add_argument(
+        "--queue",
+        action="store_true",
+        help="drain the hook queue (UNIFIED_MEMORY_HOOK_STATE/queue.jsonl) — same as --source queue",
     )
     parser.add_argument("--off", action="store_true", help="disable the session digest")
     parser.add_argument("--on", action="store_true", help="re-enable a digest turned off with --off")
     args = parser.parse_args(argv)
     vault = Path(args.vault) if args.vault else resolve_vault()
 
+    if args.queue and args.source != "archive":
+        raise SystemExit("digest: --queue and --source are mutually exclusive")
     if args.off and args.on:
         raise SystemExit("digest: --on and --off are mutually exclusive")
     if args.off:
@@ -296,7 +377,8 @@ def main(argv: list[str] | None = None) -> None:
     if not digest_enabled(config_mod.CONFIG_PATH):
         print("session digest is disabled (run `memory digest --on` to re-enable)")
         return
-    report = digest(vault, dry_run=args.dry_run, limit=args.limit, source=args.source)
+    source = "queue" if args.queue else args.source
+    report = digest(vault, dry_run=args.dry_run, limit=args.limit, source=source)
     print(
         f"digest [{report['source']}]: {report['pending']} new unit(s), wrote "
         f"{report['written']} file(s), {report['facts']} fact(s)"
