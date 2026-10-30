@@ -28,6 +28,13 @@
 | B5.5b | layers 6→4（documented embed 依赖）；lazy/third_party 清空（PyYAML → config_yaml 决策 A；query.commands → LAZY_OK 决策 B）；app index_mod → store/vault 真名 | ✅ 完成（第四阶段）                   | `73f9436`                     |
 | B5.5c-1 | build_parser 拆 5 族子函数（155 → 5×~20）                                          | ✅ 完成（第四阶段）                   | `dcb8c0b`                     |
 | 收尾   | BATCH-REPORT 定稿 + push origin                                                     | ✅ 完成（2026-10-30，已推送到 Noelune/unified-agent-memory） | 远端 HEAD `c337c8c` |
+| C1 | abstain 置信下限（绝对 0.016 + 相对 0.25×top + confidence 字段）；0.85 目标经实测证伪由主人裁定口径 | ✅ 完成（第五阶段补做 2026-10-31） | `6fdcbe1` |
+| C2 | PROTECTED_RE → domain/policy 显式白名单（可达率 41.7%/28.6% → 75%/90.5%） | ✅ 完成（第五阶段补做 2026-10-31） | `bd7f73b` |
+| E0 | 起点核实 + 四资产接口盘点（发现任务书前置不满足并上报） | ✅ 完成（批次 E） | `344a958` |
+| E1 | memory_hook.py 平台无关钩子运行时（三事件 + 敏感门 + once-per-session + build_pack 共享） | ✅ 完成（批次 E） | `b26e322` |
+| E2 | Claude Code 接入物（settings-snippet/HOOKS.md/CLAUDE.md）+ 漂移守卫测试 | ✅ 完成（批次 E） | `fcf279d` |
+| E3 | transcript 适配器 + hookstate 单一路径源 + digest --queue（幂等排水） | ✅ 完成（批次 E） | `fc565ef` |
+| E4 | hook_bench 实测 + codex AGENTS.md + 台账收尾 + push | ✅ 完成（批次 E） | 本提交 |
 
 ## 验证基线（B5.5d 后，全绿，预算门已翻开，2026-10-30 实测）
 
@@ -408,6 +415,24 @@
 - **测试结果**：七道门全绿（Python 510 / JS 886 / setup 32 / typecheck / bench 一致 / 快照 42 逐字节 / e2e 46）。
 - **新增**：`infra/transcripts/{__init__,claude_code}.py`、`infra/hookstate.py`、digest 的 queue 接缝、11 例测试。
 - **遗留风险**：SessionEnd 硬崩溃不触发（官方文档事实）——cron 归档 digest 仍是兜底（HOOKS.md 已写明）；queue.done 无限增长（每会话一行，量级可忽略，批次 D 可做归档裁剪）。
+
+### E4 hook bench + codex 接入说明 + 收尾（✅ 2026-10-31）
+
+- **bench 数字（`bench/hook_bench.py`，golden fixture，真实子进程 = 解释器启动 + 进程内 import core + 事件工作，每次事件独立采样；本机实测原样记录，两轮各 10 次采样）**：
+  | 事件 | p50 | p95 | 备注 |
+  |---|---|---|---|
+  | session-start | 109.1ms | 118.7ms | 常驻包组装 + 打印 |
+  | prompt-submit | 119.3ms | 148.3ms | 敏感门 + update_index + 词法检索 + envelope 渲染；**≤300ms 预算内 ✓** |
+  | session-end | 73.1ms | 77.0ms | 队列追加（无 core 检索工作，≈纯解释器+导入地板） |
+  所有事件共享的 ~70–110ms 地板 = Python 解释器启动 + core import（session-end 最接近纯地板）。prompt-submit p95 超预算（300ms）未发生，无需砍功能。
+- **codex AGENTS.md**：加「关于钩子」一节——Codex 无钩子面、本文件即唯一接入层、共享 vault 使其他平台的沉淀对 Codex 同样可见（设计决定，写明理由）。
+- **测试结果**：七道门全绿（Python 510 / JS 886 / setup 32 / typecheck / bench 一致 / 快照 42 逐字节 / e2e 46）。
+- **新增**：`bench/hook_bench.py`（独立入口，不进 verify.sh 七道门——它的采样是耗时测量不是回归断言；数字记台账）。
+- **批次 E 已知风险（任务书 E4.3）**：
+  1. **SessionEnd 硬崩溃不触发**（官方文档事实）：漏掉的会话由 cron 归档 digest 兜底；钩子队列是"及时性"增强，不替代 cron（HOOKS.md 与 digest docstring 均已写明）。
+  2. **auto 敏感门的误判面**：误放行（敏感问题没检索）→ 该轮少一个 recall 包，模型仍可凭 CLAUDE.md 兜底主动检索，代价 = 少召回；误拦截（闲聊被检索）→ 一轮 ~150ms + 无命中空输出，代价 = 延迟。两类都只是"少包/慢一轮"，绝不炸回合（exit 0 契约）。
+  3. prompt-submit 的 `update_index` 在超大 vault 上是增量扫描，fixture 上 <20ms；真实大库的数字由 E4 bench 采样环境（golden fixture）代表，换机器需重测。
+- **删除**：无。
 
 ## B5.5 接手说明存档（2026-10-29 交棒点，已被上节取代）
 

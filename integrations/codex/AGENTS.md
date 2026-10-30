@@ -26,3 +26,10 @@
 
 - `python -m unified_memory.promoter --review` 生成待晋升清单，`--apply` 执行（或 `--auto` 全自动）；冲突需 `adjudicate` 人工裁决。
 - 默认人工确认模式；全自动需显式开启。
+
+## 关于钩子（批次 E，2026-10-31）
+
+Codex 没有可编程的会话生命周期钩子面（无 SessionStart/UserPromptSubmit/SessionEnd 等价物），所以
+本文件就是唯一接入层——**保持提示词兜底**，上面的读写规则就是全部机制。共享同一个 vault：其他平台
+（dsh / Claude Code 钩子）沉淀进提交区的记忆，对本文件同样可见、同样可读——Codex 不接入钩子不是功能
+缺失，而是共享 vault 让它免费获得其他平台的沉淀。
