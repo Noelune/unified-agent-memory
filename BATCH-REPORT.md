@@ -388,6 +388,16 @@
 - **新增**：`integrations/hooks/memory_hook.py`（约 300 行）、`core/tests/test_memory_hook.py`（18 例）、inject_context.py 抽出 `build_pack`（行为零变化）。
 - **遗留风险**：prompt-submit 每次 `update_index`（增量、无变化时极快，E4 bench 实测）；auto 门是词法启发式，误放行/误拦截的影响面记入 E4 已知风险。
 
+### E2 Claude Code 官方钩子接入物（✅ 2026-10-31）
+
+- **调研**：接入面 = Claude Code settings.json 的 hooks 配置（SessionStart/UserPromptSubmit/SessionEnd 三事件）；任务书已核实官方文档要点（纯文本 stdout 进上下文、SessionEnd 全体钩子共享 1.5s 预算支持 async、debug log 有 `Hooks: … finished with status 0` 行）。
+- **新增三件**：① `integrations/claude/hooks/settings-snippet.json`——给用户粘进 `~/.claude/settings.json` 的片段（exec 形式 `command`+`args`，免 shell 引号转义、绕开 Windows Git Bash 差异；SessionStart 不设 matcher——compact 后重注入是特性；UserPromptSubmit `timeout: 30`；SessionEnd `async: true`；`${CLAUDE_PROJECT_DIR}` 占位 + `_about` 键说明粘贴后删除）；② `integrations/claude/hooks/HOOKS.md`——三步接线、env 约定（UNIFIED_MEMORY_VAULT 与 core 一致 + 三个 hook env）、`claude --debug` 验证法、失败排查（钩子只"少包"不炸回合）、SessionEnd 崩溃不触发→cron 兜底说明；③ `CLAUDE.md` 增「钩子（强制层）与本文件的关系」一节——钩子管"自动发生"，本文件管"模型怎么对待注入的数据"。
+- **明确不做**（任务书负清单）：不插件化、不注册 npm、不做安装器——手动粘片段是这个体量配得上的最低摩擦方式。
+- **漂移守卫**：`core/tests/test_claude_hook_wiring.py` 4 例——读取 snippet **原样执行**其命令行（`${CLAUDE_PROJECT_DIR}` 替换为仓库根）跑三种事件（合成 stdin + 临时 vault + 临时状态目录）：SessionStart 输出常驻包、UserPromptSubmit 输出 recall 块、SessionEnd 落队列且缺 transcript 静默；并钉住三个配置点（无 matcher / timeout 30 / async true）。文档里写的命令就是测试跑的命令。
+- **测试结果**：七道门全绿（Python 503 / JS 886 / setup 32 / typecheck / bench 一致 / 快照 42 逐字节 / e2e 46）。
+- **新增**：上述三文件 + 1 测试文件（4 例）。
+- **遗留风险**：`type: "exec"` 形式以任务书对官方文档的核验为准；若 Claude Code 实际只接受 shell 字符串形式，改 snippet 一处 + 测试常量即可（单一事实源在 snippet）。
+
 ## B5.5 接手说明存档（2026-10-29 交棒点，已被上节取代）
 
 **一句话状态**：B5.2 / B5.3 / B5.4（a/b/c）已入库并全绿，`git status` 干净，HEAD = `e5fb47e`；**只剩 B5.5**——清空架构白名单 + 翻预算门。下面每条都是本轮实测数据，不需要重新探查。

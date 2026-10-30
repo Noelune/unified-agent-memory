@@ -1,0 +1,49 @@
+{
+  "_about": "unified-agent-memory hooks for Claude Code — paste the \"hooks\" object into ~/.claude/settings.json. Replace ${CLAUDE_PROJECT_DIR} with this repository's absolute install path first (see integrations/claude/hooks/HOOKS.md for the full wiring guide). Delete this _about key after pasting; it is documentation, not configuration.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "exec",
+            "command": "python",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/integrations/hooks/memory_hook.py",
+              "session-start"
+            ]
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "exec",
+            "command": "python",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/integrations/hooks/memory_hook.py",
+              "prompt-submit"
+            ],
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "exec",
+            "command": "python",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/integrations/hooks/memory_hook.py",
+              "session-end"
+            ],
+            "async": true
+          }
+        ]
+      }
+    ]
+  }
+}

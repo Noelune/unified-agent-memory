@@ -26,3 +26,11 @@
 
 - `python -m unified_memory.promoter --review` 生成待晋升清单，`--apply` 执行（或 `--auto` 全自动）；冲突需 `adjudicate` 人工裁决。
 - 默认人工确认模式；全自动需显式开启。
+
+## 钩子（强制层）与本文件的关系
+
+从批次 E 起，Claude Code 可通过官方钩子（SessionStart / UserPromptSubmit /
+SessionEnd，接线见 `integrations/claude/hooks/HOOKS.md`）在会话开始自动注入
+常驻记忆包、按需注入检索结果、会话结束排队沉淀——这是**机制强制**，不依赖
+模型自觉。本文件保留为**模型自主兜底**：未接钩子的环境靠这里的规则提醒；接
+了钩子的环境两者共存——钩子管"自动发生"，本文件管"模型怎么对待注入的数据"。
