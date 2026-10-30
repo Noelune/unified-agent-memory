@@ -27,7 +27,7 @@
 | B5.5a | sessiondb → infra/sessiondb.py（sqlite3 + writes 白名单清空）                              | ✅ 完成（第四阶段）                   | `4cba03b`                     |
 | B5.5b | layers 6→4（documented embed 依赖）；lazy/third_party 清空（PyYAML → config_yaml 决策 A；query.commands → LAZY_OK 决策 B）；app index_mod → store/vault 真名 | ✅ 完成（第四阶段）                   | `73f9436`                     |
 | B5.5c-1 | build_parser 拆 5 族子函数（155 → 5×~20）                                          | ✅ 完成（第四阶段）                   | `dcb8c0b`                     |
-| 收尾   | BATCH-REPORT 定稿 + push origin                                                     | ⬜ 推送待用户确认（remote=GitHub 公共仓库） | —                             |
+| 收尾   | BATCH-REPORT 定稿 + push origin                                                     | ✅ 完成（2026-10-30，已推送到 Noelune/unified-agent-memory） | 远端 HEAD `c337c8c` |
 
 ## 验证基线（B5.5d 后，全绿，预算门已翻开，2026-10-30 实测）
 
