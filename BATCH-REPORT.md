@@ -377,6 +377,17 @@
 
 **测试命名惯例**：无既有 test_hook*；新建 `core/tests/test_memory_hook.py`（E1）。
 
+### E1 平台无关钩子运行时（✅ 2026-10-31）
+
+- **调研**：见 E0 起点档案。四个既有资产的复用面全部确认：常驻包 = inject_context 的 `build_pack`（本次抽取为共享函数，hermes 7 例测试字节不变）；检索渲染 = envelope 的 `data_block` + `cite_prefix` + `encode_untrusted`；敏感判定 = recall.ts 的 15 类正则（移植类别不移植代码）；配置名对齐 dsh（auto|always|off）。
+- **选定方案**：新文件 `integrations/hooks/memory_hook.py`（单文件、纯标准库），`python integrations/hooks/memory_hook.py <event>`，stdin JSON。进程内 import core（`sys.path.insert`，与 inject_context 同款，Windows 上省一次解释器启动）；stdin 防御性解析（prompt→text→latestUserText→截断全文兜底，坏 JSON/缺键→空串不抛）；`session-start` 打印常驻最小包（`build_pack` 原字节）；`prompt-submit` 按 `UNIFIED_MEMORY_HOOK_RECALL_MODE`（默认 auto）走轻量敏感门 → 本地 `lexical_search`（禁向量）→ envelope 渲染（预算按整块计，放不下的整行丢弃 + 围栏内截断标记）；`session-end` 把 `{"ts","source","path","session_id"}` 追加进 `UNIFIED_MEMORY_HOOK_STATE`（默认 `~/.unified-memory/hooks/queue.jsonl`）。**放弃方案**：每事件起 Python 子进程（Windows 双倍启动成本）；复制 inject_context 组包代码（两份会漂移）。
+- **设计**：`handle(event, payload, raw_text) -> str` 与 `main()`（stdin+print）分离便于测试；失败静默 = main 总 try/except → stderr + exit 0，vault 未初始化 → `ensure_vault` 失败静默空输出；once-per-session 用状态目录 `discipline-<sha256(session_id)[:16]>.marker`；超时用 worker 线程 join（stdlib、Windows 可用）；预算 `UNIFIED_MEMORY_HOOK_MAX_CHARS`（默认 2400）、超时 `UNIFIED_MEMORY_HOOK_TIMEOUT_MS`（默认 5000，超时空结果）。
+- **过程中抓到的三个自伤缺陷（测试当场红，均已修）**：① Python `\b` 是 Unicode 语义——CJK 紧邻的英文单词不构成词边界（JS 的 `\w` 是 ASCII-only），移植的英文正则类全部改为 ASCII lookaround，测试钉住 `这是关于password的问题` 必须命中；② 截断初版把 `</memory-data>` 闭合标签切掉了——**未闭合的 envelope 会把后续内容泄漏进数据区**，改为按行丢弃 + 围栏内补 `…(truncated)`，测试断言截断块仍以闭合标签结尾；③ vault 未初始化时 `resolve_vault` 只解析不校验，session-start 会打印空包而非静默——补 `ensure_vault`。
+- **虚拟项目验证**：`core/tests/test_memory_hook.py` 18 例——三种 Claude Code 官方 stdin 形状、envelope 边界/预算截断/redact 断言、空 vault/空 stdin/坏 JSON/缺键全静默、auto 门正反例（钉死）、查询优先级、模式 off/always、超时空结果、once-per-session 标记、session-end 队列 + 状态目录隔离、subprocess 真入口。手工冒烟（合成 stdin + 临时 vault）输出与设计一致。
+- **测试结果**：Python **499** / JS 886 / setup 32 / typecheck / bench 一致 / 快照 42 逐字节 / e2e 46（七道门全绿）。
+- **新增**：`integrations/hooks/memory_hook.py`（约 300 行）、`core/tests/test_memory_hook.py`（18 例）、inject_context.py 抽出 `build_pack`（行为零变化）。
+- **遗留风险**：prompt-submit 每次 `update_index`（增量、无变化时极快，E4 bench 实测）；auto 门是词法启发式，误放行/误拦截的影响面记入 E4 已知风险。
+
 ## B5.5 接手说明存档（2026-10-29 交棒点，已被上节取代）
 
 **一句话状态**：B5.2 / B5.3 / B5.4（a/b/c）已入库并全绿，`git status` 干净，HEAD = `e5fb47e`；**只剩 B5.5**——清空架构白名单 + 翻预算门。下面每条都是本轮实测数据，不需要重新探查。

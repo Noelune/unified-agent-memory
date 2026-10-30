@@ -66,19 +66,19 @@ def _prose_lines(text: str, max_lines: int) -> list[str]:
     return out
 
 
-def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="inject_context")
-    ap.add_argument("--vault", default=None)
-    ap.add_argument("--notes", type=int, default=3, help="canonical notes to include besides the index")
-    ap.add_argument("--max-lines", type=int, default=12, help="max lines per note")
-    ap.add_argument("--max-chars", type=int, default=2400, help="global character budget for the pack")
-    args = ap.parse_args(argv)
-    vault = Path(args.vault) if args.vault else resolve_vault()
-    try:
-        ensure_vault(vault)
-    except RuntimeError:
-        print("[memory-context] vault not initialized", file=sys.stderr)
-        return 0
+def build_pack(
+    vault: Path,
+    notes: int = 3,
+    max_lines: int = 12,
+    max_chars: int = 2400,
+) -> str:
+    """Assemble the resident minimal pack (NOTE_ORDER order, budget-capped).
+
+    Shared surface: the Hermes CLI path (main below) and the platform hook
+    runtime (integrations/hooks/memory_hook.py, batch E1) both render through
+    this one builder instead of two drifting copies. Bytes are unchanged from
+    the pre-refactor main().
+    """
     ctx = canonical_dir(vault)
     lines = [
         "<memory-context>",
@@ -94,7 +94,7 @@ def main(argv: list[str] | None = None) -> int:
             continue
         # The index is always included (it is the map); other notes honour the
         # --notes cap.
-        if key != "index" and shown >= args.notes:
+        if key != "index" and shown >= notes:
             break
         path = ctx / name
         if not path.exists():
@@ -102,19 +102,19 @@ def main(argv: list[str] | None = None) -> int:
         text = path.read_text(encoding="utf-8", errors="replace")
         facts = _fact_lines(text)
         if not facts:
-            facts = _prose_lines(text, args.max_lines)
+            facts = _prose_lines(text, max_lines)
         note_lines: list[str] = []
         for fact in facts:
             fact = redact(fact)
             if fact in seen:
                 continue
             cost = len(fact) + 4
-            if used_chars + cost > args.max_chars:
+            if used_chars + cost > max_chars:
                 break
             seen.add(fact)
             note_lines.append(f"  - {fact}")
             used_chars += cost
-            if len(note_lines) >= args.max_lines:
+            if len(note_lines) >= max_lines:
                 break
         if not note_lines:
             continue
@@ -124,7 +124,23 @@ def main(argv: list[str] | None = None) -> int:
         used_chars += len(path.stem) + 4
         shown += 1
     lines.append("</memory-context>")
-    print("\n".join(lines))
+    return "\n".join(lines)
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="inject_context")
+    ap.add_argument("--vault", default=None)
+    ap.add_argument("--notes", type=int, default=3, help="canonical notes to include besides the index")
+    ap.add_argument("--max-lines", type=int, default=12, help="max lines per note")
+    ap.add_argument("--max-chars", type=int, default=2400, help="global character budget for the pack")
+    args = ap.parse_args(argv)
+    vault = Path(args.vault) if args.vault else resolve_vault()
+    try:
+        ensure_vault(vault)
+    except RuntimeError:
+        print("[memory-context] vault not initialized", file=sys.stderr)
+        return 0
+    print(build_pack(vault, notes=args.notes, max_lines=args.max_lines, max_chars=args.max_chars))
     return 0
 
 
