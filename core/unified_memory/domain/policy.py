@@ -63,6 +63,23 @@ SESSION_DIR = "会话归档"
 # infra.vault can share it without importing each other).
 VAULT_ENV = "UNIFIED_MEMORY_VAULT"
 
+# Durable topics the forgetter never demotes (batch C2). An EXPLICIT whitelist
+# replaces the old broad keyword net: that regex matched 75.5% of the live
+# vault's facts (every line mentioning a path/config/model/backup/tool), which
+# made forgetting a no-op. Only these classes stay immune — credentials, red
+# lines, the endpoint facts others rely on, and agent coordination:
+PROTECTED_TOPICS = (
+    # credentials — never fade
+    "密码", "密钥", "凭据", "口令", "账号", "账户",
+    "password", "secret", "credential",
+    # red lines — never fade
+    "红线",
+    # endpoints other agents rely on (pinned by test_forgetter)
+    "服务器", "端口", "地址", "server", "port", "endpoint",
+    # agent coordination
+    "协作", "代理", "coordinat",
+)
+
 # Sync clients (OneDrive, Dropbox, iCloud) create a second file instead of
 # merging when two machines edit the same note. Those copies are not canonical
 # notes: indexing them makes every fact appear twice with different "truth",

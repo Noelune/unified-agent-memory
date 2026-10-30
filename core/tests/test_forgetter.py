@@ -137,5 +137,56 @@ class ForgetterScheduleTest(unittest.TestCase):
         self.assertIn("demoted 1 line(s)", read_maybe(self.vault / "forget_weekly.log"))
 
 
+class ProtectedTopicsTest(unittest.TestCase):
+    """Batch C2: the explicit PROTECTED_TOPICS whitelist, not the old net."""
+
+    def test_credentials_and_red_lines_stay_protected(self):
+        for fact in ("生产环境密码在密码管理器", "部署红线：不得直接改主分支", "API 密钥轮换周期是 90 天"):
+            self.assertTrue(forgetter.PROTECTED_RE.search(fact), fact)
+
+    def test_endpoint_and_coordination_facts_stay_protected(self):
+        for fact in ("生产服务器地址是 203.0.113.10", "同步端口为 9443", "协作边界：各代理只写自己的提交区"):
+            self.assertTrue(forgetter.PROTECTED_RE.search(fact), fact)
+
+    def test_ordinary_topics_are_reachable_for_decay(self):
+        # These were caught by the old broad regex (model/backup/preference/
+        # script/config/path) and made forgetting a no-op; the whitelist keeps
+        # them reachable so the score decides, not a keyword.
+        for fact in (
+            "默认模型是 GLM-5.3",
+            "备份目录是 D:/backups/uam",
+            "用户偏好简洁的结论先行回答。",
+            "部署脚本放在 scripts/deploy-old.sh",
+            "构建产物必须经过 typecheck 才能合并。",
+        ):
+            self.assertFalse(forgetter.PROTECTED_RE.search(fact), fact)
+
+    def test_promotion_stamp_is_not_a_protected_topic(self):
+        # The check runs on the bare fact text; the stamp (来源：Agent提交区/…)
+        # must never leak into the decision or every promoted fact would match
+        # its "agent" token.
+        line = "- 临时会议纪要备忘（写入 2020-01-01｜来源：Agent提交区/x-1.md）"
+        self.assertFalse(forgetter.PROTECTED_RE.search(forgetter.parse_line(line)["bare"]))
+
+    def test_forget_reachability_on_the_representative_corpus(self):
+        # Batch C2 acceptance: >=60% of facts must be reachable (not protected).
+        corpus = [
+            "构建产物必须经过 typecheck 才能合并。",
+            "发布前必须跑完整回归测试。",
+            "统一记忆系统的晋升时间是每天 03:00。",
+            "部署脚本放在 scripts/deploy-old.sh",
+            "生产服务器地址是 203.0.113.10",
+            "备份目录是 D:/backups/uam",
+            "同步端口为 9443",
+            "默认模型是 GLM-5.3",
+            "统一记忆系统的索引库在 ~/.unified-memory。",
+            "用户偏好简洁的结论先行回答。",
+        ]
+        protected = [f for f in corpus if forgetter.PROTECTED_RE.search(f)]
+        reachable = 1 - len(protected) / len(corpus)
+        self.assertEqual(protected, ["生产服务器地址是 203.0.113.10", "同步端口为 9443"])
+        self.assertGreaterEqual(reachable, 0.6, f"protected: {protected}")
+
+
 if __name__ == "__main__":
     unittest.main()

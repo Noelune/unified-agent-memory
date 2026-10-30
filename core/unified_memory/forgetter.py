@@ -33,7 +33,7 @@ from pathlib import Path
 from . import index
 from .domain.markdown import bare_fact_line, is_versioned, parse_stamp
 from .domain.model import Change, ChangeSet
-from .domain.policy import CANONICAL_DOCS
+from .domain.policy import CANONICAL_DOCS, PROTECTED_TOPICS
 from .infra import vault as vault_mod
 from .infra.config import resolve_vault
 from .infra import schedule as schedule_mod
@@ -55,17 +55,11 @@ DURABLE_FLOOR = 0.45      # importance never fully decays; the floor keeps
                           # alive indefinitely while ordinary facts fade.
 MAX_REINFORCEMENT = 0.2   # access-reinforcement cap
 
-# Durable topics are never demoted: paths, configs, preferences, accounts,
-# servers, credentials references, and agent coordination rules. The Chinese
-# terms mirror the vault's own 记忆系统规范 list — without them the protection
-# only worked for English facts, while the live vault is mostly Chinese.
-PROTECTED_RE = re.compile(
-    r"path|directory|config|prefer|account|server|port|credential|password|secret|"
-    r"model|domain|backup|script|rule|coordinat|agent|vault|endpoint|api|url|"
-    r"路径|目录|配置|偏好|账号|账户|服务器|端口|凭据|密码|密钥|模型|域名|备份|"
-    r"脚本|规则|协作|代理|仓库|接口|地址|环境|版本|工具|项目|红线|流程",
-    re.I,
-)
+# Durable topics are never demoted. The whitelist itself lives in
+# domain/policy.PROTECTED_TOPICS (batch C2): the old broad regex matched 75.5%
+# of the live vault's facts and made forgetting a no-op — see the constant's
+# comment there. The regex below is only the matcher over that explicit list.
+PROTECTED_RE = re.compile("|".join(re.escape(topic) for topic in PROTECTED_TOPICS), re.I)
 USAGE_RE = re.compile(r"｜使用 (\d+) 次(·最近 (\d{4}-\d{2}-\d{2}))?")
 
 
