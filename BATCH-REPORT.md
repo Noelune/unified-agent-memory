@@ -34,18 +34,27 @@
 | E1 | memory_hook.py 平台无关钩子运行时（三事件 + 敏感门 + once-per-session + build_pack 共享） | ✅ 完成（批次 E） | `b26e322` |
 | E2 | Claude Code 接入物（settings-snippet/HOOKS.md/CLAUDE.md）+ 漂移守卫测试 | ✅ 完成（批次 E） | `fcf279d` |
 | E3 | transcript 适配器 + hookstate 单一路径源 + digest --queue（幂等排水） | ✅ 完成（批次 E） | `fc565ef` |
-| E4 | hook_bench 实测 + codex AGENTS.md + 台账收尾 + push | ✅ 完成（批次 E） | 本提交 |
+| E4 | hook_bench 实测 + codex AGENTS.md + 台账收尾 + push | ✅ 完成（批次 E） | `8de64cd` |
+| D0 | 第七阶段任务书（自行起草）+ 台账建档 | ✅ 完成（批次 D） | `9dc9f02` |
+| D1 | schema v11：claims/occurrences/links/events 四表 + I4 副本守恒（164/130/848 不动） | ✅ 完成（批次 D） | `0e8fc75` |
+| D2 | block ID 补写（幂等）+ ledger 投影 + backfill-ids 命令 + promote/decide 接线 | ✅ 完成（批次 D） | `6457c76` |
+| D3 | search --as-of + explain（PLAN 验收：改 3 次 → 4 日期全对） | ✅ 完成（批次 D） | `34f8562` |
+| D4 | queue.done 裁剪（5000 行）+ README.md 排除出索引 | ✅ 完成（批次 D） | `34c24cb` |
+| D5 | remote_search/graph/search 迁入层 + **架构白名单清零** | ✅ 完成（批次 D） | `6e98b5d` |
+| D6 | bench 对比 + 台账定稿 + push | ✅ 完成（批次 D） | 本提交 |
 
-## 验证基线（B5.5d 后，全绿，预算门已翻开，2026-10-30 实测）
+## 验证基线（批次 D 后，全绿，2026-10-31 实测）
 
-- Python **469**（**预算门 ENFORCE_BUDGETS=True 已翻开，无 skip**）/ JS 886（41 文件）/ setup 32 / typecheck 0
-- `bash ../verify.sh` 七道门全绿：Python / JS / setup / typecheck / bench fixture / CLI 快照 42 例逐字节 / e2e 46 项
-- bench fixture：recall@5/10=0.9167、mrr/ndcg=0.9167、abstain=0.75、update_top1_ok=1.0、empty=0.25（与 after-a12 一致，B5.2–B5.5 全程未触碰检索算法与排序权重）
-- CLI 快照：42/42 逐字节一致
+- Python **526**（预算门实跑无 skip）/ JS 886（41 文件）/ setup 32 / typecheck 0
+- `bash ../verify.sh` 七道门全绿：Python / JS / setup / typecheck / bench fixture / CLI 快照 **46 例**逐字节 / e2e 46 项
+- bench fixture：recall@5/10=0.9167、mrr/ndcg=0.9167、abstain_accuracy=0.75、update_top1_ok=1.0、empty_result_rate=0.25（与 after-a12 逐字段一致——批次 C1/C2/D 全程未触碰检索排序权重）
+- CLI 快照：**46/46**（42 基线 + C1 无新 case + D2 backfill 两 case + D3 explain 两 case；claim id 随机值由 `<CLAIMID>` 规范化掩蔽）
+- I4：真实库副本 v4→v11 一步串链守恒（164 memories / 130 embeddings / 848 access_log 一行不动，四张 ledger 表空，.v4.bak 在）
 - 隔离：Python 套件、vitest、bench 跑完后 `~/.unified-memory/` **零新增文件**
-- 结构指标（B5.5d 后实测，70 个模块）：**>600 行文件 0 个、>60 行函数 0 个、>20 顶层 def 文件 0 个（全部由翻开的预算门断言）**；>450 软限 2 个（`app/maintain/drift.py` 456、`infra/store/search_index.py` 506，软限仅记录不断言）；shim 清单：memory.py 119、promoter.py 103、conflict.py 55、maintenance.py 17、embed.py 41
-- 白名单：`layers` 剩 **2 条 documented 永久例外**（remote_search HTTP 客户端留 memory shim——B5.2 决策；graph legacy facade——任务书 B5.3 决策）；`sqlite3`/`writes`/`subprocess`/`lazy_import`/`third_party` 五类**全空**
-- 债务结论：接手说明账面 13 项，实际 15 项（`fts_search` 93 与 `_migrate_to_v5` 64 被每模块最差项的记账方式掩盖）——**全部清偿**
+- 结构指标（批次 D 后实测，72 模块）：>600 行文件 0、>60 行函数 0、>20 顶层 def 文件 0（预算门断言）；>450 软限 2 个（`app/maintain/drift.py` 456、`infra/store/search_index.py` 506，软限仅记录）
+- **架构白名单：六类规则全部为空**（B0 立尺 → 批次 B/C/D 清债 → D5 达成）
+- shim 现存：memory.py（INDEX_DB 重绑 + 入口）、promoter.py（入口 + shlex_quote）、conflict.py(55)/maintenance.py(17)/preview/stats/inbox（测试引用未退场，列下一批次开头）、embed.py(41)/digest/drift/health/index/sessiondb（入口或 facade）
+- 债务结论：PLAN §4 Claim Ledger 最小版落地；任务书账面 15 项预算债全部清偿；批次 C1/C2/E/D 全部完成
 
 ## 逐项详情
 
