@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.9.2] — 2026-10-31
+
+### Fixed — npm 包内容（0.9.1 的 npm 产物不可用，请直接装 0.9.2）
+
+- **0.9.1 的 npm tarball 缺失整个分层核心**（app/domain/infra/surface 与钩子集成文件不在包里——发布时工作树停在打包修复之前的旧 files 白名单上），装出来的包一跑就 `ImportError`。**0.9.2 从修正后的白名单发布**，发布前对注册表产物做了内容验证与导入冒烟。
+- `files` 白名单改为整棵 `core/unified_memory`（否定模式排除 `__pycache__`/`*.pyc`——`.npmignore` 对 `files` 白名单目录不生效，实测验证），并补上 `integrations/hooks` 与 `integrations/claude/hooks`。
+- 0.9.1 的 **git 仓库内容本身没有问题**（代码/测试/文档完整）；只有 npm 产物坏。已装 0.9.1 的用户请升级到 0.9.2。
+
 ## [0.9.1] — 2026-10-31
 
 ### Changed — 参与度层默认启用（不再是自愿开启）

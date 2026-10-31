@@ -43,8 +43,17 @@ test('the shipped package still excludes things that are not source', () => {
       `package.json files must not ship ${forbidden}`,
     )
   }
+  // Inclusion patterns must never name a bytecode cache. NEGATION entries
+  // ("!**/__pycache__") are the opposite — they are how the whitelist keeps
+  // the caches out, because .npmignore does not apply inside a `files`
+  // include-directory (npm pack shipped .pyc files despite the root
+  // .npmignore; verified before publish in 0.9.1).
   assert.ok(
-    !pkg.files.some((entry) => entry.includes('__pycache__') || entry.endsWith('.pyc')),
+    !pkg.files.some(
+      (entry) =>
+        !entry.startsWith('!') &&
+        (entry.includes('__pycache__') || entry.endsWith('.pyc')),
+    ),
     'package.json files must not ship bytecode caches',
   )
 })
