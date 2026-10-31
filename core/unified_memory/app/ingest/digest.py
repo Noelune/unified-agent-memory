@@ -61,6 +61,7 @@ CURSOR_KEY = "digest_cursor"
 STATE_CURSOR_KEY = "digest_cursor_state"
 CONFIG_ENABLED_KEY = "digest.enabled"
 SOURCES = ("archive", "state", "queue")
+DONE_KEEP = 5000  # batch D4: queue.done line cap (oldest dropped)
 
 SYSTEM_PROMPT = (
     "你是记忆提炼助手。从下面的 Agent 会话记录中提取值得长期记忆的持久事实，例如："
@@ -238,9 +239,19 @@ def _queue_units() -> tuple[list[tuple[str, str, str]], dict[str, str]]:
 def _mark_queue_done(path: str) -> None:
     """Record a processed queue path (read + atomic_write: only infra.vault may
     open files for writing — the B4 writes boundary, same pattern
-    queue.record_adjudication uses)."""
+    queue.record_adjudication uses).
+
+    The done file is capped at DONE_KEEP lines (batch D4): a hook queue runs
+    forever, so the oldest entries are dropped once the cap is hit — a path
+    older than that simply becomes eligible for reprocessing, which the
+    extraction's own dedup handles.
+    """
     done_file = hookstate.done_path()
-    atomic_write(done_file, read_maybe(done_file) + path + "\n")
+    lines = [ln.strip() for ln in read_maybe(done_file).splitlines() if ln.strip()]
+    lines.append(path)
+    if len(lines) > DONE_KEEP:
+        lines = lines[-DONE_KEEP:]
+    atomic_write(done_file, "\n".join(lines) + "\n")
 
 
 def _units(vault: Path, source: str, cursor: str) -> list[tuple[str, str, str]]:

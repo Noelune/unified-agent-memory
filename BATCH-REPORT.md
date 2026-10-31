@@ -470,6 +470,14 @@
 - **新增**：`_search_as_of` + `cmd_explain` + search 的 `--as-of` 旗标 + explain 子命令 + 1 例验收测试（含窗口接续断言）。
 - **遗留风险**：as-of 的精确窗仅覆盖本批接线后的取代（D1 任务书范围裁定）；`--as-of` 与 `--hybrid/--remote` 同时给出时 as-of 优先（分派顺序，未组合）。
 
+### D4 小项收尾：queue.done 裁剪 + README 索引排除（✅ 2026-10-31）
+
+- **queue.done 裁剪**：`_mark_queue_done` 保最近 `DONE_KEEP=5000` 行、裁最旧（钩子队列永久运行，done 无限增长不再成立；被裁的 path 重新可处理，由抽取自身的去重兜底）。写路径仍走 `read_maybe + atomic_write`（B4 边界）。
+- **README.md 排除出 canonical 索引**（待办发现 #4）：`indexed_files` 跳过 ctx 根的 README.md——目录说明文档此前把模板指令伪装成事实混进索引与晋升候选。模板里的 README 指令（**Read/Write/Never**…）本就是给人看的操作说明，不是记忆事实。
+- **测试结果**：七道门全绿（Python 526 / JS 886 / setup 32 / typecheck / bench 一致 / 快照 46 逐字节 / e2e 46）——README 排除对既有测试零影响（golden fixture 无 README，无计数钉死）。
+- **新增**：DONE_KEEP 常量 + 裁剪逻辑 + indexed_files 排除 + docstring 理由。
+- **遗留风险**：真实 vault 的 README.md（若有事实行）将在下次 update_index 后从索引消失——这是待办发现的预期修复，用户可把真事实移进对应 canonical 笔记。
+
 ## B5.5 接手说明存档（2026-10-29 交棒点，已被上节取代）
 
 **一句话状态**：B5.2 / B5.3 / B5.4（a/b/c）已入库并全绿，`git status` 干净，HEAD = `e5fb47e`；**只剩 B5.5**——清空架构白名单 + 翻预算门。下面每条都是本轮实测数据，不需要重新探查。

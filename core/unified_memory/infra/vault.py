@@ -217,6 +217,9 @@ def indexed_files(vault: Path) -> list[Path]:
 
     Sync-client conflict copies (``note 2.md``, ``note-副本.md`` …) are skipped:
     they are an unresolved duplicate of a note, not another source of truth.
+    ``README.md`` is skipped too (batch D4, backlog finding #4): it documents
+    the directory for humans — template instructions kept masquerading as
+    facts in the index and in the promoter's candidates.
     """
     ctx = canonical_dir(vault)
     if not ctx.is_dir():
@@ -224,7 +227,7 @@ def indexed_files(vault: Path) -> list[Path]:
     files = [
         p
         for p in sorted(ctx.glob("*.md"))
-        if p.is_file() and not is_conflict_copy(p.name)
+        if p.is_file() and not is_conflict_copy(p.name) and p.name != "README.md"
     ]
     unclassified = ctx / UNCLASSIFIED_FACT_REL
     if unclassified.is_file() and not is_conflict_copy(unclassified.name):
