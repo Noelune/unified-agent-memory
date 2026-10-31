@@ -442,6 +442,15 @@
 - 三处对 PLAN 的偏离已记录：不换 `PRAGMA user_version`（repo 的 index_meta 机制已解决其针对的问题）；不做 §5 管线重写（memories 主键不动，§4 最小版）；events 表接线面最小化（promoter/decide 的取代事件）。
 - 后续项随做随记。
 
+### D1 schema v11：四张投影表 + I4 守恒（✅ 2026-10-31）
+
+- **调研**：PLAN §4.2 四表列定义逐字落库；迁移链 `MIGRATIONS[11]` 自动串入既有 v4→v10 链；版本机制保持 index_meta（任务书已记录对 PLAN §4.4 的偏离及理由）。I4 框架（`bench/verify_live_migration.py`）扩为八字段计数（before 只数旧表——v4 副本没有新表）。
+- **实现**：`_migrate_to_v11` = 四条 CREATE TABLE IF NOT EXISTS（只增不减）；`SCHEMA_VERSION = "11"`。**真实库副本实测**：v4→v11 一步串链，164 memories / 130 embeddings / 848 access_log **一行不动**，四新表空、备份在、`MIGRATION OK`。
+- **测试**：新增 `test_v10_to_v11_adds_the_ledger_tables_additively`（四表存在且空 + 旧表计数不变 + 版本 11）；4 处「迁移到当前版本」断言改为 `int(schema.SCHEMA_VERSION)`（版本常量推进的自然跟随，另 test_occurrence_identity 同款 1 处）。
+- **快照更新（预期行为变化，非静默）**：doctor 两 case 的索引文件字节数 147456→176128（新四表 +28KB 页分配）——重生成快照参照并记录于此。
+- **测试结果**：七道门全绿（Python 514 / JS 886 / setup 32 / typecheck / bench 一致 / 快照 42 逐字节 / e2e 46）。
+- **删除**：无——纯新增四表。
+
 ## B5.5 接手说明存档（2026-10-29 交棒点，已被上节取代）
 
 **一句话状态**：B5.2 / B5.3 / B5.4（a/b/c）已入库并全绿，`git status` 干净，HEAD = `e5fb47e`；**只剩 B5.5**——清空架构白名单 + 翻预算门。下面每条都是本轮实测数据，不需要重新探查。

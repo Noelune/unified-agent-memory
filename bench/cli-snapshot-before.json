@@ -298,7 +298,7 @@
         "doctor"
       ],
       "exit": 0,
-      "stdout": "index: 12 memories (10 active, 2 superseded), 0 vectors, 0.1 MB, journal=wal\ninbox: 0 file(s)\ncanonical: 3 note(s), 0 duplicate line(s), 0 conflict copy/copies\nconflicts: 0\nembeddings: 0% coverage (configured=False)\nno issues found\n",
+      "stdout": "index: 12 memories (10 active, 2 superseded), 0 vectors, 0.2 MB, journal=wal\ninbox: 0 file(s)\ncanonical: 3 note(s), 0 duplicate line(s), 0 conflict copy/copies\nconflicts: 0\nembeddings: 0% coverage (configured=False)\nno issues found\n",
       "stderr": ""
     },
     "doctor-json": {
@@ -307,7 +307,7 @@
         "--json"
       ],
       "exit": 0,
-      "stdout": "{\"ok\": true, \"command\": \"doctor\", \"data\": {\"vault\": \"<TMP>\\\\vault\", \"ok\": true, \"index\": {\"path\": \"<TMP>\\\\index-<VAULTHASH>.db\", \"bytes\": 147456, \"journalMode\": \"wal\", \"docs\": 3, \"memories\": 12, \"active\": 10, \"superseded\": 2, \"vectors\": 0, \"accesses\": 0}, \"inbox\": {\"count\": 0, \"oldestDays\": null, \"files\": []}, \"canonical\": {\"files\": 3, \"conflictCopies\": [], \"duplicateLines\": [], \"unclassifiedLines\": 0}, \"conflicts\": {\"count\": 0}, \"embeddings\": {\"configured\": false, \"coverage\": 0.0}, \"digest\": {\"cursor\": \"\"}, \"issues\": [], \"orphanIndexes\": {\"count\": 0, \"bytes\": 0, \"files\": [], \"prunable\": 0, \"newestAgeDays\": null}}}\n",
+      "stdout": "{\"ok\": true, \"command\": \"doctor\", \"data\": {\"vault\": \"<TMP>\\\\vault\", \"ok\": true, \"index\": {\"path\": \"<TMP>\\\\index-<VAULTHASH>.db\", \"bytes\": 176128, \"journalMode\": \"wal\", \"docs\": 3, \"memories\": 12, \"active\": 10, \"superseded\": 2, \"vectors\": 0, \"accesses\": 0}, \"inbox\": {\"count\": 0, \"oldestDays\": null, \"files\": []}, \"canonical\": {\"files\": 3, \"conflictCopies\": [], \"duplicateLines\": [], \"unclassifiedLines\": 0}, \"conflicts\": {\"count\": 0}, \"embeddings\": {\"configured\": false, \"coverage\": 0.0}, \"digest\": {\"cursor\": \"\"}, \"issues\": [], \"orphanIndexes\": {\"count\": 0, \"bytes\": 0, \"files\": [], \"prunable\": 0, \"newestAgeDays\": null}}}\n",
       "stderr": ""
     },
     "gc-dry-run": {
@@ -340,7 +340,7 @@
       "argv": [
         "drift",
         "--vault",
-        "C:\\Users\\zhaowei\\AppData\\Local\\Temp\\um-snapshot-fpc_2vvy\\drift-vault\\vault"
+        "C:\\Users\\zhaowei\\AppData\\Local\\Temp\\um-snapshot-94bfoz3f\\drift-vault\\vault"
       ],
       "exit": 1,
       "stdout": "\n════════════════════════════════════════════════════════════\n  DRIFT DETECTION REPORT\n  Vault: <TMP>\\vault\n════════════════════════════════════════════════════════════\n\n❌ [ERROR] tool: Tools document missing: 工具可用性检查.md\n   Suggestion: Run `memory init --vault <path>` to create the vault structure\n\n⚠️  [WARNING] config: Config key 'vaultPath' (env: UNIFIED_MEMORY_VAULT) is defined in code but not in 常用路径与环境.md\n   Suggestion: Add a line documenting 'vaultPath' or 'UNIFIED_MEMORY_VAULT' to 常用路径与环境.md\n\n⚠️  [WARNING] config: Config key 'pythonPath' (env: UNIFIED_MEMORY_PYTHON) is defined in code but not in 常用路径与环境.md\n   Suggestion: Add a line documenting 'pythonPath' or 'UNIFIED_MEMORY_PYTHON' to 常用路径与环境.md\n\n⚠️  [WARNING] config: Config key 'corePath' (env: UNIFIED_MEMORY_COREPATH) is defined in code but not in 常用路径与环境.md\n   Suggestion: Add a line documenting 'corePath' or 'UNIFIED_MEMORY_COREPATH' to 常用路径与环境.md\n\n❌ [ERROR] doc: Canonical doc 'index' → '上下文索引.md' is defined in code but missing from vault\n   Suggestion: Create 上下文索引.md in the vault 50-Agent-Context directory, or update driftrc.yaml\n\n❌ [ERROR] doc: Canonical doc 'tools' → '工具可用性检查.md' is defined in code but missing from vault\n   Suggestion: Create 工具可用性检查.md in the vault 50-Agent-Context directory, or update driftrc.yaml\n\n❌ [ERROR] doc: Canonical doc 'ui' → 'UI审美准则.md' is defined in code but missing from vault\n   Suggestion: Create UI审美准则.md in the vault 50-Agent-Context directory, or update driftrc.yaml\n\n❌ [ERROR] doc: Canonical doc 'coord' → 'Codex-Claude-Hermes协作规则.md' is defined in code but missing from vault\n   Suggestion: Create Codex-Claude-Hermes协作规则.md in the vault 50-Agent-Context directory, or update driftrc.yaml\n\n────────────────────────────────────────────────────────────\n  5 error(s), 3 warning(s)\n════════════════════════════════════════════════════════════\n\n",
@@ -395,7 +395,7 @@
       "argv": [
         "init",
         "--vault",
-        "C:\\Users\\zhaowei\\AppData\\Local\\Temp\\um-snapshot-fpc_2vvy\\init\\fresh-vault"
+        "C:\\Users\\zhaowei\\AppData\\Local\\Temp\\um-snapshot-94bfoz3f\\init\\fresh-vault"
       ],
       "exit": 0,
       "stdout": "vault initialized at <TMP>\\fresh-vault\nconfig written to <TMP>\\home\\.unified-memory.yaml\nnext: copy integrations/AGENTS.md (Codex) and CLAUDE.md (Claude Code)\n      into your agent home directories, or use the dsh plugin.\n",
@@ -405,7 +405,7 @@
       "argv": [
         "use",
         "--vault",
-        "C:\\Users\\zhaowei\\AppData\\Local\\Temp\\um-snapshot-fpc_2vvy\\use\\use-vault"
+        "C:\\Users\\zhaowei\\AppData\\Local\\Temp\\um-snapshot-94bfoz3f\\use\\use-vault"
       ],
       "exit": 0,
       "stdout": "vault: <TMP>\\use-vault\nconfig written to <TMP>\\home\\.unified-memory.yaml\n",

@@ -24,19 +24,27 @@ sys.path.insert(0, str(ROOT / "core"))
 from unified_memory import schema  # noqa: E402
 
 
-def counts(path: Path) -> dict:
+def counts(path: Path, with_ledger: bool = True) -> dict:
     conn = sqlite3.connect(str(path))
     conn.row_factory = sqlite3.Row
     try:
-        return {
+        data = {
             "memories": conn.execute("SELECT COUNT(*) AS c FROM memories").fetchone()["c"],
             "embeddings": conn.execute("SELECT COUNT(*) AS c FROM embeddings").fetchone()["c"],
             "access_log": conn.execute("SELECT COUNT(*) AS c FROM access_log").fetchone()["c"],
             "audit": conn.execute("SELECT COUNT(*) AS c FROM audit").fetchone()["c"],
-            "version": conn.execute(
-                "SELECT value AS v FROM index_meta WHERE key = 'schema_version'"
-            ).fetchone()["v"],
         }
+        # The ledger tables only exist from v11 on, so a pre-migration v4 copy
+        # cannot count them.
+        if with_ledger:
+            data["claims"] = conn.execute("SELECT COUNT(*) AS c FROM claims").fetchone()["c"]
+            data["occurrences"] = conn.execute("SELECT COUNT(*) AS c FROM occurrences").fetchone()["c"]
+            data["links"] = conn.execute("SELECT COUNT(*) AS c FROM links").fetchone()["c"]
+            data["events"] = conn.execute("SELECT COUNT(*) AS c FROM events").fetchone()["c"]
+        data["version"] = conn.execute(
+            "SELECT value AS v FROM index_meta WHERE key = 'schema_version'"
+        ).fetchone()["v"]
+        return data
     finally:
         conn.close()
 
@@ -54,7 +62,7 @@ def main() -> int:
     work = tmp / "index.db"
     shutil.copy2(live_db, work)
 
-    before = counts(work)
+    before = counts(work, with_ledger=False)
     print("before:", json.dumps(before))
 
     conn = sqlite3.connect(str(work))
@@ -76,7 +84,13 @@ def main() -> int:
         before["memories"] == after["memories"]
         and before["embeddings"] == after["embeddings"]
         and before["access_log"] == after["access_log"]
-        and after["version"] == "10"
+        and after["version"] == "11"
+        # Batch D1: the ledger tables arrive empty (populated by the
+        # backfill/refresh, not by the migration).
+        and after["claims"] == 0
+        and after["occurrences"] == 0
+        and after["links"] == 0
+        and after["events"] == 0
         and backup.exists()
     )
     print("MIGRATION OK" if ok else "MIGRATION FAILED")

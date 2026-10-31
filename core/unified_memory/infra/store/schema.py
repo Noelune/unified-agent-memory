@@ -27,7 +27,7 @@ from pathlib import Path
 
 from ...domain.markdown import cjk_tokens
 
-SCHEMA_VERSION = "10"
+SCHEMA_VERSION = "11"
 _TARGET = int(SCHEMA_VERSION)
 
 # Default base path, read from the env at import exactly like memory.py does.
@@ -360,6 +360,60 @@ def _migrate_to_v10(conn: sqlite3.Connection) -> None:
         )
 
 
+def _migrate_to_v11(conn: sqlite3.Connection) -> None:
+    """v10 -> v11: the Claim Ledger projection tables (PLAN §4.2, verbatim).
+
+    Additive only: the four tables start empty and are populated by the
+    backfill/refresh (batch D2); memories/embeddings/access_log are untouched.
+    ``events`` is the queryable projection of the write journal — claim
+    lifecycle rows are written by the supersede/decide paths from batch D2 on.
+    """
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS claims (
+            id TEXT PRIMARY KEY,
+            text TEXT NOT NULL,
+            type TEXT NOT NULL,
+            status TEXT NOT NULL,
+            scope TEXT NOT NULL DEFAULT 'default',
+            valid_from TEXT,
+            valid_to TEXT,
+            recorded_at TEXT NOT NULL
+        )"""
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS occurrences (
+            claim_id TEXT NOT NULL,
+            doc TEXT NOT NULL,
+            line INTEGER NOT NULL,
+            quote_hash TEXT NOT NULL,
+            written_at TEXT,
+            PRIMARY KEY (claim_id, doc, line)
+        )"""
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS links (
+            src TEXT NOT NULL,
+            dst TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            decided_by TEXT,
+            decided_at TEXT,
+            PRIMARY KEY (src, dst, kind)
+        )"""
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS events (
+            seq INTEGER PRIMARY KEY,
+            at TEXT NOT NULL,
+            actor TEXT,
+            op TEXT NOT NULL,
+            target TEXT,
+            before_hash TEXT,
+            after_hash TEXT,
+            prev_hash TEXT
+        )"""
+    )
+
+
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     4: _migrate_to_v4,
     5: _migrate_to_v5,
@@ -368,6 +422,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     8: _migrate_to_v8,
     9: _migrate_to_v9,
     10: _migrate_to_v10,
+    11: _migrate_to_v11,
 }
 
 

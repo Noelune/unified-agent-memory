@@ -91,7 +91,7 @@ class SchemaMigrationTests(unittest.TestCase):
             self.assertEqual(counts["memories"], 100)
             self.assertEqual(counts["embeddings"], 50)
             self.assertEqual(counts["access_log"], 200)
-            self.assertEqual(schema._read_version(conn), 10)
+            self.assertEqual(schema._read_version(conn), int(schema.SCHEMA_VERSION))
         finally:
             conn.close()
         self.assertTrue(db.with_name(db.stem + ".v3.bak").exists())
@@ -135,14 +135,14 @@ class SchemaMigrationTests(unittest.TestCase):
             self.assertEqual(
                 conn.execute("SELECT COUNT(*) AS c FROM memories").fetchone()["c"], 100
             )
-            self.assertEqual(schema._read_version(conn), 10)
+            self.assertEqual(schema._read_version(conn), int(schema.SCHEMA_VERSION))
         finally:
             conn.close()
 
     def test_fresh_database_is_marked_current(self) -> None:
         conn = schema.get_conn(self.vault)
         try:
-            self.assertEqual(schema._read_version(conn), 10)
+            self.assertEqual(schema._read_version(conn), int(schema.SCHEMA_VERSION))
         finally:
             conn.close()
 
@@ -203,7 +203,7 @@ class SchemaMigrationTests(unittest.TestCase):
 
             conn = schema.get_conn(vault)
             try:
-                self.assertEqual(schema._read_version(conn), 10)
+                self.assertEqual(schema._read_version(conn), int(schema.SCHEMA_VERSION))
                 row = conn.execute(
                     "SELECT legacy_id, text_hash FROM memories WHERE legacy_id = 'legacy'"
                 ).fetchone()
@@ -213,6 +213,28 @@ class SchemaMigrationTests(unittest.TestCase):
                 conn.close()
         finally:
             memory_mod.INDEX_DB = original_db
+
+    def test_v10_to_v11_adds_the_ledger_tables_additively(self) -> None:
+        # Batch D1: the four projection tables are ADDED (PLAN §4.2); the
+        # learning tables keep every row (I4) and the version moves to 11.
+        db = self._downgrade_to(10)
+        schema.get_conn(self.vault).close()
+        self.assertEqual(self._read_stored_version(db), "11")
+        check = sqlite3.connect(str(db))
+        check.row_factory = sqlite3.Row
+        try:
+            counts = {
+                name: check.execute(f"SELECT COUNT(*) AS c FROM {name}").fetchone()["c"]
+                for name in ("claims", "occurrences", "links", "events",
+                             "memories", "embeddings", "access_log")
+            }
+            # New tables exist and start empty; learning tables keep their rows.
+            for name in ("claims", "occurrences", "links", "events"):
+                self.assertEqual(counts[name], 0, name)
+            self.assertGreater(counts["memories"], 0)
+            self.assertGreater(counts["access_log"], 0)
+        finally:
+            check.close()
 
 
 if __name__ == "__main__":
