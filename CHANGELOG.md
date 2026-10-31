@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-10-31
+
 ### Compatibility — dsh `0.2.1-rc.3` 声明兼容（零差异重发布，无需适配）
 
 dsh 在 npm `next` 通道发布了 `0.2.1-rc.3`。对插件运行时触达的全部宿主包（`dsh` 主包、`dsh-tools`、`dsh-host-webserver`、`dsh-plugin-manager`、`dsh-user-approval`）做了 tarball 级 diff：除主包 `package.json` 里 monorepo 内部依赖的版本号批量对齐外，**所有 `lib/` 字节级相同**——这是一次 lockstep 重发布，没有 API 或行为变化。
@@ -37,6 +39,37 @@ dsh 在 npm `next` 通道发布了 `0.2.1-rc.3`。对插件运行时触达的全
 
 - 核心 389 + setup 32 个既有测试全绿；新增 `core/tests/test_catchup.py`（15 例：锚点计算、due 判定、补跑执行/跳过/失败隔离、盖章、POSIX crontab 安装幂等）与 `test/catchup-boot.test.ts`（4 例：立即触发、无 vault 跳过、单次守卫、失败留痕）。
 - Windows 端到端：临时 vault 上 `setup.py init → cron` 真实注册两个 schtasks 任务，提交区写入一条事实后 `catchup --check`（both due）→ `--run`（晋升 1 条、盖章）→ 复查（both not due）；`forget_weekly.bat` 在未安装 core 的解释器下经自带 `PYTHONPATH` 执行成功（exit 0）。测试任务与临时目录已清理。
+
+### Added — 批次 A：止血（12 项修复 + 1 个现场迁移 bug）
+
+- **迁移不再失忆**：`_migrate_schema` 从"版本不符即全表 DELETE"改为增量注册表 + 单事务 + 失败回滚 + `.v<n>.bak` 备份；现场迁移验证还抓到并修掉一个会让所有真实 0.8.8 库升级崩溃的顺序 bug。
+- **事实身份**：`id = sha256(doc␟line)`（occurrence 身份）——跨文档同句不再静默合并、删一篇不丢另一篇；v5 迁移折叠遗留重复并重映射引用。
+- **围栏统一**：`encode_untrusted` 一处实现，200 条模糊测试钉住"vault 文本永远关不上数据围栏"。
+- **中文检索**：三套词法表收敛为一张 `fts_lex`（ASCII 词 + CJK bigram）双语 FTS——旧表 unicode61 对中文恒 0 命中却拿最高权重。
+- **审计链**：submit/promote/decide/forget/repair/digest 全接入哈希链，`memory audit [--verify]`。
+- **遗忘去毒**：retrieved/used 拆分（v10）——"检索即强化"的正反馈环删除，遗忘只奖励被引用；围栏事实带 `[短id]`，模型回显即记 used。
+- **热路径**：查询向量预算 0.8s→0.12s；缓存键改"概念袋"；图流门控（无直击返回空）；预算按价值密度装填。
+- 完整清单见 [BATCH-A-REPORT.md](BATCH-A-REPORT.md)。
+
+### Added — 批次 B/C/D/E：地基、置信度、Claim Ledger、参与度层
+
+- **四层架构**：`surface / app / domain / infra` 收口完成，依赖方向由架构测试钉住，**六类白名单全部清零**；规模预算门 `ENFORCE_BUDGETS` 开启（文件 600 / 函数 60 / 顶层 def 20）。
+- **检索弃答（C1）**：hybrid 检索新增置信地板——零支持的弱命中不再返回，`--json` 新增 `confidence: high|low`。问不存在的东西得到空结果，而不是 8 条 0.03 分的弱匹配。
+- **遗忘收敛（C2）**：保护网从 20+ 关键词宽网（命中约 75% 事实、遗忘形同虚设）收敛为显式白名单（凭据/红线/端点/协作四类，`domain/policy.PROTECTED_TOPICS`）；可触达率 41.7% → 75%（模板语料）。**注意**：旧事实现在会真的参与遗忘评分——全部可回滚（进 `记忆遗忘区/`）；需要永久保护的类别往白名单加词即可。
+- **Claim Ledger（D，PLAN §4 最小版）**：schema v11（claims/occurrences/links/events，只增不减）；每条事实一个永久 block ID（`^c-…`，Obsidian 原生语法，改文字不改 ID）；`memory backfill-ids [--dry-run]` 幂等补写（自愿执行，先看 diff）；`memory search --as-of YYYY-MM-DD` 回答"当时认为什么是对的"；`memory explain <id>` 输出单条事实的完整时间线。真实库副本迁移守恒已验证（164/130/848 一行不动）。
+- **参与度钩子（E）**：`integrations/hooks/memory_hook.py` 平台无关钩子运行时——会话开始注入常驻记忆包、每轮按需本地检索（auto 敏感门，禁向量，p95 ≈148ms ≤ 300ms 预算）、会话结束把 transcript 排进事实抽取队列；Claude Code 官方钩子一键接入（`integrations/claude/hooks/`，含接线文档与漂移守卫测试）；`memory digest --queue` 消费队列（幂等）；Codex 无钩子面，共享 vault 使其他平台的沉淀对它同样可见。
+- **README.md 不再进事实索引**（目录说明文档此前把模板指令伪装成事实）。
+
+### Fixed
+
+- `memory doctor` 的向量配置状态恒为 False（错误相对导入被静默吞掉）。
+- 远端检索丢失引用 id（hex id 被脱敏规则误伤）、`search --remote --json` 忽略 `--json`——由 46 项真功能 e2e 抓出。
+- 测试隔离三处泄漏（journal / decide 集成 / bench 索引库）——真实 home 零新增。
+
+### Verified
+
+- Python **526** / JS 886 / setup 32 / typecheck 0；bench 检索指标与 0.8.8 **逐字段一致**（重构五批次未触碰排序权重）；CLI 快照 46 例逐字节；46 项真功能 e2e；真实库副本 v4→v11 迁移守恒。
+- 逐批次台账：[BATCH-A-REPORT.md](BATCH-A-REPORT.md)、[BATCH-REPORT.md](BATCH-REPORT.md)。
 
 ## [0.8.8] — 2026-10-23
 
