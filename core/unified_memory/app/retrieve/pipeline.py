@@ -26,12 +26,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from . import graph as graph_mod, index
-from .infra.providers import embed
-from .domain import envelope
-from .domain.markdown import encode_untrusted, redact
-from .domain.model import Evidence
-from .infra.store import records_for_ids
+from ...infra.providers import embed
+from ...infra.store import lexical_search, record_access, records_for_ids, update_index
+from ...domain import envelope
+from ...domain.markdown import encode_untrusted, redact
+from ...domain.model import Evidence
+from . import graph as graph_mod
 
 RRF_K = 60
 DEFAULT_WEIGHTS = (1.0, 1.0, 0.9)  # lexical, vector, graph
@@ -98,7 +98,7 @@ def _streams(vault: Path, query: str, pool: int) -> tuple[list[dict], list[dict]
     finds stale vectors still returns results — it just ranks without the
     newest lines until the next sync.
     """
-    lexical = index.lexical_search(vault, query, limit=pool)
+    lexical = lexical_search(vault, query, limit=pool)
     vec: list[dict] = []
     query_vec = embed.embed_query_cached(vault, query)
     if query_vec is not None:
@@ -187,7 +187,7 @@ def hybrid_search(
     next sync, in exchange for recall latency that does not depend on a remote
     API. See _streams for the measurements behind that choice.
     """
-    index.update_index(vault)  # incremental, self-healing derived db
+    update_index(vault)  # incremental, self-healing derived db
     query = query.strip()
     pool = max(limit * 3, 20)
 
@@ -202,7 +202,7 @@ def hybrid_search(
 
     # Reinforcement: reading is a use.
     if selected:
-        index.record_access(vault, [mid for mid, _ in selected])
+        record_access(vault, [mid for mid, _ in selected])
 
     payload = {
         "ok": True,

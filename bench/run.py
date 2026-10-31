@@ -33,8 +33,9 @@ sys.path.insert(0, str(ROOT / "bench"))
 
 import golden_fixture  # noqa: E402
 
-from unified_memory import index, search  # noqa: E402
+from unified_memory import index  # noqa: E402
 from unified_memory import memory as memory_mod  # noqa: E402
+from unified_memory.app.retrieve import pipeline as search  # noqa: E402
 
 
 def copy_vault_to_temp(src: Path, dst: Path) -> Path:

@@ -120,14 +120,12 @@ SUBPROCESS_OK_PREFIXES = (PKG_NAME + ".infra.schedule",)
 # scattered whitelist entry.
 THIRD_PARTY_OK_PREFIXES = (PKG_NAME + ".infra.config_yaml",)
 # infra.config_yaml owns the optional PyYAML import (module-level try/except —
-# the sanctioned optional-dependency shape, decision A of batch B5.5b); the
-# memory shim's remote HTTP client is unreachable from a module-level import
-# in app.query.commands without closing the shim→surface→app cycle, so that
-# one function-body import is sanctioned too (decision B).
+# the sanctioned optional-dependency shape, decision A of batch B5.5b). The
+# app.query.commands entry (decision B) cleared in batch D5: the remote HTTP
+# client lives in app.remote now, no function-body import left.
 LAZY_IMPORT_OK_PREFIXES = (
     PKG_NAME + ".infra.providers",
     PKG_NAME + ".infra.config_yaml",
-    PKG_NAME + ".app.query.commands",
 )
 
 WRITE_OPEN_MODE_CHARS = ("w", "a", "x", "+")
@@ -147,24 +145,16 @@ WHITELIST: dict[str, set[str]] = {
     "writes": set(),
     "subprocess": set(),  # B5.4: register_job (cron) and drift's git probe both
     # go through infra/schedule.run_command — this rule needs no entry any more.
-    "lazy_import": set(),  # B5.5b: all lazy imports now sanctioned via prefix
-    # constants (infra.providers, infra.config_yaml, app.query.commands) or
-    # moved to module level.
+    "lazy_import": set(),  # D5: all lazy imports now sanctioned via prefix
+    # constants (infra.providers, infra.config_yaml) or moved to module level;
+    # the decision-B app.query.commands entry cleared when remote_search moved
+    # to app.remote.
     "third_party": set(),  # B5.5b: PyYAML lives in infra/config_yaml (decision A).
-    # Cross-layer imports. B5.5b cleared everything except the modules that
-    # Two documented permanent exceptions (they cannot clear without breaking
-    # adjudicated decisions; see BATCH-REPORT.md B5.5c-2n):
-    "layers": {
-        # app.query.commands lazily imports the memory shim for remote_search —
-        # the remote-index HTTP client deliberately stays on the legacy shim
-        # (B5.2 decision; new files with urlopen were SSRF-blocked by the
-        # scanner until the plugin was disabled on 2026-10-30). Documented
-        # exception until batch C moves the client into app.remote.
-        "unified_memory.app.query.commands",
-        # app.system imports the legacy graph facade, which the taskbook
-        # (§B5.3) keeps on purpose — its migration is a batch-C item.
-        "unified_memory.app.system",
-    },
+    # Cross-layer imports: EMPTY since batch D5 — remote_search lives in
+    # app.remote (client moved off the memory shim) and the graph stream lives
+    # in app/retrieve/graph.py (the legacy facade is gone). The architecture
+    # whitelist the taskbook demanded is finally at zero.
+    "layers": set(),
 }
 
 # ---------------------------------------------------------------------------

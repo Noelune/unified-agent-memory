@@ -14,8 +14,8 @@ import sys
 from argparse import Namespace
 
 from . import preview as preview_mod
-from ... import search as search_mod
 from . import stats as stats_mod
+from ..retrieve import pipeline as search_mod
 from ...domain import envelope
 from ...domain.markdown import encode_untrusted, redact
 from ...domain.model import Evidence
@@ -32,7 +32,7 @@ from ...infra.vault import (
     read_maybe,
     resolve_canonical_note,
 )
-from ..remote import REMOTE_TOKEN_ENV, remote_config
+from ..remote import REMOTE_TOKEN_ENV, remote_config, remote_search
 from ...infra.store import fts_search as store_fts_search
 
 
@@ -70,12 +70,7 @@ def _search_remote(args: Namespace, vault: Path, want_json: bool) -> None:
     url, token = rc
     mode = "remote"
     try:
-        # The remote HTTP client stays on the memory shim for now: new
-        # files containing urllib calls are rejected by the security
-        # scanner's SSRF rule (see BATCH-REPORT.md).
-        from ... import memory as memory_mod
-
-        results = memory_mod.remote_search(url, token, args.query, args.limit)
+        results = remote_search(url, token, args.query, args.limit)
     except Exception as exc:  # noqa: BLE001
         print(f"note: remote search failed ({exc}) — fell back to local index", file=sys.stderr)
         # Fallback needs a local vault; search_index would otherwise

@@ -8,7 +8,8 @@ any query, including nonsense, which fed RRF a near-uniform vote spread.
 import unittest
 
 from test_common import destroy_scratch, make_scratch_vault
-from unified_memory import graph, index, common
+from unified_memory import index, common
+from unified_memory.app.retrieve import graph
 
 
 class GraphTest(unittest.TestCase):

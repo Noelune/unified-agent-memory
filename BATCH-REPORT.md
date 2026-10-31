@@ -478,6 +478,15 @@
 - **新增**：DONE_KEEP 常量 + 裁剪逻辑 + indexed_files 排除 + docstring 理由。
 - **遗留风险**：真实 vault 的 README.md（若有事实行）将在下次 update_index 后从索引消失——这是待办发现的预期修复，用户可把真事实移进对应 canonical 笔记。
 
+### D5 shim 退场第一步：三项迁移 + 架构白名单清零（✅ 2026-10-31）
+
+- **选定方案**：① `remote_search`（HTTP 客户端）从 memory shim 迁 `app/remote.py`（逐字迁移，扫描器已停用）；`_search_remote` 的 lazy import 删除、改模块级真名；② `graph.py` → `app/retrieve/graph.py`（其仅依赖 infra.store，app→infra 合法）；③ `search.py` → `app/retrieve/pipeline.py`（hybrid 检索主实现归位任务书 §2 的 retrieve 层；index facade 的三处调用改 infra.store 真名）。三个 legacy 路径删除（无入口职责）；`WHITELIST["layers"]` **清零**、`LAZY_IMPORT_OK_PREFIXES` 移除 decision-B 前缀——**B0 立下的"白名单随进度删空"目标至此达成**。**放弃方案**：保留 search.py 为 facade（其两个引用方迁移成本低，facade 是假需求）。
+- **shim 退场裁定（按任务书"无引用才删"规则）**：maintenance（1 个测试引用）/ inbox（2）/ stats（2）/ preview（4）/ conflict（8）均**有引用 → 留下**，退场列入下一批次开头的一次性提交（连同各自测试的 patch 目标清理）；8 个 `python -m` 入口模块全部保留。
+- **过程中**：两处自伤导入层级（`..retrieve` 应为 `.retrieve`、`..domain` 应为 `...domain`）与 bench/run.py 的漏网引用都被测试/验证门当场抓住——verify 第 5 门因 bench 崩溃而红正是尺子在干活。
+- **测试结果**：七道门全绿（Python 526 / JS 886 / setup 32 / typecheck / bench 一致 / 快照 46 逐字节 / e2e 46）。
+- **删除**：legacy `graph.py`/`search.py`（实现迁移后删除，非 shim 保留——引用方全部真名化）+ memory shim 的 remote_search 体 + decision-B 白名单条目。
+- **遗留风险**：memory.py shim 仍保留 INDEX_DB 重绑全局（测试隔离机制依赖，§0.7 退场需连 test_common/bench 的 rebind 一起改）；test_module_surface 的 SURFACE 冻结清单随本次缩小（remote_search 移出 memory 面）。
+
 ## B5.5 接手说明存档（2026-10-29 交棒点，已被上节取代）
 
 **一句话状态**：B5.2 / B5.3 / B5.4（a/b/c）已入库并全绿，`git status` 干净，HEAD = `e5fb47e`；**只剩 B5.5**——清空架构白名单 + 翻预算门。下面每条都是本轮实测数据，不需要重新探查。

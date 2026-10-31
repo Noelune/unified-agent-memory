@@ -16,7 +16,7 @@ from argparse import Namespace
 from pathlib import Path
 
 from ..infra.providers import embed as embed_mod
-from .. import graph as graph_mod
+from .retrieve import graph as graph_mod
 from ..domain.policy import AGENT_CONTEXT, CANONICAL_DOCS, NON_SUBMISSION_FILES, VAULT_ENV
 from ..infra import config as config_mod
 from ..infra.config import VaultMissing, parse_config, resolve_vault  # noqa: F401  (re-exported for surface)

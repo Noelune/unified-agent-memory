@@ -26,7 +26,7 @@ import math
 import re
 from pathlib import Path
 
-from .infra.store import active_memories
+from ...infra.store import active_memories
 
 MIN_CONCEPT_FREQ = 2
 MAX_CANDIDATES = 60

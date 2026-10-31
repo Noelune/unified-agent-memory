@@ -30,9 +30,8 @@ SURFACE = {
         # constants and vault plumbing
         "INDEX_DB", "index_db_for", "TEMPLATE_FILES", "SUBMISSION_README",
         "is_agent_file_prefix", "find_template_dir", "init_vault",
-        # remote search
-        "REMOTE_URL_ENV", "REMOTE_TOKEN_ENV", "REMOTE_TIMEOUT",
-        "remote_config", "remote_search",
+        # remote search (the client itself moved to app.remote in batch D5)
+        "REMOTE_URL_ENV", "REMOTE_TOKEN_ENV", "remote_config",
         # index
         "update_index", "search_index",
         # commands
@@ -190,12 +189,9 @@ class ShimSurfaceTest(unittest.TestCase):
         import inspect
 
         allowed = {
-            # B5.2 kept both of these on purpose, and neither is a leftover:
-            #  * `remote_search` cannot move — the delivery scanner rejects any
-            #    new file containing urlopen (BATCH-REPORT.md「阻塞记录」), so the
-            #    HTTP client has to stay in a file that already existed.
-            #  * `shlex_quote` is an explicit one-line delegate to the scheduler.
-            "unified_memory.memory": {"remote_search"},
+            # `shlex_quote` is an explicit one-line delegate to the scheduler
+            # (the promoter's generated .bat needs it at the legacy import
+            # path). remote_search moved to app.remote in batch D5.
             "unified_memory.promoter": {"shlex_quote"},
         }
         for shim_name in SURFACE:

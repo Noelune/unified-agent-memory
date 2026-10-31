@@ -12,7 +12,8 @@ import sqlite3
 import unittest
 
 from test_common import destroy_scratch, make_scratch_vault
-from unified_memory import index, search
+from unified_memory import index
+from unified_memory.app.retrieve import pipeline as search
 from unified_memory.common import canonical_path
 
 

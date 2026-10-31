@@ -14,7 +14,8 @@ from argparse import Namespace
 from contextlib import redirect_stdout
 
 from test_common import destroy_scratch, make_scratch_vault
-from unified_memory import forgetter, index, search
+from unified_memory import forgetter, index
+from unified_memory.app.retrieve import pipeline as search
 from unified_memory.common import canonical_path
 from unified_memory.memory import cmd_cite
 

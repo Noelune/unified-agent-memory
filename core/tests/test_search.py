@@ -5,7 +5,8 @@ import unittest
 from pathlib import Path
 
 from test_common import destroy_scratch, make_scratch_vault
-from unified_memory import search, common
+from unified_memory import common
+from unified_memory.app.retrieve import pipeline as search
 
 
 class RrfFuseTest(unittest.TestCase):

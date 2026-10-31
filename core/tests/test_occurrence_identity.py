@@ -15,7 +15,8 @@ import unittest
 from pathlib import Path
 
 from test_common import destroy_scratch, make_scratch_vault
-from unified_memory import index, schema, search
+from unified_memory import index, schema
+from unified_memory.app.retrieve import pipeline as search
 from unified_memory.common import canonical_dir
 
 LINE = "- the staging server runs on 127.0.0.1:8080（写入 2026-01-01｜来源：Agent提交区/x-1.md）\n"

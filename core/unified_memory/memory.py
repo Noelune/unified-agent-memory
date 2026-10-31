@@ -2,8 +2,7 @@
 """memory — compatibility shim for the CLI (batch B5.2).
 
 The grammar lives in ``surface.cli`` and the command bodies in ``app/*``. This
-module keeps the historical import path alive and, deliberately, two residents
-that must not move:
+module keeps the historical import path alive plus ONE deliberate resident:
 
   * ``INDEX_DB`` — the rebindable base every per-vault index path derives from.
     ``infra.store.schema.index_db_for`` reads it through ``sys.modules`` (it
@@ -11,19 +10,16 @@ that must not move:
     global has to stay at this exact import path. The env override exists
     because a test that spawns a child process (forgetter's generated .bat)
     cannot patch this in-process.
-  * ``remote_search`` — the HTTP client. It stays next to the shim because the
-    security scanner's SSRF rule rejects NEW files that call urlopen (see
-    BATCH-REPORT.md「阻塞记录」); ``app.query.commands`` reaches it lazily
-    through this module. Move it into ``app/remote.py`` once the rule allows.
 
-Everything else is a re-export. The shim itself is scheduled for deletion one
-minor after the migration (taskbook §0.7).
+``remote_search`` moved to ``app.remote`` in batch D5 (the scanner's SSRF rule
+used to block urllib files; it no longer does). Everything else is a
+re-export. The shim is scheduled for deletion one minor after the migration
+(taskbook §0.7) — the ``python -m unified_memory.memory`` entry keeps it alive
+until then.
 """
 from __future__ import annotations
 
-import json
 import os
-import urllib.request
 from pathlib import Path
 
 from .app.govern.commands import (
@@ -84,35 +80,12 @@ from .infra.console import emit_json
 from .infra.vault import ensure_vault
 from .surface.cli import build_parser, main, plain_reason
 
-REMOTE_TIMEOUT = 10
-
 # Single redirectable base path for every per-vault index DB (see
 # schema.index_db_for). Kept here on purpose — see the module docstring.
 INDEX_DB = Path(
     os.environ.get("UNIFIED_MEMORY_INDEX_DB")
     or Path.home() / ".unified-memory" / "index.db"
 )
-
-
-def remote_search(url: str, token: str, query: str, limit: int) -> list[dict]:
-    """POST one query to the remote index server and return its results.
-
-    Kept on the shim because the scanner rejects new files containing urlopen
-    (BATCH-REPORT.md「阻塞记录」). The imports are module-level so the
-    architecture test's lazy-import rule stays clean.
-    """
-    body = json.dumps({"query": query, "limit": limit}).encode("utf-8")
-    req = urllib.request.Request(
-        url.rstrip("/") + "/search",
-        data=body,
-        method="POST",
-        headers={"Content-Type": "application/json", "Authorization": "Bearer " + token},
-    )
-    with urllib.request.urlopen(req, timeout=REMOTE_TIMEOUT) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
-    if not data.get("ok"):
-        raise RuntimeError(data.get("error", "remote returned ok=false"))
-    return data.get("results", [])
 
 
 if __name__ == "__main__":
