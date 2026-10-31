@@ -496,6 +496,12 @@
 - **删除**：legacy `graph.py`/`search.py`（实现迁移后删除，非 shim 保留——引用方全部真名化）+ memory shim 的 remote_search 体 + decision-B 白名单条目。
 - **遗留风险**：memory.py shim 仍保留 INDEX_DB 重绑全局（测试隔离机制依赖，§0.7 退场需连 test_common/bench 的 rebind 一起改）；test_module_surface 的 SURFACE 冻结清单随本次缩小（remote_search 移出 memory 面）。
 
+## ⛔→✅ 发版事故记录（2026-10-31）：0.9.1 npm 产物不完整 → 0.9.2 hotfix
+
+- **事故**：v0.9.1 的 npm tarball 缺失整个分层核心（app/domain/infra/surface——`files` 白名单仍是 0.8.8 时代的 `core/unified_memory/*.py` 顶层匹配）与钩子集成文件；装出来的包一跑即 `ImportError`。根因：publish 在打包修复提交（`cbf13c8`）之前的旧工作树上执行；`sync:check` 只比对注册表版本号，**不验证 tarball 内容**。
+- **处置**：`files` 改为整棵 `core/unified_memory`（否定模式排 `__pycache__`——`.npmignore` 对 files 白名单目录实测不生效，`test/package-contents.test.mjs` 的守卫同步区分"包含缓存"与"排除缓存"两类条目）+ 补 `integrations/{hooks,claude/hooks}`；npm 同版本不可重发 → **0.9.2** 从验证过的树发布，注册表 tarball 下载解包后做内容核验（58 个分层文件 + 钩子文件 + 0 个 .pyc）与真实导入冒烟后才宣布。
+- **教训（写给下次发版）**：① publish 前必须 `npm pack --dry-run` 核对分层文件数（layered=58 / hooks=3 / pyc=0）；② publish 必须在**最终发布提交的检出树上**执行；③ tag 在产物可被消费前（npm publish 之前）才允许移动。
+
 ## B5.5 接手说明存档（2026-10-29 交棒点，已被上节取代）
 
 **一句话状态**：B5.2 / B5.3 / B5.4（a/b/c）已入库并全绿，`git status` 干净，HEAD = `e5fb47e`；**只剩 B5.5**——清空架构白名单 + 翻预算门。下面每条都是本轮实测数据，不需要重新探查。
