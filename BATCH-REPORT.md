@@ -451,6 +451,16 @@
 - **测试结果**：七道门全绿（Python 514 / JS 886 / setup 32 / typecheck / bench 一致 / 快照 42 逐字节 / e2e 46）。
 - **删除**：无——纯新增四表。
 
+### D2 block ID 补写 + 投影刷新 + 写路径接线（✅ 2026-10-31）
+
+- **选定方案**：① `domain/markdown` 新增 `BLOCK_ID_RE`（` ^c-<16hex>` 尾缀）与 `claim_id_of / has_claim_id / with_claim_id`，`strip_suffix` 先剥 ID 再剥戳——**bare 文本对索引/冲突比较/去重保持无 ID**（两条相同事实不因身份后缀而不同）；② `infra/store/ledger.py` = 投影唯一 SQL 面：`refresh_doc/refresh_ledger`（幂等重刷：按行内 ID 重建 occurrences，claims 走 INSERT OR IGNORE 保生命周期字段 + text/type 就地更新，孤儿 claims 清理含"无 occurrences 且无 links"规则——身份规则 3）、`record_supersedence`（关窗 + supersedes link + event）、`claims_valid_at`（D3 用）、`claim_id_for_text`、`claim_timeline`；③ 新命令 `memory backfill-ids [--dry-run]`（app/maintain/backfill.py：plan → B4 唯一执行器 apply → refresh；dry-run 打 stderr diff 不落盘）；④ 写路径接线：`_plan_group` 新事实行**出生即带 ID**（Change meta 携带 (old_bare, new_id) 配对），`promote()` apply 后 refresh + 关旧窗 + link；`decide` 用新分支解析被取代行的行内 ID、新行带 ID、写后投影更新。
+- **放弃方案**：在 planner 里开连接查旧 claim id（planner 是只读计划层，连接管理归 apply 后的调用方）；refresh 时重写 status/valid_to（会覆盖接线写下的生命周期——INSERT OR IGNORE 保首写）。
+- **虚拟项目验证**：`core/tests/test_ledger.py` 11 例——ID 往返/bare 无 ID/唯一性、补写幂等（**第二遍 0 新 ID 且 ID 不变**）、dry-run 不落盘、投影一致、已取代区行 status=superseded+valid_from、删行只掉自己的 claim（规则 3）、promote 出生带 ID、decide 用新关窗+link+event+as-of 排除旧值、记录窗内 as-of 返回旧值。
+- **过程中抓到的自伤缺陷**：① ledger 两处函数内 import 被 B0 架构测试当场拦下（lazy_import 红线）——提到模块级；② 测试初版把 scratch 模板事实当成自己种的（18≠2）、历史节测试没真正写 已取代 标题、strip_suffix 断言错位——三处都是测试自身错误，实现零改动。
+- **测试结果**：七道门全绿（Python 525 / JS 886 / setup 32 / typecheck / bench 一致 / **快照 44 逐字节** / e2e 46）。快照从 42→44 case（新增 `backfill-ids --dry-run` 与 `--json` 两个 case——快照契约要求每个子命令都有 case）；dry-run 的 stderr diff 含 uuid4 随机 ID，规范化器新增 `^c-<hex16> → ^c-<CLAIMID>` 掩蔽（与 `<TIME>` 同类的随机值抽象）。
+- **新增**：markdown 三助手 + ledger.py（约 190 行）+ backfill.py（约 100 行）+ backfill-ids 子命令 + 11 例测试 + 2 个快照 case。
+- **遗留风险**：`memory backfill-ids` 尚未在任何真实 vault 上执行（设计如此——用户自跑，先 `--dry-run` 看 diff）；同文本双文档在补写时会得到**两个不同 ID**（符合规则 2"绝不自动合并"）。
+
 ## B5.5 接手说明存档（2026-10-29 交棒点，已被上节取代）
 
 **一句话状态**：B5.2 / B5.3 / B5.4（a/b/c）已入库并全绿，`git status` 干净，HEAD = `e5fb47e`；**只剩 B5.5**——清空架构白名单 + 翻预算门。下面每条都是本轮实测数据，不需要重新探查。

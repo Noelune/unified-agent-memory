@@ -22,7 +22,13 @@ from ...domain.policy import CANONICAL_DOCS, CONFLICT_FILE, NON_SUBMISSION_FILES
 from ...infra import vault as vault_mod
 from ...infra.lock import file_lock
 from ...infra.schedule import mark_schedule_run
-from ...infra.store import record_audit, update_index
+from ...infra.store import get_conn, record_audit, update_index
+from ...infra.store.ledger import (
+    claim_id_for_text,
+    new_claim_id,
+    record_supersedence,
+    refresh_doc,
+)
 from ...infra.vault import canonical_dir, canonical_path, processed_dir, read_maybe
 from .review import classify, parse_pending_list, pending_sources, review, target_path
 
@@ -42,6 +48,7 @@ def _plan_group(
     prior = set(active_fact_lines(existing))
     additions: list[str] = []
     supersedes: list[str] = []
+    pairs: list[tuple[str, str]] = []
     facts: list[tuple[str, str]] = []
     for entry in group:
         fact = entry.get("内容") or entry.get("fact") or ""
@@ -52,13 +59,17 @@ def _plan_group(
         if not bare or bare in prior:
             continue
         src = entry.get("来源") or entry.get("source") or "inbox"
-        line = f"- {fact}{write_stamp(src, today)}\n"
+        # Batch D: every promoted fact is born with its permanent block id
+        # (PLAN §4.1 — the id is generated once, 改文字不改 ID).
+        claim_id = new_claim_id()
+        line = f"- {fact}{write_stamp(src, today)} ^c-{claim_id}\n"
         additions.append(line)
         facts.append((src, fact))
         prior.add(bare)
         old_bare = entry.get("取代") or entry.get("supersede") or ""
         if old_bare:
             supersedes.append(old_bare)
+            pairs.append((old_bare, claim_id))
     if not additions:
         return None
     text = append_active_facts(existing, additions)
@@ -72,6 +83,7 @@ def _plan_group(
         op="rewrite_doc", doc=target,
         before_text=existing, after_text=text,
         facts=tuple(facts),
+        meta={"kind": "promotion", "pairs": pairs},
     )
 
 
@@ -128,6 +140,26 @@ def promote(vault: Path, entries: list[dict], *, locked: bool = False) -> list[s
     # file writes above hold no database transaction, so chaining is safe.
     for src, doc_name, fact in audited:
         record_audit(vault, src, "promote", doc_name, fact[:200])
+    # Batch D: refresh the ledger projection for the touched notes and close
+    # the superseded claims' validity windows (the pairing rode in the
+    # ChangeSet meta, because only the planner knows old-bare → new-id).
+    if applied.changes:
+        conn = get_conn(vault)
+        try:
+            for change in applied.changes:
+                meta = change.meta or {}
+                refresh_doc(conn, vault, Path(change.doc))
+                if meta.get("kind") != "promotion":
+                    continue
+                for old_bare, new_id in meta.get("pairs", []):
+                    old_id = claim_id_for_text(conn, old_bare)
+                    if old_id:
+                        record_supersedence(
+                            conn, old_id, new_id, actor="promoter", decided_at=today
+                        )
+            conn.commit()
+        finally:
+            conn.close()
     return promoted
 
 

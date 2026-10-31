@@ -11,14 +11,16 @@ Split out of promoter.py in B5.4.
 """
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from ...domain import state as domain_state
 from ...domain.facts import _comparable, active_fact_lines, append_active_facts, move_to_superseded
-from ...domain.markdown import bare_fact_line, fact_lines, redact, write_stamp
+from ...domain.markdown import bare_fact_line, claim_id_of, fact_lines, redact, write_stamp
 from ...domain.policy import ADJUDICATED_FILE, CONFLICT_FILE
 from ...infra.lock import file_lock
-from ...infra.store import record_audit
+from ...infra.store import get_conn, record_audit
+from ...infra.store.ledger import new_claim_id, record_supersedence, refresh_doc
 from ...infra.vault import atomic_write, canonical_dir, read_maybe, situation_dir
 from .promote import _resolve_target, archive_sources
 from .queue import read_conflicts, record_adjudication, remove_conflict
@@ -107,7 +109,15 @@ def _apply_replace(vault: Path, entry: dict, choice: str, why: str) -> dict:
         # shape and quietly appends the new fact beside the old one.
         raw_old = str(entry.get("旧", "")).strip()
         old = _comparable(raw_old) if raw_old else ""
+        old_claim_id = ""
         if choice == "用新" and old:
+            # Batch D: the replaced line carries its claim id in the vault
+            # text — read it before the move so the ledger can close the
+            # old claim's validity window.
+            for ln in existing.splitlines():
+                if _comparable(ln) == old and claim_id_of(ln):
+                    old_claim_id = claim_id_of(ln)
+                    break
             # Retire, do not delete: `promote` has always moved the old line
             # under 已取代 (via _move_to_superseded), and this path deleted
             # it outright — so the note claimed the old value had never
@@ -116,16 +126,33 @@ def _apply_replace(vault: Path, entry: dict, choice: str, why: str) -> dict:
             existing = move_to_superseded(existing, lambda ln: _comparable(ln) == old)
         new = entry.get("新", "").strip()
         prior = active_fact_lines(existing)
+        fresh_claim_id = ""
         if new and new not in prior:
+            # Batch D: the incoming fact is born with its permanent block id.
+            fresh_claim_id = new_claim_id()
             existing = append_active_facts(
                 existing,
-                [f"- {new}{write_stamp(entry.get('来源', 'inbox'))}"],
+                [f"- {new}{write_stamp(entry.get('来源', 'inbox'))} ^c-{fresh_claim_id}"],
             )
         atomic_write(target, existing)
         record_adjudication(vault, entry, choice, why=why, locked=True)
         remove_conflict(vault, entry, locked=True)
         archive_settled_source(vault, entry, locked=True)
         _record_decision_audit(vault, entry, choice, why)
+        # Batch D: the ledger projection follows the write — the new claim's
+        # row, and (for 用新) the closed window + supersedes link + event.
+        conn = get_conn(vault)
+        try:
+            refresh_doc(conn, vault, target)
+            if old_claim_id or fresh_claim_id:
+                record_supersedence(
+                    conn, old_claim_id, fresh_claim_id,
+                    actor="adjudicator",
+                    decided_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
+                )
+            conn.commit()
+        finally:
+            conn.close()
     return {
         "ok": True, "reason": None, "choice": choice, "applied": True,
         "target": str(target.relative_to(vault)) if target.is_relative_to(vault) else str(target),

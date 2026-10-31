@@ -192,6 +192,10 @@ def build_cases(root: Path) -> dict[str, dict]:
     add("doctor-json", "bare", ["doctor", "--json"])
     add("gc-dry-run", "bare", ["gc"])
     add("gc-json", "bare", ["gc", "--json"])
+    # batch D: the Claim Ledger backfill (dry-run so the fixture is untouched;
+    # the dry-run diff goes to stderr and only the summary line is captured)
+    add("backfill-dry-run", "bare", ["backfill-ids", "--dry-run"])
+    add("backfill-json", "bare", ["backfill-ids", "--dry-run", "--json"])
     # drift
     add("drift-template", "bare", ["drift", "--template"])
     add("drift-vault", "bare", ["drift", "--vault", "{vault}"])
@@ -266,6 +270,9 @@ def normalize(text: str, root: Path) -> str:
     # citation markers and the full JSON ids move with the temp root too.
     text = re.sub(r"\[[0-9a-f]{10}\]", "[<SHORTID>]", text)
     text = re.sub(r"\b[0-9a-f]{64}\b", "<MEMID>", text)
+    # Batch D: claim ids are uuid4-drawn per fact (nondeterministic by design,
+    # 改文字不改 ID) — mask them like the other random values.
+    text = re.sub(r"\^c-[0-9a-f]{16}\b", "^c-<CLAIMID>", text)
     text = re.sub(r"\d{4}-\d{2}-\d{2}", "<DATE>", text)
     text = re.sub(r"\b\d{2}:\d{2}(?::\d{2})?\b", "<TIME>", text)
     text = re.sub(r"\b\d{8}-\d{6}\b", "<STAMP>", text)

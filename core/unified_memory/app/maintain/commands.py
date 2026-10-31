@@ -11,6 +11,7 @@ import sys
 from argparse import Namespace
 from pathlib import Path
 
+from . import backfill as backfill_mod
 from . import drift as drift_mod
 from . import health as health_mod
 from ...infra.config import resolve_vault
@@ -80,6 +81,17 @@ def _print_doctor(report: dict) -> None:
                 print(f"           -> {issue['hint']}")
     else:
         print("no issues found")
+
+
+def cmd_backfill_ids(args: Namespace) -> None:
+    """Assign permanent block ids to fact lines missing one (Claim Ledger, batch D)."""
+    vault = Path(args.vault) if getattr(args, "vault", None) else resolve_vault()
+    report = backfill_mod.run_backfill(vault, dry_run=getattr(args, "dry_run", False))
+    if getattr(args, "json", False):
+        emit_json("backfill-ids", report)
+        return
+    scope = "dry-run" if report["dry_run"] else "applied"
+    print(f"backfill-ids: {report['lines']} line(s) in {report['docs']} note(s) [{scope}]")
 
 
 def cmd_doctor(args: Namespace) -> None:

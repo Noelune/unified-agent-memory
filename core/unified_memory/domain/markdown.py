@@ -114,6 +114,26 @@ EN_STAMP_RE = re.compile(
 WRITTEN_SUFFIX_RE = STAMP_RE
 USAGE_TAG_RE = re.compile(r"｜使用 \d+ 次(·最近 \d{4}-\d{2}-\d{2})?")
 VERSIONED_RE = re.compile(r"｜有效至 \d{4}-\d{2}-\d{2}")
+# Obsidian-native block ID (batch D): the stable identity of a fact line,
+# appended at first promotion / backfill and never regenerated. The `c-`
+# prefix marks claim ids so they cannot collide with user-chosen block ids.
+BLOCK_ID_RE = re.compile(r"\s+\^c-([0-9a-f]{16})\s*$")
+
+
+def claim_id_of(line: str) -> str:
+    """The 16-hex claim id a fact line carries, or "" when it has none."""
+    m = BLOCK_ID_RE.search(line or "")
+    return m.group(1) if m else ""
+
+
+def has_claim_id(line: str) -> bool:
+    return bool(BLOCK_ID_RE.search(line or ""))
+
+
+def with_claim_id(line: str, claim_id: str) -> str:
+    """Append (or replace) the line's block-id suffix."""
+    stripped = BLOCK_ID_RE.sub("", (line or "").rstrip())
+    return f"{stripped} ^c-{claim_id}"
 
 
 def parse_stamp(line: str) -> tuple[str | None, str, str | None]:
@@ -155,8 +175,14 @@ def source_agent(source: str) -> str:
 
 
 def strip_suffix(line: str) -> str:
-    """Remove promotion/usage/version suffixes, returning the bare fact text."""
-    out = EN_STAMP_RE.sub("", STAMP_RE.sub("", line or ""))
+    """Remove promotion/usage/version suffixes, returning the bare fact text.
+
+    The block-id suffix strips too (batch D): the bare text that feeds
+    dedup/conflict comparison and the search index must stay id-free, so two
+    copies of the same fact never differ by their identity suffix.
+    """
+    out = BLOCK_ID_RE.sub("", line or "")
+    out = EN_STAMP_RE.sub("", STAMP_RE.sub("", out))
     out = USAGE_TAG_RE.sub("", out)
     out = out.strip()
     return out
