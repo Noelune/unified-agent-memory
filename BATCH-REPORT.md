@@ -434,6 +434,14 @@
   3. prompt-submit 的 `update_index` 在超大 vault 上是增量扫描，fixture 上 <20ms；真实大库的数字由 E4 bench 采样环境（golden fixture）代表，换机器需重测。
 - **删除**：无。
 
+## 批次 D（Claim Ledger 最小版 + 收尾，第七阶段）
+
+### D0 任务书与台账建档（✅ 2026-10-31）
+
+- 执行者按主人指示自行起草 `../第七阶段任务书.md`（规格来源 PLAN §4 + 批次 C 行验收口径），范围裁定五条写死：只增不减、vault 为事实源/ledger 为投影、as-of 精确窗仅对本批接线后操作成立（旧历史时间窗不可靠重建——如实记录）、真实 vault 零接触（backfill 是用户自跑命令）、block ID 只生成一次。
+- 三处对 PLAN 的偏离已记录：不换 `PRAGMA user_version`（repo 的 index_meta 机制已解决其针对的问题）；不做 §5 管线重写（memories 主键不动，§4 最小版）；events 表接线面最小化（promoter/decide 的取代事件）。
+- 后续项随做随记。
+
 ## B5.5 接手说明存档（2026-10-29 交棒点，已被上节取代）
 
 **一句话状态**：B5.2 / B5.3 / B5.4（a/b/c）已入库并全绿，`git status` 干净，HEAD = `e5fb47e`；**只剩 B5.5**——清空架构白名单 + 翻预算门。下面每条都是本轮实测数据，不需要重新探查。
