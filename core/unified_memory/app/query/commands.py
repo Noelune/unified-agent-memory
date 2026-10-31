@@ -9,6 +9,7 @@ on new urllib files — see BATCH-REPORT.md).
 """
 from __future__ import annotations
 
+import re
 import sys
 from argparse import Namespace
 
@@ -21,7 +22,8 @@ from ...domain.model import Evidence
 from ...domain.policy import CANONICAL_DOCS
 from ...infra.config import resolve_vault
 from ...infra.console import emit_json
-from ...infra.store import audit_rows, audit_verify
+from ...infra.store import audit_rows, audit_verify, get_conn
+from ...infra.store.ledger import claim_timeline, claims_valid_at
 from ...infra.vault import (
     canonical_path,
     ensure_vault,
@@ -110,9 +112,91 @@ def _search_local(args: Namespace, vault: Path, want_json: bool) -> None:
     print_memory_data(args.query, result["results"])
 
 
+def _search_as_of(args: Namespace, vault: Path, want_json: bool) -> None:
+    """as-of mode (batch D3): what did the memory believe on that date.
+
+    The corpus is the Claim Ledger projection (claims valid at the date),
+    token-filtered in Python — the ledger is small (one row per fact), so a
+    dedicated FTS would be overhead, not speed. Rendered under the same
+    envelope discipline as every other search surface.
+    """
+    ensure_vault(vault)
+    date = getattr(args, "as_of", "")
+    conn = get_conn(vault)
+    try:
+        rows = claims_valid_at(conn, date)
+    finally:
+        conn.close()
+    query = (args.query or "").strip()
+    if query:
+        tokens = [t.lower() for t in re.split(r"[\s,，]+", query) if t]
+        rows = [r for r in rows if any(t in r["text"].lower() for t in tokens)]
+    if want_json:
+        results = [
+            {
+                "id": r["id"],
+                "text": r["text"],
+                "status": r["status"],
+                "valid_from": r["valid_from"],
+                "valid_to": r["valid_to"],
+                "untrusted": True,
+            }
+            for r in rows
+        ]
+        emit_json(
+            "search",
+            {"query": query, "mode": "as-of", "date": date, "count": len(results), "results": results},
+        )
+        return
+    if not rows:
+        print(envelope.NO_MATCHES)
+        return
+    body = ""
+    for r in rows:
+        window = f"{r['valid_from']} → {r['valid_to'] or 'present'}"
+        body += f"  {envelope.cite_prefix(r['id'])}- {encode_untrusted(redact(r['text']))}  [{window}]\n"
+    print(envelope.data_block(envelope.BANNER_SHARED_DB, body))
+
+
+def cmd_explain(args: Namespace) -> None:
+    """One claim's full ledger timeline (batch D3)."""
+    vault = resolve_vault()
+    ensure_vault(vault)
+    ref = args.claim.strip().lower()
+    if len(ref) < 6:
+        raise SystemExit("explain: give the 16-hex claim id or at least its first 6 characters")
+    conn = get_conn(vault)
+    try:
+        row = conn.execute(
+            "SELECT id FROM claims WHERE id = ? OR id LIKE ? ORDER BY id LIMIT 1",
+            (ref, ref + "%"),
+        ).fetchone()
+        if row is None:
+            raise SystemExit(f"explain: no claim matches {args.claim!r}")
+        timeline = claim_timeline(conn, row["id"])
+    finally:
+        conn.close()
+    if getattr(args, "json", False):
+        emit_json("explain", dict(timeline, untrusted=True))
+        return
+    print(f"claim {timeline['id']} [{timeline['status']}] {timeline['type']} scope={timeline['scope']}")
+    print(f"  text: {timeline['text']}")
+    print(f"  valid: {timeline['valid_from'] or '?'} → {timeline['valid_to'] or 'present'} (recorded {timeline['recorded_at']})")
+    for occ in timeline["occurrences"]:
+        print(f"  occurrence: {occ['doc']}:{occ['line']} (written {occ['written_at'] or '?'})")
+    for link in timeline["links"]:
+        arrow = "→" if link["src"] == timeline["id"] else "←"
+        print(f"  link {arrow} {link['kind']}: {link['dst'] if arrow == '→' else link['src']} (by {link['decided_by'] or '?'} at {link['decided_at'] or '?'})")
+    for event in timeline["events"]:
+        print(f"  event #{event['seq']}: {event['op']} by {event['actor'] or '?'} at {event['at']}")
+
+
 def cmd_search(args: Namespace) -> None:
     vault = resolve_vault()
     want_json = getattr(args, "json", False)
+    if getattr(args, "as_of", None):
+        _search_as_of(args, vault, want_json)
+        return
     if getattr(args, "hybrid", False):
         _search_hybrid(args, vault, want_json)
         return

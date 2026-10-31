@@ -222,3 +222,76 @@ class WritePathWiringTest(unittest.TestCase):
             self.assertIn("同步端口为 9443", {row["text"] for row in valid})
         finally:
             conn.close()
+
+
+class AsOfAcceptanceTest(unittest.TestCase):
+    """PLAN batch acceptance: a config changed 3 times — 4 dates, all correct.
+
+    decide() stamps everything "today", so one real chain collapses to one
+    date; the test first pins the CHAIN CONTIGUITY the wiring produces, then
+    backdates the four windows to distinct historical dates (fixture setup —
+    the wiring itself is covered by the D2 tests) and checks as-of on all
+    four. Same-day successive changes collapsing to the last value is honest
+    date-granularity behaviour, documented in the ledger.
+    """
+
+    def setUp(self):
+        self.vault = make_scratch_vault()
+        _seed_note(self.vault, "env", ["- 同步端口为 8000（写入 2026-01-01｜来源：a.md）"])
+        backfill_mod.run_backfill(self.vault)
+
+    def tearDown(self):
+        destroy_scratch(self.vault)
+
+    def test_three_supersedes_four_dates_all_correct(self):
+        for new_text in ("同步端口已改为 9000", "同步端口已改为 9443", "同步端口已改为 9500"):
+            conn = get_conn(self.vault)
+            try:
+                current = [
+                    row["text"]
+                    for row in conn.execute("SELECT text FROM claims WHERE status = 'active'").fetchall()
+                    if "同步端口" in row["text"]
+                ][0]
+            finally:
+                conn.close()
+            entry = {"旧": current, "新": new_text, "来源": "a.md", "目标": ""}
+            result = decide_mod.decide(self.vault, entry, "用新")
+            self.assertTrue(result["ok"], result)
+
+        conn = get_conn(self.vault)
+        try:
+            rows = conn.execute(
+                "SELECT id, text, valid_from, valid_to, status FROM claims"
+                " WHERE text LIKE '同步端口%' ORDER BY valid_from"
+            ).fetchall()
+            self.assertEqual(len(rows), 4)
+            v1, v2, v3, v4 = rows
+            # The decide wiring chains the windows: each version ends exactly
+            # where its successor starts, and only the newest is active.
+            self.assertIsNone(v4["valid_to"])
+            self.assertEqual(v1["valid_to"], v2["valid_from"])
+            self.assertEqual(v2["valid_to"], v3["valid_from"])
+            self.assertEqual(v3["valid_to"], v4["valid_from"])
+            self.assertEqual(v4["status"], "active")
+            for older in (v1, v2, v3):
+                self.assertEqual(older["status"], "superseded")
+
+            # Backdate the four windows to distinct dates (fixture setup) and
+            # run the actual acceptance: four dates, each returns exactly the
+            # then-current value.
+            dates = ["2026-01-01", "2026-03-01", "2026-05-01", "2026-07-01"]
+            versions = [v1, v2, v3, v4]
+            for row, start in zip(versions, dates):
+                conn.execute("UPDATE claims SET valid_from = ? WHERE id = ?", (start, row["id"]))
+            for i, row in enumerate(versions):
+                end = dates[i + 1] if i + 1 < len(dates) else None
+                conn.execute("UPDATE claims SET valid_to = ? WHERE id = ?", (end, row["id"]))
+            conn.commit()
+            for i, (date, expected) in enumerate(zip(dates, (v1, v2, v3, v4))):
+                valid = {row["text"] for row in claims_valid_at(conn, date)}
+                self.assertIn(versions[i]["text"], valid, date)
+                for j, other in enumerate(versions):
+                    if j != i:
+                        self.assertNotIn(other["text"], valid, f"{date}: {other['text']}")
+        finally:
+            conn.close()

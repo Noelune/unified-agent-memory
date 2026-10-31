@@ -461,6 +461,15 @@
 - **新增**：markdown 三助手 + ledger.py（约 190 行）+ backfill.py（约 100 行）+ backfill-ids 子命令 + 11 例测试 + 2 个快照 case。
 - **遗留风险**：`memory backfill-ids` 尚未在任何真实 vault 上执行（设计如此——用户自跑，先 `--dry-run` 看 diff）；同文本双文档在补写时会得到**两个不同 ID**（符合规则 2"绝不自动合并"）。
 
+### D3 as-of 查询 + explain（✅ 2026-10-31，PLAN 验收达成）
+
+- **选定方案**：`search --as-of YYYY-MM-DD`——语料 = `claims_valid_at`（active 从 valid_from 起 + 记录窗内的 superseded；旧历史无窗则排除），query 词元 Python 过滤（ledger 每事实一行，专用 FTS 是开销不是速度），envelope 囲栏渲染（时间窗随行显示）；`explain <id|≥6位前缀>`——claims 行 + occurrences + links（方向箭头）+ events 时间线，JSON 同构。**放弃方案**：claims 专用 FTS（量级不需要，负清单已记录）。
+- **PLAN 验收第 3 条达成（测试钉住）**：一个配置经 decide 用新 改 3 次 → 四版本窗口**逐段接续**（v1.to==v2.from==…、仅最新 active）→ 回填四个不同历史日期后 as-of 四日期各返回**且仅返回**当时值（同日连续变更折叠为最后值是日期粒度的诚实行为，测试 docstring 写明）。
+- **CLI 冒烟（真子进程）**：as-of 过去日期返回旧值+时间窗、现在返回新值、explain 打印完整时间线（含 supersedes link 与事件）。
+- **测试结果**：七道门全绿（Python 526 / JS 886 / setup 32 / typecheck / bench 一致 / **快照 46 逐字节** / e2e 46）。快照 +2 case（`explain-miss`/`explain-short` 确定性错误路径——fixture 无 claims，happy path 由单测与冒烟钉住）；`search --as-of` 无独立 case（flag 形态，行为由单测钉住）。
+- **新增**：`_search_as_of` + `cmd_explain` + search 的 `--as-of` 旗标 + explain 子命令 + 1 例验收测试（含窗口接续断言）。
+- **遗留风险**：as-of 的精确窗仅覆盖本批接线后的取代（D1 任务书范围裁定）；`--as-of` 与 `--hybrid/--remote` 同时给出时 as-of 优先（分派顺序，未组合）。
+
 ## B5.5 接手说明存档（2026-10-29 交棒点，已被上节取代）
 
 **一句话状态**：B5.2 / B5.3 / B5.4（a/b/c）已入库并全绿，`git status` 干净，HEAD = `e5fb47e`；**只剩 B5.5**——清空架构白名单 + 翻预算门。下面每条都是本轮实测数据，不需要重新探查。

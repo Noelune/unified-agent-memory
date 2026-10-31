@@ -12,6 +12,7 @@
       "doctor",
       "drift",
       "embed",
+      "explain",
       "gc",
       "graph",
       "init",
@@ -347,6 +348,24 @@
       "stdout": "{\"ok\": true, \"command\": \"backfill-ids\", \"data\": {\"lines\": 12, \"docs\": 3, \"dry_run\": true}}\n",
       "stderr": "  工程执行规则.md: 构建产物必须经过 typecheck 才能合并。 -> ^c-<CLAIMID>\n  工程执行规则.md: 发布前必须跑完整回归测试。 -> ^c-<CLAIMID>\n  工程执行规则.md: 统一记忆系统的晋升时间是每天 <TIME>。 -> ^c-<CLAIMID>\n  工程执行规则.md: 部署脚本放在 scripts/deploy-old.sh -> ^c-<CLAIMID>\n  常用路径与环境.md: 生产服务器地址是 203.0.113.10 -> ^c-<CLAIMID>\n  常用路径与环境.md: 备份目录是 D:/backups/uam -> ^c-<CLAIMID>\n  常用路径与环境.md: 同步端口为 9443 -> ^c-<CLAIMID>\n  常用路径与环境.md: 默认模型是 GLM-5.3 -> ^c-<CLAIMID>\n  常用路径与环境.md: 统一记忆系统的索引库在 ~/.unified-memory。 -> ^c-<CLAIMID>\n  常用路径与环境.md: 同步端口为 8443 -> ^c-<CLAIMID>\n  我的偏好摘要.md: 用户偏好简洁的结论先行回答。 -> ^c-<CLAIMID>\n  我的偏好摘要.md: 用户不喜欢回答里堆砌术语。 -> ^c-<CLAIMID>\n"
     },
+    "explain-miss": {
+      "argv": [
+        "explain",
+        "abcdef123456"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "explain: no claim matches 'abcdef123456'\n"
+    },
+    "explain-short": {
+      "argv": [
+        "explain",
+        "abc"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "explain: give the 16-hex claim id or at least its first 6 characters\n"
+    },
     "drift-template": {
       "argv": [
         "drift",
@@ -360,7 +379,7 @@
       "argv": [
         "drift",
         "--vault",
-        "C:\\Users\\zhaowei\\AppData\\Local\\Temp\\um-snapshot-wjrfmrb6\\drift-vault\\vault"
+        "C:\\Users\\zhaowei\\AppData\\Local\\Temp\\um-snapshot-i5stv8_l\\drift-vault\\vault"
       ],
       "exit": 1,
       "stdout": "\n════════════════════════════════════════════════════════════\n  DRIFT DETECTION REPORT\n  Vault: <TMP>\\vault\n════════════════════════════════════════════════════════════\n\n❌ [ERROR] tool: Tools document missing: 工具可用性检查.md\n   Suggestion: Run `memory init --vault <path>` to create the vault structure\n\n⚠️  [WARNING] config: Config key 'vaultPath' (env: UNIFIED_MEMORY_VAULT) is defined in code but not in 常用路径与环境.md\n   Suggestion: Add a line documenting 'vaultPath' or 'UNIFIED_MEMORY_VAULT' to 常用路径与环境.md\n\n⚠️  [WARNING] config: Config key 'pythonPath' (env: UNIFIED_MEMORY_PYTHON) is defined in code but not in 常用路径与环境.md\n   Suggestion: Add a line documenting 'pythonPath' or 'UNIFIED_MEMORY_PYTHON' to 常用路径与环境.md\n\n⚠️  [WARNING] config: Config key 'corePath' (env: UNIFIED_MEMORY_COREPATH) is defined in code but not in 常用路径与环境.md\n   Suggestion: Add a line documenting 'corePath' or 'UNIFIED_MEMORY_COREPATH' to 常用路径与环境.md\n\n❌ [ERROR] doc: Canonical doc 'index' → '上下文索引.md' is defined in code but missing from vault\n   Suggestion: Create 上下文索引.md in the vault 50-Agent-Context directory, or update driftrc.yaml\n\n❌ [ERROR] doc: Canonical doc 'tools' → '工具可用性检查.md' is defined in code but missing from vault\n   Suggestion: Create 工具可用性检查.md in the vault 50-Agent-Context directory, or update driftrc.yaml\n\n❌ [ERROR] doc: Canonical doc 'ui' → 'UI审美准则.md' is defined in code but missing from vault\n   Suggestion: Create UI审美准则.md in the vault 50-Agent-Context directory, or update driftrc.yaml\n\n❌ [ERROR] doc: Canonical doc 'coord' → 'Codex-Claude-Hermes协作规则.md' is defined in code but missing from vault\n   Suggestion: Create Codex-Claude-Hermes协作规则.md in the vault 50-Agent-Context directory, or update driftrc.yaml\n\n────────────────────────────────────────────────────────────\n  5 error(s), 3 warning(s)\n════════════════════════════════════════════════════════════\n\n",
@@ -415,7 +434,7 @@
       "argv": [
         "init",
         "--vault",
-        "C:\\Users\\zhaowei\\AppData\\Local\\Temp\\um-snapshot-wjrfmrb6\\init\\fresh-vault"
+        "C:\\Users\\zhaowei\\AppData\\Local\\Temp\\um-snapshot-i5stv8_l\\init\\fresh-vault"
       ],
       "exit": 0,
       "stdout": "vault initialized at <TMP>\\fresh-vault\nconfig written to <TMP>\\home\\.unified-memory.yaml\nnext: copy integrations/AGENTS.md (Codex) and CLAUDE.md (Claude Code)\n      into your agent home directories, or use the dsh plugin.\n",
@@ -425,7 +444,7 @@
       "argv": [
         "use",
         "--vault",
-        "C:\\Users\\zhaowei\\AppData\\Local\\Temp\\um-snapshot-wjrfmrb6\\use\\use-vault"
+        "C:\\Users\\zhaowei\\AppData\\Local\\Temp\\um-snapshot-i5stv8_l\\use\\use-vault"
       ],
       "exit": 0,
       "stdout": "vault: <TMP>\\use-vault\nconfig written to <TMP>\\home\\.unified-memory.yaml\n",

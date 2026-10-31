@@ -25,6 +25,7 @@ from ..app.ingest.commands import (
 from ..app.maintain.commands import cmd_backfill_ids, cmd_doctor, cmd_drift, cmd_gc
 from ..app.query.commands import (
     cmd_audit,
+    cmd_explain,
     cmd_preview,
     cmd_search,
     cmd_show,
@@ -98,6 +99,7 @@ def _add_system_parsers(sub: argparse._SubParsersAction) -> None:
     p_search.add_argument("--hybrid", action="store_true", help="hybrid retrieval: BM25 + semantic vectors + graph")
     p_search.add_argument("--format", choices=("full", "compact", "narrative"), default="full", help="result format (hybrid only)")
     p_search.add_argument("--budget", type=int, default=None, help="token budget cap (hybrid only)")
+    p_search.add_argument("--as-of", dest="as_of", metavar="YYYY-MM-DD", default=None, help="query the Claim Ledger: what the memory believed on that date")
     p_search.add_argument("--json", action="store_true", help="emit a machine-readable JSON envelope")
     p_search.set_defaults(fn=cmd_search)
 
@@ -105,6 +107,11 @@ def _add_system_parsers(sub: argparse._SubParsersAction) -> None:
     p_show.add_argument("doc", help="canonical id (index/prefs/env/rules/tools/ui/coord) or a *.md note under 50-Agent-Context")
     p_show.add_argument("--json", action="store_true", help="emit a machine-readable JSON envelope")
     p_show.set_defaults(fn=cmd_show)
+
+    p_explain = sub.add_parser("explain", help="print one claim's full ledger timeline (id + occurrences + links + events)")
+    p_explain.add_argument("claim", help="16-hex claim id, or its first >=6 characters")
+    p_explain.add_argument("--json", action="store_true", help="emit a machine-readable JSON envelope")
+    p_explain.set_defaults(fn=cmd_explain)
 
     p_submit = sub.add_parser("submit", help="write a fact into the inbox")
     p_submit.add_argument("fact")

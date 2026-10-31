@@ -196,6 +196,10 @@ def build_cases(root: Path) -> dict[str, dict]:
     # the dry-run diff goes to stderr and only the summary line is captured)
     add("backfill-dry-run", "bare", ["backfill-ids", "--dry-run"])
     add("backfill-json", "bare", ["backfill-ids", "--dry-run", "--json"])
+    # explain: deterministic error paths (the fixture carries no claims; the
+    # happy path is pinned by test_ledger + e2e-style smokes)
+    add("explain-miss", "bare", ["explain", "abcdef123456"])
+    add("explain-short", "bare", ["explain", "abc"])
     # drift
     add("drift-template", "bare", ["drift", "--template"])
     add("drift-vault", "bare", ["drift", "--vault", "{vault}"])
