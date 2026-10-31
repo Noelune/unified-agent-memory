@@ -10,13 +10,17 @@ would-be diff to stderr and writes nothing.
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 from ...domain.markdown import bare_fact_line, has_claim_id, with_claim_id
 from ...domain.model import Change, ChangeSet
 from ...infra import vault as vault_mod
+from ...infra.store import get_meta, set_meta
 from ...infra.store.ledger import new_claim_id, refresh_ledger
 from ...infra.vault import ensure_vault, indexed_files, read_maybe
+
+BACKFILL_MARKER_KEY = "ledger.backfill_done"
 
 
 def plan_backfill(vault: Path) -> tuple[ChangeSet, list[tuple[Path, str, str]]]:
@@ -73,4 +77,21 @@ def run_backfill(vault: Path, dry_run: bool = False) -> dict:
     # Refresh touches every note (cheap, idempotent) so the projection also
     # picks up ids assigned by earlier runs.
     refresh_ledger(vault)
+    return report
+
+
+def ensure_backfilled(vault: Path) -> dict | None:
+    """Run the backfill once per vault (batch D7: default-enabled).
+
+    Write/maintenance paths call this — NEVER the read path: it rewrites
+    canonical notes (append-only id suffixes through the one executor) and
+    must not add latency or writes to a search. The marker lives in
+    index_meta, so the whole flow fires exactly once per vault; concurrent
+    callers are safe (the executor re-plans under the lock, and a re-plan
+    finds every line already carrying an id).
+    """
+    if get_meta(vault, BACKFILL_MARKER_KEY):
+        return None
+    report = run_backfill(vault)
+    set_meta(vault, BACKFILL_MARKER_KEY, time.strftime("%Y-%m-%dT%H:%M:%S"))
     return report

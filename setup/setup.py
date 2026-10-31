@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import shutil
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "core"))
@@ -25,6 +26,96 @@ from deploy import main as deploy_main
 from unified_memory import forgetter, memory as mem_mod  # noqa: E402
 from unified_memory import promoter  # noqa: E402
 from unified_memory.common import resolve_vault  # noqa: E402
+
+
+def install_claude_hooks(repo_root: Path, claude_dir: Path | None = None, remove: bool = False) -> str:
+    """Merge (or remove) the three hook entries into Claude Code's settings.
+
+    Default-enabled participation (batch D7): the hooks install with setup,
+    idempotently and only ever APPENDING our own group under the three event
+    keys — user hooks are never touched. A one-time ``.bak-<ts>`` backup is
+    taken before the first write. Returns a human-readable outcome.
+    """
+    import json
+
+    from unified_memory.infra.vault import atomic_write
+
+    claude_dir = claude_dir or (Path.home() / ".claude")
+    settings_path = claude_dir / "settings.json"
+    script = str((repo_root / "integrations" / "hooks" / "memory_hook.py").resolve())
+
+    settings: dict = {}
+    if settings_path.is_file():
+        try:
+            settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, ValueError):
+            # A settings file we cannot parse is the user's business — never
+            # overwrite it; tell them to merge the snippet by hand.
+            return f"skipped: {settings_path} is not valid JSON — merge integrations/claude/hooks/settings-snippet.json by hand"
+    hooks = settings.get("hooks")
+    if hooks is None and not remove:
+        hooks = {}
+    if not isinstance(hooks, dict) and not remove:
+        return f"skipped: {settings_path} has a non-object 'hooks' key — merge the snippet by hand"
+    hooks = hooks or {}
+
+    def _is_ours(group: dict) -> bool:
+        for entry in group.get("hooks", []):
+            if str(entry.get("args", [""])[0] if entry.get("args") else "").endswith(
+                "integrations/hooks/memory_hook.py"
+            ):
+                return True
+        return False
+
+    changed = False
+    if remove:
+        for event, groups in list(hooks.items()):
+            if not isinstance(groups, list):
+                continue
+            kept = [g for g in groups if not (isinstance(g, dict) and _is_ours(g))]
+            if kept != groups:
+                hooks[event] = kept
+                changed = True
+                if not kept:
+                    del hooks[event]
+        settings["hooks"] = hooks
+    else:
+        snippet = json.loads(
+            (repo_root / "integrations" / "claude" / "hooks" / "settings-snippet.json").read_text(encoding="utf-8")
+        )
+
+        def _subst(node):
+            """Replace the placeholder inside parsed values, never in the JSON
+            text — a Windows path's backslashes would corrupt a string-level
+            replace."""
+            if isinstance(node, str):
+                return node.replace("${CLAUDE_PROJECT_DIR}", str(repo_root))
+            if isinstance(node, list):
+                return [_subst(item) for item in node]
+            if isinstance(node, dict):
+                return {key: _subst(value) for key, value in node.items()}
+            return node
+
+        for event, groups in snippet["hooks"].items():
+            ours = _subst(groups)
+            existing = hooks.get(event)
+            if not isinstance(existing, list):
+                hooks[event] = ours
+                changed = True
+                continue
+            if any(isinstance(g, dict) and _is_ours(g) for g in existing):
+                continue  # already installed — idempotent
+            existing.extend(ours)
+            changed = True
+        settings["hooks"] = hooks
+
+    if not changed:
+        return "already up to date" if not remove else "no entries to remove"
+    if settings_path.exists():
+        backup = settings_path.with_name(f"settings.json.bak-{time.strftime('%Y%m%d-%H%M%S')}")
+        shutil.copy2(settings_path, backup)
+    atomic_write(settings_path, json.dumps(settings, ensure_ascii=False, indent=2) + "\n")
+    return f"{'removed' if remove else 'installed'}: {settings_path}"
 
 
 def cmd_agents(args: argparse.Namespace) -> None:
@@ -58,6 +149,10 @@ def cmd_init(args: argparse.Namespace) -> None:
     mem_mod.init_vault(vault, force=args.force)
     copy_integration_files(vault)
     print()
+    if not args.no_hooks:
+        repo_root = Path(__file__).resolve().parents[1]
+        print(f"claude hooks: {install_claude_hooks(repo_root)}")
+        print()
     print("next steps:")
     print("  1. dsh users:  dsh plugin --profile web add dsh-unified-agent-memory")
     print("     and set vaultPath (env UNIFIED_MEMORY_VAULT) to this vault.")
@@ -67,6 +162,12 @@ def cmd_init(args: argparse.Namespace) -> None:
     print("       python setup/setup.py cron --vault <path>")
     print("     registers daily promotion (03:00) + weekly forgetting (Mon 04:00);")
     print("     missed runs are caught up when dsh next comes online.")
+
+
+def cmd_hooks(args: argparse.Namespace) -> None:
+    """Install (default) or remove the Claude Code hook wiring."""
+    repo_root = Path(__file__).resolve().parents[1]
+    print(install_claude_hooks(repo_root, remove=args.remove))
 
 
 def cmd_cron(args: argparse.Namespace) -> None:
@@ -123,10 +224,15 @@ def cmd_deploy(args: argparse.Namespace) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(prog="setup", description="unified-agent-memory setup")
     sub = parser.add_subparsers(dest="command", required=True)
-    p_init = sub.add_parser("init", help="create vault + config + agent files")
+    p_init = sub.add_parser("init", help="create vault + config + agent files (+ Claude hooks)")
     p_init.add_argument("--vault", required=True)
     p_init.add_argument("--force", action="store_true")
+    p_init.add_argument("--no-hooks", action="store_true", help="skip the Claude Code hook install")
     p_init.set_defaults(fn=cmd_init)
+
+    p_hooks = sub.add_parser("hooks", help="install (default) or remove the Claude Code hook wiring")
+    p_hooks.add_argument("--remove", action="store_true", help="remove our three hook entries again")
+    p_hooks.set_defaults(fn=cmd_hooks)
     p_agents = sub.add_parser("agents", help="DEPRECATED: let DSH deploy via docs/AGENT-DEPLOY.md instead")
     p_agents.add_argument("--vault", default=None)
     p_agents.add_argument("--dry-run", action="store_true")

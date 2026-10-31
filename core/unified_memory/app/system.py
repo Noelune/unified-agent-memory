@@ -16,6 +16,7 @@ from argparse import Namespace
 from pathlib import Path
 
 from ..infra.providers import embed as embed_mod
+from .maintain.backfill import ensure_backfilled
 from .retrieve import graph as graph_mod
 from ..domain.policy import AGENT_CONTEXT, CANONICAL_DOCS, NON_SUBMISSION_FILES, VAULT_ENV
 from ..infra import config as config_mod
@@ -303,6 +304,9 @@ def cmd_sync(args: Namespace) -> None:
     """
     vault = resolve_vault()
     ensure_vault(vault)
+    # Batch D7: the Claim Ledger backfill is default-enabled — one append-only
+    # pass per vault, on the maintenance path, never inside a search.
+    backfill_report = ensure_backfilled(vault)
     result = store_update_index(vault, verbose=False)
     changed = int(result.get("changed_docs", 0) or 0)
     limit = getattr(args, "limit", 400)
@@ -322,10 +326,13 @@ def cmd_sync(args: Namespace) -> None:
                 "fts5": bool(result.get("fts")),
                 "index": str(index_db_for(vault)),
                 "vectors": vectors,
+                "backfill": backfill_report,
             },
         )
         return
     print(f"index: {changed} document(s) changed, fts5={'yes' if result.get('fts') else 'no'}")
+    if backfill_report is not None:
+        print(f"backfill-ids: {backfill_report['lines']} line(s) in {backfill_report['docs']} note(s) [auto]")
     if vectors["ok"]:
         print(f"vectors: {vectors['embedded']} line(s) embedded ({vectors['reason'] or 'up to date'})")
     else:

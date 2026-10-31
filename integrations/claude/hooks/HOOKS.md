@@ -5,7 +5,21 @@
 不依赖模型自觉——这是与 `CLAUDE.md`（模型自主兜底）的关系，一句话：钩子管
 "自动发生"，CLAUDE.md 管"模型怎么对待注入的数据"。
 
-## 三步接入
+## 接入方式
+
+### 默认启用（0.9.1 起，推荐）
+
+```bash
+python setup/setup.py hooks          # 安装（幂等，重复执行无副作用）
+python setup/setup.py hooks --remove # 摘除我们的三条钩子（不动你的）
+```
+
+`setup init` 现在也**默认安装**钩子（`--no-hooks` 跳过）。安装 = 把我们的三条
+钩子**追加**进 `~/.claude/settings.json`（首次写入前自动备份为
+`settings.json.bak-<时间戳>`；你的已有钩子原样保留；无法解析的 settings 文件
+绝不触碰并提示手工合并）。
+
+### 手动接入（等价方式）
 
 1. **确认前置**：`python`（≥3.11）在 PATH 上；知道本仓库的安装路径（下称
    `<REPO>`）。

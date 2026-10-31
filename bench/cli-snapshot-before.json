@@ -118,7 +118,7 @@
         "sync"
       ],
       "exit": 0,
-      "stdout": "index: 3 document(s) changed, fts5=yes\nvectors: skipped — no SiliconFlow API key\n",
+      "stdout": "index: 3 document(s) changed, fts5=yes\nbackfill-ids: 12 line(s) in 3 note(s) [auto]\nvectors: skipped — no SiliconFlow API key\n",
       "stderr": ""
     },
     "sync-json": {
@@ -127,7 +127,7 @@
         "--json"
       ],
       "exit": 0,
-      "stdout": "{\"ok\": true, \"command\": \"sync\", \"data\": {\"changed_docs\": 3, \"fts5\": true, \"index\": \"<TMP>\\\\index-<VAULTHASH>.db\", \"vectors\": {\"ok\": false, \"embedded\": 0, \"total\": 0, \"reason\": \"no SiliconFlow API key\"}}}\n",
+      "stdout": "{\"ok\": true, \"command\": \"sync\", \"data\": {\"changed_docs\": 3, \"fts5\": true, \"index\": \"<TMP>\\\\index-<VAULTHASH>.db\", \"vectors\": {\"ok\": false, \"embedded\": 0, \"total\": 0, \"reason\": \"no SiliconFlow API key\"}, \"backfill\": {\"lines\": 12, \"docs\": 3, \"dry_run\": false}}}\n",
       "stderr": ""
     },
     "embed-missing-key": {
@@ -379,7 +379,7 @@
       "argv": [
         "drift",
         "--vault",
-        "C:\\Users\\zhaowei\\AppData\\Local\\Temp\\um-snapshot-i5stv8_l\\drift-vault\\vault"
+        "C:\\Users\\zhaowei\\AppData\\Local\\Temp\\um-snapshot-bb3r3gcu\\drift-vault\\vault"
       ],
       "exit": 1,
       "stdout": "\n════════════════════════════════════════════════════════════\n  DRIFT DETECTION REPORT\n  Vault: <TMP>\\vault\n════════════════════════════════════════════════════════════\n\n❌ [ERROR] tool: Tools document missing: 工具可用性检查.md\n   Suggestion: Run `memory init --vault <path>` to create the vault structure\n\n⚠️  [WARNING] config: Config key 'vaultPath' (env: UNIFIED_MEMORY_VAULT) is defined in code but not in 常用路径与环境.md\n   Suggestion: Add a line documenting 'vaultPath' or 'UNIFIED_MEMORY_VAULT' to 常用路径与环境.md\n\n⚠️  [WARNING] config: Config key 'pythonPath' (env: UNIFIED_MEMORY_PYTHON) is defined in code but not in 常用路径与环境.md\n   Suggestion: Add a line documenting 'pythonPath' or 'UNIFIED_MEMORY_PYTHON' to 常用路径与环境.md\n\n⚠️  [WARNING] config: Config key 'corePath' (env: UNIFIED_MEMORY_COREPATH) is defined in code but not in 常用路径与环境.md\n   Suggestion: Add a line documenting 'corePath' or 'UNIFIED_MEMORY_COREPATH' to 常用路径与环境.md\n\n❌ [ERROR] doc: Canonical doc 'index' → '上下文索引.md' is defined in code but missing from vault\n   Suggestion: Create 上下文索引.md in the vault 50-Agent-Context directory, or update driftrc.yaml\n\n❌ [ERROR] doc: Canonical doc 'tools' → '工具可用性检查.md' is defined in code but missing from vault\n   Suggestion: Create 工具可用性检查.md in the vault 50-Agent-Context directory, or update driftrc.yaml\n\n❌ [ERROR] doc: Canonical doc 'ui' → 'UI审美准则.md' is defined in code but missing from vault\n   Suggestion: Create UI审美准则.md in the vault 50-Agent-Context directory, or update driftrc.yaml\n\n❌ [ERROR] doc: Canonical doc 'coord' → 'Codex-Claude-Hermes协作规则.md' is defined in code but missing from vault\n   Suggestion: Create Codex-Claude-Hermes协作规则.md in the vault 50-Agent-Context directory, or update driftrc.yaml\n\n────────────────────────────────────────────────────────────\n  5 error(s), 3 warning(s)\n════════════════════════════════════════════════════════════\n\n",
@@ -434,7 +434,7 @@
       "argv": [
         "init",
         "--vault",
-        "C:\\Users\\zhaowei\\AppData\\Local\\Temp\\um-snapshot-i5stv8_l\\init\\fresh-vault"
+        "C:\\Users\\zhaowei\\AppData\\Local\\Temp\\um-snapshot-bb3r3gcu\\init\\fresh-vault"
       ],
       "exit": 0,
       "stdout": "vault initialized at <TMP>\\fresh-vault\nconfig written to <TMP>\\home\\.unified-memory.yaml\nnext: copy integrations/AGENTS.md (Codex) and CLAUDE.md (Claude Code)\n      into your agent home directories, or use the dsh plugin.\n",
@@ -444,7 +444,7 @@
       "argv": [
         "use",
         "--vault",
-        "C:\\Users\\zhaowei\\AppData\\Local\\Temp\\um-snapshot-i5stv8_l\\use\\use-vault"
+        "C:\\Users\\zhaowei\\AppData\\Local\\Temp\\um-snapshot-bb3r3gcu\\use\\use-vault"
       ],
       "exit": 0,
       "stdout": "vault: <TMP>\\use-vault\nconfig written to <TMP>\\home\\.unified-memory.yaml\n",

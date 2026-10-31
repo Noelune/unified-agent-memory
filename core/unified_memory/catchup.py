@@ -32,6 +32,8 @@ import json
 from pathlib import Path
 
 from . import forgetter, promoter
+from .app.ingest import digest as digest_mod
+from .app.maintain.backfill import ensure_backfilled
 from .infra.config import resolve_vault
 from .infra.schedule import mark_schedule_run, read_schedule_state
 from .infra.vault import ensure_vault
@@ -92,6 +94,11 @@ def run(vault: Path, now: dt.datetime | None = None) -> dict:
     `promoter --auto` then `forgetter --apply` (both stamp the schedule state
     themselves on success). The report keeps the failure detail verbatim so a
     caller (the dsh plugin, a bare cron, an agent) can surface it.
+
+    Batch D7 (default-enabled participation layer) adds two always-on steps,
+    each isolated the same way: the one-time Claim Ledger backfill and the
+    hook-queue drain (session transcripts → digest → inbox), so the
+    participation layer works without any manual opt-in.
     """
     ensure_vault(vault)
     report = due(vault, now=now)
@@ -112,6 +119,20 @@ def run(vault: Path, now: dt.datetime | None = None) -> dict:
             report["jobs"][job] = {"status": "ran"}
         except Exception as exc:  # noqa: BLE001 — the other job must still run
             report["jobs"][job] = {"status": "failed", "detail": str(exc)}
+    # One-time block-id backfill (marker-guarded; a no-op after the first run).
+    try:
+        backfill_report = ensure_backfilled(vault)
+        report["backfill"] = (
+            {"status": "ran", "lines": backfill_report["lines"]} if backfill_report is not None
+            else {"status": "skipped", "detail": "already done"}
+        )
+    except Exception as exc:  # noqa: BLE001 — must never fail the catchup
+        report["backfill"] = {"status": "failed", "detail": str(exc)}
+    # Hook-queue drain: session transcripts → transcript adapter → digest.
+    try:
+        report["queue"] = digest_mod.digest(vault, source="queue")
+    except Exception as exc:  # noqa: BLE001 — must never fail the catchup
+        report["queue"] = {"status": "failed", "detail": str(exc)}
     return report
 
 

@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.9.1] — 2026-10-31
+
+### Changed — 参与度层默认启用（不再是自愿开启）
+
+- **block ID 补写自动执行**：每个 vault 一次性的 `backfill-ids` 不再需要手动跑——`memory sync`、`catchup`（dsh 每小时补跑路径）与 `setup init` 在标记缺失时自动执行（marker 防重、幂等、只追加 ID 后缀、走唯一执行器，绝不进入检索读路径）。新晋升的事实本就带 ID；存量事实在升级后的第一次维护路径上自动补齐。
+- **Claude Code 钩子默认安装**：`setup init` 与新的 `setup hooks` 把三条钩子幂等追加进 `~/.claude/settings.json`（首次写入自动备份；用户已有钩子原样保留；无法解析的 settings 绝不触碰；`--no-hooks` / `hooks --remove` 随时退出）。手动粘片段仍是等价方式。
+- **钩子队列默认排水**：`catchup` 每次运行顺带 `digest --queue`（session transcript → 事实抽取 → 提交区），失败只计报告、绝不拖垮补跑。
+- **要退出**：`setup hooks --remove` + `memory sync` 的补写只发生一次（已打标记的 vault 不会再动）。
+
+### Verified
+
+- Python **534** / JS 886 / setup 32 / typecheck / bench 一致 / 快照 46 逐字节 / e2e 46；新增 8 例默认启用行为测试（marker 防重、sync/catchup 触发、幂等安装、用户钩子保全、非法 settings 不触碰）。
+
 ## [0.9.0] — 2026-10-31
 
 ### Compatibility — dsh `0.2.1-rc.3` 声明兼容（零差异重发布，无需适配）
