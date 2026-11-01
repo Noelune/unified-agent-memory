@@ -39,6 +39,7 @@ from ...infra.store import (
     prune_query_cache,
     vacuum_index,
 )
+from ...infra.store.ledger import refresh_ledger
 from ...infra.vault import canonical_dir, ensure_vault, indexed_files as vault_indexed_files, unindexed_notes
 from ...app.govern.queue import read_conflicts
 
@@ -73,6 +74,11 @@ def _check_index(vault: Path, report: dict) -> None:
     """Fill the ``index`` and ``digest`` sections."""
     db_path = store_index_db_for(vault)
     store_update_index(vault)
+    # The ledger is a derived projection like the memories table: a refresh
+    # here keeps it honest after out-of-band vault edits (audit 2026-11-01:
+    # 51 stale `---` claims survived because refresh_ledger only ever ran in
+    # the one-time backfill, so the projection never followed the files).
+    refresh_ledger(vault)
     counts = index_counts(vault)
     report["index"] = {
         "path": str(db_path),
