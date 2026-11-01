@@ -216,6 +216,11 @@ def _add_maintain_parsers(sub: argparse._SubParsersAction) -> None:
     p_doctor.add_argument("--strict", action="store_true", help="exit non-zero on warnings too")
     p_doctor.set_defaults(fn=cmd_doctor)
 
+    p_health = sub.add_parser("health", help="alias of doctor — read-only health report")
+    p_health.add_argument("--json", action="store_true", help="emit the machine-readable report")
+    p_health.add_argument("--strict", action="store_true", help="exit non-zero on warnings too")
+    p_health.set_defaults(fn=cmd_doctor)
+
     p_gc = sub.add_parser("gc", help="prune derived data (orphan indexes, old access log, graph)")
     p_gc.add_argument("--apply", action="store_true", help="actually delete (default: dry-run)")
     p_gc.add_argument("--older-than", type=int, default=30, help="only orphan indexes older than N days (default 30)")

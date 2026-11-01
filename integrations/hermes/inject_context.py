@@ -87,6 +87,7 @@ def build_pack(
     ]
     seen: set[str] = set()
     shown = 0
+    missing: list[str] = []
     used_chars = sum(len(line) + 1 for line in lines)
     for key in NOTE_ORDER:
         name = CANONICAL_DOCS.get(key)
@@ -98,6 +99,10 @@ def build_pack(
             break
         path = ctx / name
         if not path.exists():
+            # A missing canonical note is a configuration drift, not an empty
+            # note: skipping silently hid the drift (7 expected files, 6
+            # actually loaded) behind a healthy-looking pack.
+            missing.append(name)
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
         facts = _fact_lines(text)
@@ -123,6 +128,13 @@ def build_pack(
         lines.append("")
         used_chars += len(path.stem) + 4
         shown += 1
+    if missing:
+        # stdout stays parseable (hooks capture it); stderr carries the drift
+        # so an operator inspecting the hook output can see what was skipped.
+        print(
+            "[memory-context] missing canonical note(s): " + ", ".join(missing),
+            file=sys.stderr,
+        )
     lines.append("</memory-context>")
     return "\n".join(lines)
 

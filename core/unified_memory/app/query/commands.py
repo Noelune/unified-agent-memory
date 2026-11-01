@@ -351,12 +351,32 @@ def cmd_audit(args: Namespace) -> None:
         rows = [r for r in rows if target in r["target"]]
     if since:
         rows = [r for r in rows if r["at"][:10] >= since]
+    # A summary (audit finding #20): the raw event stream alone made `audit`
+    # a dump of 200 lines where the answer ("what happened at all?") had to be
+    # re-derived by hand. Counts by agent/action plus the observed time span
+    # answer that in one glance.
+    summary = {
+        "count": len(rows),
+        "byAgent": {},
+        "byAction": {},
+        "span": [rows[-1]["at"] if rows else None, rows[0]["at"] if rows else None],
+    }
+    for r in rows:
+        summary["byAgent"][r["agent"]] = summary["byAgent"].get(r["agent"], 0) + 1
+        summary["byAction"][r["action"]] = summary["byAction"].get(r["action"], 0) + 1
     if getattr(args, "json", False):
-        emit_json("audit", {"count": len(rows), "rows": [dict(r) for r in rows]})
+        emit_json("audit", {"count": len(rows), "summary": summary, "rows": [dict(r) for r in rows]})
         return
     if not rows:
         print("no audit entries")
         return
+    print(
+        f"summary: {summary['count']} entries"
+        f" | span {summary['span'][0] or '-'} → {summary['span'][1] or '-'}"
+    )
+    print("byAgent: " + ", ".join(f"{k}={v}" for k, v in sorted(summary["byAgent"].items())))
+    print("byAction: " + ", ".join(f"{k}={v}" for k, v in sorted(summary["byAction"].items())))
+    print()
     for r in rows:
         detail = (r["detail"] or "")[:80]
         print(f"#{r['id']} {r['at']} {r['agent']} {r['action']} {r['target']} {detail}")

@@ -31,6 +31,7 @@ import urllib.request
 from pathlib import Path
 
 from ..config import parse_config, resolve_vault
+from ..schedule import run_command
 from ..store import (
     pending_vector_rows,
     query_cache_get,
@@ -93,11 +94,44 @@ def _record_success() -> None:
     _failures = 0
 
 
+_secrets_hardened = False
+
+
+def _harden_secrets_file(path: Path) -> None:
+    """Restrict the plaintext secrets file to the current user (best effort).
+
+    ``~/.unified-memory/secrets.yaml`` is the documented plaintext key store.
+    SECURITY.md promises "No plaintext credentials, ever" for anything the
+    tool writes; this file is user-authored, but leaving it world-readable
+    (Windows: inherited Authenticated-Users / sandbox ACEs) contradicts the
+    spirit of that promise. Idempotent, runs once per process, and never
+    raises — a failed hardening must not break key loading.
+    """
+    global _secrets_hardened
+    if _secrets_hardened or not path.exists():
+        return
+    _secrets_hardened = True
+    try:
+        if os.name == "nt":
+            user = os.environ.get("USERNAME") or os.environ.get("USER") or ""
+            if not user:
+                return
+            run_command(
+                ["icacls", str(path), "/inheritance:r", "/grant:r", f"{user}:F"],
+                timeout=15.0,
+            )
+        else:
+            os.chmod(path, 0o600)
+    except Exception:  # noqa: BLE001 — hardening is best effort
+        pass
+
+
 def get_api_key() -> str:
     """Return the SiliconFlow API key from env or secrets.yaml ('' when unset)."""
     key = os.environ.get(API_KEY_ENV, "") or ""
     if key:
         return key.strip()
+    _harden_secrets_file(SECRETS_PATH)
     try:
         cfg = parse_config(SECRETS_PATH)
     except OSError:

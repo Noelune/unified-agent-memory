@@ -16,12 +16,49 @@ import time
 # --------------------------------------------------------------------------
 
 SECRET_PATTERNS = [
+    # PEM private key blocks (multiline) — must run before line-oriented rules
+    # so the header alone never survives; a block with no END fence is redacted
+    # to end-of-text (the key body is the secret, the fence is just its label).
+    (
+        re.compile(
+            r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)",
+            re.S,
+        ),
+        "<REDACTED_PRIVATE_KEY>",
+    ),
+    # Authorization: Bearer <token> — JWTs and opaque bearer tokens evade the
+    # hex/sk- patterns entirely (they are base64url, often >32 chars mixed).
+    (
+        re.compile(r"(?i)(authorization\s*[:=]\s*bearer\s+)([A-Za-z0-9._~+/=-]{8,})"),
+        r"\1<REDACTED_BEARER>",
+    ),
     (re.compile(r"(?i)(api[_-]?key\s*[:=]\s*)([^\s`'\"]{4,})"), r"\1<REDACTED>"),
     (re.compile(r"(?i)(access[_-]?token\s*[:=]\s*)([^\s`'\"]{4,})"), r"\1<REDACTED>"),
     (re.compile(r"(?i)(auth[_-]?token\s*[:=]\s*)([^\s`'\"]{4,})"), r"\1<REDACTED>"),
     (re.compile(r"(?i)(?<![A-Za-z_])(token\s*[:=]\s*)([^\s`'\"]{4,})"), r"\1<REDACTED>"),
     (re.compile(r"(?i)(secret\s*[:=]\s*)([^\s`'\"]{4,})"), r"\1<REDACTED>"),
     (re.compile(r"(?i)(password\s*[:=]\s*)([^\s`'\"]{4,})"), r"\1<REDACTED>"),
+    # Prose-shaped credentials: `secret 是 xxx` / `appsecret 为 xxx` / `password 是 xxx`.
+    # The value must carry ASCII (real secrets do) so ordinary Chinese sentences
+    # like `secret 是必要字段` are not mangled.
+    (
+        re.compile(
+            r"(?i)((?:api[_-]?key|access[_-]?token|auth[_-]?token|appsecret|secret|password)"
+            r"\s*[是为]\s*)"
+            r"((?=[^\s，。；、,;;'\"“”‘’（）()]{4,}[^\s]*[A-Za-z0-9])"
+            r"[^\s，。；、,;;'\"“”‘’（）()]{4,})"
+        ),
+        r"\1<REDACTED>",
+    ),
+    # Chinese prose credentials: `密码是 xxx` / `口令为 xxx` / `密钥是：xxx`.
+    (
+        re.compile(
+            r"((?:密码|口令|密钥|秘钥|令牌)(?:是|为)\s*)"
+            r"((?=[^\s，。；、,;;'\"“”‘’（）()]{2,}[^\s]*[A-Za-z0-9])"
+            r"[^\s，。；、,;;'\"“”‘’（）()]{2,})"
+        ),
+        r"\1<REDACTED>",
+    ),
     (re.compile(r"sk-[A-Za-z0-9_\-]{20,}"), "<REDACTED_API_KEY>"),
     (re.compile(r"AKIA[0-9A-Z]{16}"), "<REDACTED_AWS_ACCESS_KEY>"),
     (re.compile(r"(?<![A-Za-z0-9])[A-Fa-f0-9]{32,}(?![A-Za-z0-9])"), "<REDACTED_HEX_SECRET>"),
@@ -29,12 +66,21 @@ SECRET_PATTERNS = [
 
 # Credential-shaped lines are REJECTED at submission time (never written).
 CREDENTIAL_LINE_RE = re.compile(
-    r"(?i)(api[_-]?key|access[_-]?token|auth[_-]?token|secret|password)\s*[:=]"
-    r"|(?<![A-Za-z_])token\s*[:=]"
+    r"(?i)(api[_-]?key|access[_-]?token|auth[_-]?token|appsecret|secret|password)\s*[:=是为]"
+    r"|-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----"
+    r"|authorization\s*[:=]\s*bearer\s"
+    r"|(?<![A-Za-z_])token\s*[:=是为]\s*(?=[^\s，。；、,;;'\"“”‘’（）()]{2,}[^\s]*[A-Za-z0-9])"
+    r"|(?:密码|口令|密钥|秘钥|令牌)(?:是|为)\s*(?=[^\s，。；、,;;'\"“”‘’（）()]{2,}[^\s]*[A-Za-z0-9])"
     r"|sk-[A-Za-z0-9_\-]{20,}"
     r"|AKIA[0-9A-Z]{16}"
     r"|(?<![A-Za-z0-9])[A-Fa-f0-9]{32,}(?![A-Za-z0-9])"
 )
+
+# A standalone markdown rule (`---`, `***`, `___`) is horizontal layout, not a
+# fact line: `bare_fact_line("---")` used to return `---` (truthy), so backfill
+# appended `^c-` block ids to every `---` rule and the ledger stored `---` as a
+# claim. A rule is exactly runs of -/_/* (or =) with nothing else on the line.
+RULE_LINE_RE = re.compile(r"[-*_]{3,}|={3,}")
 
 
 def redact(text: str) -> str:
@@ -189,7 +235,11 @@ def strip_suffix(line: str) -> str:
 
 
 def fact_lines(text: str) -> list[str]:
-    """Parse a submission file into fact lines (skips headers/comments/blank)."""
+    """Parse a submission file into fact lines (skips headers/comments/blank).
+
+    `---` separators are layout, not facts: a submission that uses them as
+    dividers used to produce one `---` claim per divider.
+    """
     lines = []
     for raw in text.splitlines():
         line = raw.strip()
@@ -197,18 +247,26 @@ def fact_lines(text: str) -> list[str]:
             continue
         if line.startswith(("- ", "• ", "* ")):
             line = line[2:].strip()
-        if line:
+        if line and not RULE_LINE_RE.fullmatch(line):
             lines.append(line)
     return lines
 
 
 def bare_fact_line(line: str) -> str:
     """Canonical-line -> comparable fact text: strip bullet prefix AND all
-    promotion/usage/version suffixes. Used for dedup and conflict checks."""
+    promotion/usage/version suffixes. Used for dedup and conflict checks.
+
+    A standalone markdown rule (`---`) is layout, never a fact: returning ""
+    for it keeps backfill from appending block ids to horizontal rules and the
+    ledger from storing them as claims.
+    """
     t = line.strip()
     if t.startswith(("- ", "• ", "* ")):
         t = t[2:]
-    return strip_suffix(t).strip()
+    t = strip_suffix(t).strip()
+    if RULE_LINE_RE.fullmatch(t):
+        return ""
+    return t
 
 
 def is_versioned(line: str) -> bool:

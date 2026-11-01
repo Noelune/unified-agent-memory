@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from ...infra import config as config_mod
 from ...infra import config_yaml
 from ...infra.schedule import run_command
 
@@ -338,14 +339,24 @@ class DriftDetector:
     # ── Helpers ───────────────────────────────────────────────────
 
     def _resolve_vault(self) -> Optional[Path]:
-        """Return the vault path to check — explicit, env, or template fallback."""
+        """Return the vault path to check — explicit, env, config, then None.
+
+        `memory status` resolves the vault through infra.config.resolve_vault()
+        (explicit → UNIFIED_MEMORY_VAULT → ~/.unified-memory.yaml → default);
+        drift used to stop at the env var, so the same machine could have a
+        working `status` and a `No vault path available` `drift`. Reading the
+        same config here keeps the two consistent — and still honours an
+        explicit --vault or the env var when they are set.
+        """
         if self.vault_path:
             vault = self.vault_path
         elif os.environ.get("UNIFIED_MEMORY_VAULT"):
             vault = Path(os.environ["UNIFIED_MEMORY_VAULT"])
         else:
-            # Fallback: use template
-            return None
+            try:
+                vault = config_mod.resolve_vault()
+            except Exception:  # noqa: BLE001 — drift must not crash on config
+                return None
 
         # Check if vault contains 50-Agent-Context
         ctx = vault / "50-Agent-Context"

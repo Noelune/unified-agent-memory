@@ -39,7 +39,7 @@ from ...infra.store import (
     prune_query_cache,
     vacuum_index,
 )
-from ...infra.vault import canonical_dir, ensure_vault, indexed_files as vault_indexed_files
+from ...infra.vault import canonical_dir, ensure_vault, indexed_files as vault_indexed_files, unindexed_notes
 from ...app.govern.queue import read_conflicts
 
 ACCESS_RETENTION_DAYS = 180
@@ -120,6 +120,7 @@ def _check_canonical(ctx: Path, vault: Path, report: dict) -> None:
         "files": len(canonical_files),
         "conflictCopies": copies,
         "duplicateLines": duplicates,
+        "unindexedNotes": unindexed_notes(vault),
         # Count bullets the same way the duplicate scan above does. A bare
         # `startswith("-")` also matches a markdown `---` rule, so the note
         # reported one phantom "fact" per horizontal rule and the "N fact(s)
@@ -316,6 +317,21 @@ def _flag_unclassified(report: dict) -> list[dict]:
     ]
 
 
+def _flag_unindexed(report: dict) -> list[dict]:
+    notes = report["canonical"].get("unindexedNotes") or {}
+    if not notes.get("count"):
+        return []
+    examples = "、".join(notes.get("files", [])[:3])
+    return [
+        _issue(
+            "warn",
+            "unindexed-notes",
+            f"{notes['count']} vault note(s) inside the memory territory are outside the index",
+            "Add the path to KNOWLEDGE_SUBDIRS in infra/vault.py (or move the note into an indexed area), then run `memory sync`. Examples: " + examples,
+        )
+    ]
+
+
 def _issues(report: dict) -> list[dict]:
     issues: list[dict] = []
     issues += _flag_sync(report)
@@ -326,6 +342,7 @@ def _issues(report: dict) -> list[dict]:
     issues += _flag_bloat(report)
     issues += _flag_orphans(report)
     issues += _flag_unclassified(report)
+    issues += _flag_unindexed(report)
     return issues
 
 

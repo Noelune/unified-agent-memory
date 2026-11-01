@@ -29,7 +29,7 @@ from ..infra.store import (
     update_index as store_update_index,
     vector_count,
 )
-from ..infra.vault import atomic_write, canonical_dir, canonical_path, ensure_vault
+from ..infra.vault import atomic_write, canonical_dir, canonical_path, ensure_vault, indexed_files
 
 
 def is_agent_file_prefix(value: str) -> bool:
@@ -262,10 +262,19 @@ def cmd_status(args: Namespace) -> None:
         ensure_vault(vault)
         changed, fts_ok = update_index(vault)
         data["structure"] = "ok"
-        data["index"] = {"path": str(index_db_for(vault)), "reindexed": changed, "fts5": fts_ok}
+        # File coverage (audit finding #11): status used to report only
+        # memories/vectors, so 209/209 vectors read as "100%" even when half
+        # the vault's recallable notes were outside the index entirely.
+        file_count = len(indexed_files(vault))
+        data["index"] = {
+            "path": str(index_db_for(vault)),
+            "reindexed": changed,
+            "fts5": fts_ok,
+            "files": file_count,
+        }
         if not getattr(args, "json", False):
             print("vault structure: ok")
-            print(f"index: {index_db_for(vault)} (re-indexed {changed} file(s), fts5={'yes' if fts_ok else 'no'})")
+            print(f"index: {index_db_for(vault)} (re-indexed {changed} file(s), fts5={'yes' if fts_ok else 'no'}, files={file_count})")
         try:
             memories = memory_count(vault)
             embedded = vector_count(vault)

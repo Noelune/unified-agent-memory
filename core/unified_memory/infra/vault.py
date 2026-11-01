@@ -204,6 +204,13 @@ def read_maybe(path: Path) -> str:
     return path.read_text(encoding="utf-8") if path.exists() else ""
 
 
+# Vault-root subdirectories that hold recallable knowledge notes (used by
+# indexed_files below). ``40-Reference`` is deliberately NOT here: it is
+# reference documentation, and the credential tables live there — indexing it
+# would push credential labels into search results.
+KNOWLEDGE_SUBDIRS = ("20-Knowledge", "30-Knowledge")
+
+
 def indexed_files(vault: Path) -> list[Path]:
     """Canonical .md files that actually hold facts (moved verbatim from
     index.py, B2 — this is vault layout, not storage).
@@ -220,6 +227,14 @@ def indexed_files(vault: Path) -> list[Path]:
     ``README.md`` is skipped too (batch D4, backlog finding #4): it documents
     the directory for humans — template instructions kept masquerading as
     facts in the index and in the promoter's candidates.
+
+    Knowledge subdirectories of the vault (``20-Knowledge``, ``30-Knowledge``)
+    are indexed recursively: the promoters file knowledge facts there, and a
+    top-level-only glob made every one of those facts permanently invisible to
+    search. ``40-Reference`` stays out — it is reference documentation and the
+    credential tables live there, not recallable facts. The workflow/archive
+    areas inside 50-Agent-Context (inbox, archives, situation, forget area)
+    stay out for the same duplicate/stale-row reasons as before.
     """
     ctx = canonical_dir(vault)
     if not ctx.is_dir():
@@ -232,7 +247,77 @@ def indexed_files(vault: Path) -> list[Path]:
     unclassified = ctx / UNCLASSIFIED_FACT_REL
     if unclassified.is_file() and not is_conflict_copy(unclassified.name):
         files.append(unclassified)
+    for subdir in KNOWLEDGE_SUBDIRS:
+        base = vault / subdir
+        if not base.is_dir():
+            continue
+        for p in sorted(base.rglob("*.md")):
+            if not p.is_file() or is_conflict_copy(p.name) or p.name == "README.md":
+                continue
+            if any(part.startswith(("_", ".")) for part in p.relative_to(base).parts):
+                continue
+            files.append(p)
     return files
+
+
+# Areas inside 50-Agent-Context that are out of the index BY DESIGN — the
+# unindexed-notes tripwire must not fire on them. 情境信息/未归类事实.md is the
+# one exception (it IS indexed); every other file there is workflow state.
+NON_INDEXED_AREAS = frozenset({
+    SUBMISSION_DIR,
+    SESSION_DIR,
+    "Hermes会话自动归档",
+    SITUATION_DIR,
+    FORGET_DIR,
+    "知识库周报",
+})
+
+# Vault-template areas that hold the user's own workspace (journal, inbox,
+# reference, …), never agent memory: the unindexed-notes tripwire ignores
+# them. The template ships only 50-Agent-Context, so anything the template
+# does not know about is NOT listed here — a note landing in an unknown vault
+# directory is exactly the blind spot the tripwire exists to catch.
+KNOWN_NON_MEMORY_DIRS = frozenset({
+    "00-Meta", "10-Inbox", "15-Personal", "20-Projects", "40-Reference",
+    "60-Runtime", "70-Templates", "80-Journal", "90-Archive",
+})
+
+
+def unindexed_notes(vault: Path) -> dict:
+    """Vault notes that no index surface covers (a genuine blind spot).
+
+    Blind-spot tripwire (audit finding #11): doctor used to self-check with
+    indexed_files() — which only ever saw what was already indexed, so a whole
+    subtree could drop out of recall without a single warning. This walks the
+    whole vault and subtracts what is out of the index ON PURPOSE:
+
+      * the template's non-memory areas (00-Meta, 10-Inbox, 80-Journal, …);
+      * `.`/`_`-prefixed paths (dot dirs, backup dirs like _repair_backup);
+      * sync-conflict copies and README.md;
+      * the 50-Agent-Context areas that hold workflow/archive state by design.
+
+    Whatever still has no index surface is a real blind spot.
+    """
+    ctx = canonical_dir(vault)
+    if not ctx.is_dir():
+        return {"count": 0, "files": []}
+    indexed: set[str] = {str(p) for p in indexed_files(vault)}
+    unindexed: list[str] = []
+    for p in sorted(vault.rglob("*.md")):
+        if not p.is_file() or str(p) in indexed:
+            continue
+        parts = p.relative_to(vault).parts
+        top = parts[0]
+        if top in KNOWN_NON_MEMORY_DIRS:
+            continue
+        if any(part.startswith(("_", ".")) for part in parts):
+            continue
+        if p.name == "README.md" or is_conflict_copy(p.name):
+            continue
+        if top == AGENT_CONTEXT and len(parts) > 1 and parts[1] in NON_INDEXED_AREAS:
+            continue
+        unindexed.append(str(p.relative_to(vault)))
+    return {"count": len(unindexed), "files": unindexed[:20]}
 
 
 # --------------------------------------------------------------------------
