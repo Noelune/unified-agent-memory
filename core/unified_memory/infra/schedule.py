@@ -170,7 +170,13 @@ def run_command(
     """
     try:
         return subprocess.run(
-            args, capture_output=True, text=True, cwd=cwd, timeout=timeout, check=False
+            args,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            cwd=cwd,
+            timeout=timeout,
+            check=False,
         )
     except (OSError, subprocess.SubprocessError):
         return None
