@@ -279,7 +279,7 @@ on disk untouched**, and they are the ones that decide how agents behave:
 | Artifact that can go stale | Symptom | What the reconcile pass does |
 |---|---|---|
 | `~/.unified-memory/bin/memory` (CLI shim) | Non-DSH agents fail with `No module named unified_memory` — reads like a broken install, but the shim's absolute path just points at a deleted directory | Reads the `PYTHONPATH=` line back, re-points at the current core |
-| Managed sections in the agent instruction files | Agent follows last version's rules while tools enforce this version's behaviour; both look "fine" and logs show no conflict | Re-delegates to `deploy.py apply` (timestamped backup, nothing outside the section moves) |
+| Managed sections in the agent instruction files | Agent follows last version's rules while tools enforce this version's behaviour; both look "fine" and logs show no conflict | Re-delegates to `deploy.py apply` (timestamped backup, nothing outside the section moves). A section you edited by hand inside the markers is **left untouched** — the pass reports the skip instead of overwriting; `deploy.py preview --target <file>` shows what this build ships, and `deploy.py rollback <file>` restores the latest `.bak-*` |
 | Vault template files | Documents mentioned in a new release's notes come back as `unknown document` | Adds only missing files (`COPYFILE_EXCL`); existing ones are never overwritten |
 | Derived index | None (core rebuilds on open when `SCHEMA_VERSION` moved) | Reported, so the version switch is never silent |
 
@@ -291,7 +291,13 @@ boot. Writing the version first would stamp a half-applied upgrade as "done"
 and it would never retry.
 
 State lives in `~/.unified-memory/upgrade.json` (version, `corePath`, time, which
-artifacts actually changed); the `/status` route's `upgrade` field hands
+artifacts actually changed) plus `~/.unified-memory/managed-section.json`, the
+hash of what `deploy.py` last wrote to each managed section — the guard that
+keeps a hand-edited section from being overwritten. Deleting that record is a
+documented degradation: the next pass treats your file as a fresh install and
+re-applies the defaults.
+
+The `/status` route's `upgrade` field hands
 `fromVersion` / `toVersion` / `needsAttention` plus a problem summary to the
 panel. On a machine that was never set up the pass does nothing — no recorded
 version, no vault and no `~/.unified-memory` together mean `memory_setup` owns

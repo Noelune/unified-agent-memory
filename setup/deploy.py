@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -33,6 +34,12 @@ HTML_TAG_RE = re.compile(r"^ {0,3}</?[A-Za-z][A-Za-z0-9-]*(?=[\s/>]|\Z)")
 HTML_RAW_RE = re.compile(r"^ {0,3}<(pre|script|style|textarea)(?=[\s>]|\Z)", re.I)
 LOCK_SUFFIX = ".unified-agent-memory.deploy.lock"
 BACKUP_RE = re.compile(r"\.bak-(\d{8}-\d{6}-\d{3})$")
+
+# The record of what this tool last wrote to each managed section, used to
+# tell "the defaults moved on" from "the user edited our section" — an upgrade
+# must never silently overwrite the latter. Next to upgrade.json; a missing or
+# unreadable record means "fresh install", never "user modified, skip".
+MANAGED_STATE_FILE = "managed-section.json"
 
 AGENT_TARGETS = {
     "dsh": (".dsh", "AGENTS.md"),
@@ -306,6 +313,60 @@ def _read_text(path: Path) -> str:
     return path.read_bytes().decode("utf-8")
 
 
+def _managed_block(text: str) -> str | None:
+    """The current managed block (markers included), or None when absent.
+
+    A pre-marker (legacy) section has no markers, so it reads as absent: the
+    guard below then treats the write as a fresh install, which is right —
+    there is no managed block of ours for the user to have modified.
+    """
+    start = text.find(START_MARKER)
+    end = text.find(END_MARKER)
+    if start < 0 or end < start:
+        return None
+    return text[start : end + len(END_MARKER)]
+
+
+def _managed_hash(block: str) -> str:
+    """sha256 of a managed block with EOLs normalized, so CRLF and LF files
+    written from the same section compare equal."""
+    return hashlib.sha256(block.replace("\r\n", "\n").strip().encode("utf-8")).hexdigest()
+
+
+def _managed_state_path() -> Path:
+    """The record of what this tool last wrote, next to upgrade.json.
+
+    A missing or unreadable record means "fresh install" for the guard below:
+    write and re-create it — never "user modified, skip", which would freeze
+    every upgrade on a machine whose state file was cleaned up.
+    """
+    return Path.home() / ".unified-memory" / MANAGED_STATE_FILE
+
+
+def _load_managed_state() -> dict[str, str]:
+    try:
+        raw = json.loads(_managed_state_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _save_managed_state(state: dict[str, str]) -> None:
+    state_path = _managed_state_path()
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _managed_key(path: Path) -> str:
+    """`<agent>:<resolved path>` — the agent comes from the path's own directory."""
+    resolved = path.expanduser().resolve()
+    base = Path.home().expanduser().resolve()
+    for agent, (directory, filename) in AGENT_TARGETS.items():
+        if resolved == (base / directory / filename).resolve():
+            return f"{agent}:{resolved}"
+    return f"?:{resolved}"
+
+
 def _replace_section_at(path: Path, text: str, section: str) -> str:
     """`replace_section`, with the file named in any refusal it raises.
 
@@ -328,6 +389,32 @@ def apply_file(path: Path, section: str, *, dry_run: bool = False) -> dict[str, 
     result: dict[str, object] = {"path": path, "changed": changed, "written": False, "backup": None}
     if not changed or dry_run:
         return result
+
+    # User-modification guard (OPT-08): an upgrade must not silently overwrite
+    # a managed block the user has edited since our last write. Three cases:
+    #   recorded == hash(current block)  -> still exactly what we wrote; the
+    #                                       new default is an upgrade, rewrite.
+    #   current == hash(section)         -> content already matches (EOL-only
+    #                                       difference); converge, no skip.
+    #   otherwise (record exists)        -> the user changed it: skip, report.
+    # No record at all -> fresh install: write and create the record, never a
+    # skip. Preview keeps reporting the hypothetical rewrite by design; the
+    # hint below names it.
+    block = _managed_block(original)
+    if block is not None:
+        recorded = _load_managed_state().get(_managed_key(path))
+        current = _managed_hash(block)
+        if recorded is not None and recorded != current and _managed_hash(section) != current:
+            result["changed"] = False
+            result["reason"] = "user-modified-managed-block"
+            print(
+                f"{path}: managed section was modified by hand — left untouched. "
+                "`python setup/deploy.py preview` shows the section this build "
+                "ships; `python setup/deploy.py rollback <file>` restores the "
+                "latest backup if you want the last deployed version back.",
+                file=sys.stderr,
+            )
+            return result
     with deployment_lock(path):
         # Re-read after locking so concurrent deployment cannot overwrite newer content.
         original = _read_text(path)
@@ -353,6 +440,9 @@ def apply_file(path: Path, section: str, *, dry_run: bool = False) -> dict[str, 
                 raise OSError(f"deployment failed and rollback failed: {rollback_error}")
             raise
         result.update({"written": True, "backup": backup})
+        state = _load_managed_state()
+        state[_managed_key(path)] = _managed_hash(section)
+        _save_managed_state(state)
         return result
 
 

@@ -262,16 +262,17 @@ export async function runUpgrade(deps: UpgradeDeps): Promise<UpgradeResult> {
  * prints human lines, and a changed summary format must not turn a successful
  * upgrade into a failure.
  */
-function deployTargets(stdout: string): Array<{ changed: boolean; written: boolean }> {
-  const targets: Array<{ changed: boolean; written: boolean }> = []
+function deployTargets(stdout: string): Array<{ changed: boolean; written: boolean; reason?: string }> {
+  const targets: Array<{ changed: boolean; written: boolean; reason?: string }> = []
   for (const line of stdout.split('\n')) {
     const text = line.trim()
     if (!text.startsWith('{')) continue
     try {
-      const parsed = JSON.parse(text) as { changed?: unknown; written?: unknown }
+      const parsed = JSON.parse(text) as { changed?: unknown; written?: unknown; reason?: unknown }
       targets.push({
         changed: parsed.changed === 'True' || parsed.changed === true,
         written: parsed.written === 'True' || parsed.written === true,
+        reason: typeof parsed.reason === 'string' ? parsed.reason : undefined,
       })
     } catch {
       // Not a JSON line. Nothing to learn from it.
@@ -285,13 +286,19 @@ function deployTargets(stdout: string): Array<{ changed: boolean; written: boole
  *
  * Three distinct sentences, because the three states are genuinely different
  * and the old fallback ("已按当前版本重写托管段") claimed a rewrite even when
- * deploy had reported `changed: False` for every file.
+ * deploy had reported `changed: False` for every file. A fourth one for the
+ * user-modified skip: "已是最新" would be a lie about a section deploy refused
+ * to touch, and hiding it would hide the one thing the user should act on.
  */
-function summarizeDeploy(targets: Array<{ changed: boolean; written: boolean }>): string {
+function summarizeDeploy(targets: Array<{ changed: boolean; written: boolean; reason?: string }>): string {
   if (targets.length === 0) return '已核对托管段（deploy 未报告明细）'
   const rewritten = targets.filter((t) => t.changed).length
+  const skipped = targets.filter((t) => t.reason === 'user-modified-managed-block').length
+  if (rewritten === 0 && skipped > 0) {
+    return `${skipped} 个指令文件的托管段有手工改动，升级未覆盖（内容以你改过的为准）`
+  }
   if (rewritten === 0) return `${targets.length} 个指令文件的托管段已是最新`
-  return `${rewritten} 个指令文件的托管段已更新（改前有备份）`
+  return `${rewritten} 个指令文件的托管段已更新（改前有备份）` + (skipped ? `；另有 ${skipped} 个有手工改动，未覆盖` : '')
 }
 
 function errorText(error: unknown): string {

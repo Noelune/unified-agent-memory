@@ -1,4 +1,7 @@
+import hashlib
+import json
 import os
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -6,6 +9,7 @@ from unittest.mock import patch
 
 from setup.deploy import (
     END_MARKER,
+    MANAGED_STATE_FILE,
     START_MARKER,
     apply_file,
     build_section,
@@ -14,8 +18,31 @@ from setup.deploy import (
     resolved_prefix,
 )
 
+# Captured at import, before any test redirects HOME/USERPROFILE: the real
+# user's agent instruction file, whose fingerprint every guard test re-checks
+# so the 647a9c0 incident (a test rewriting the real ~/.dsh/AGENTS.md) cannot
+# repeat silently.
+_REAL_HOME = Path(os.environ.get("USERPROFILE") or Path.home())
+
+
+def _real_agents_digest():
+    real = _REAL_HOME / ".dsh" / "AGENTS.md"
+    if not real.exists():
+        return None
+    return hashlib.sha256(real.read_bytes()).hexdigest()
+
 
 class DeployTests(unittest.TestCase):
+    def setUp(self):
+        # apply_file now reads/writes ~/.unified-memory/managed-section.json:
+        # every test in this class runs with HOME/USERPROFILE in a temp dir so
+        # the record never lands in the real home (647a9c0 rule).
+        temp = tempfile.mkdtemp(prefix="um-deploy-home-")
+        patcher = patch.dict(os.environ, {"HOME": temp, "USERPROFILE": temp})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.addCleanup(shutil.rmtree, temp, ignore_errors=True)
+
     def test_marker_replacement_is_idempotent_and_preserves_unrelated_text(self):
         original = "before\n" + START_MARKER + "\nold\n" + END_MARKER + "\nafter\n"
         section = build_section("codex", "<vault>", "codex")
@@ -372,6 +399,93 @@ class DeployTests(unittest.TestCase):
             section = build_section("dsh", "<vault>", "dsh")
             with self.assertRaises(FileNotFoundError):
                 apply_file(path, section, dry_run=False)
+
+
+class ManagedSectionGuardTest(unittest.TestCase):
+    """升级不得静默覆盖用户改过的托管段(OPT-08)。
+
+    Home is redirected for every test; the real ~/.dsh/AGENTS.md fingerprint
+    is re-checked in tearDown so a redirect hole would fail loudly instead of
+    quietly editing the user's file.
+    """
+
+    def setUp(self):
+        self._real_before = _real_agents_digest()
+        temp = tempfile.mkdtemp(prefix="um-deploy-guard-")
+        self.home = Path(temp)
+        patcher = patch.dict(os.environ, {"HOME": temp, "USERPROFILE": temp})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.addCleanup(shutil.rmtree, temp, ignore_errors=True)
+
+    def tearDown(self):
+        self.assertEqual(
+            self._real_before,
+            _real_agents_digest(),
+            "the real ~/.dsh/AGENTS.md must never be touched by a test",
+        )
+
+    def test_first_deploy_records_the_section_it_wrote(self):
+        (self.home / ".claude").mkdir()
+        path = self.home / ".claude" / "CLAUDE.md"
+        path.write_text("用户内容\n", encoding="utf-8")
+        section = build_section("claude", "<vault>", "claude")
+
+        result = apply_file(path, section)
+
+        self.assertTrue(result["written"])
+        record = json.loads((self.home / ".unified-memory" / MANAGED_STATE_FILE).read_text(encoding="utf-8"))
+        self.assertEqual(len(record), 1)
+        key = next(iter(record))
+        self.assertTrue(key.startswith("claude:"), key)
+        # Same-version second deploy: already up to date, no second backup.
+        second = apply_file(path, section)
+        self.assertFalse(second["changed"])
+        self.assertFalse(second["written"])
+        self.assertEqual(len(list(path.parent.glob("CLAUDE.md.bak-*"))), 1)
+
+    def test_a_hand_edited_section_is_left_untouched(self):
+        (self.home / ".claude").mkdir()
+        path = self.home / ".claude" / "CLAUDE.md"
+        path.write_text("用户内容\n", encoding="utf-8")
+        apply_file(path, build_section("claude", "<vault>", "claude"))
+
+        # The user edits one line INSIDE the markers.
+        data = path.read_text(encoding="utf-8")
+        self.assertIn(START_MARKER, data)
+        edited = data.replace(START_MARKER + "\n", START_MARKER + "\n- 用户自定义行\n", 1)
+        self.assertNotEqual(edited, data)
+        path.write_text(edited, encoding="utf-8")
+        before = path.read_bytes()
+
+        result = apply_file(path, build_section("claude", "<new-vault>", "claude"))
+
+        self.assertFalse(result["written"])
+        self.assertFalse(result["changed"])
+        self.assertEqual(result.get("reason"), "user-modified-managed-block")
+        self.assertEqual(path.read_bytes(), before, "the file must be byte-identical after the skip")
+        # No new backup either — nothing was written.
+        self.assertEqual(len(list(path.parent.glob("CLAUDE.md.bak-*"))), 1)
+
+    def test_a_missing_record_is_a_fresh_install_not_a_skip(self):
+        (self.home / ".claude").mkdir()
+        path = self.home / ".claude" / "CLAUDE.md"
+        path.write_text("用户内容\n", encoding="utf-8")
+        apply_file(path, build_section("claude", "<vault>", "claude"))
+
+        # The user cleaned up the state file; the next upgrade with new
+        # defaults must still land instead of being frozen forever.
+        (self.home / ".unified-memory" / MANAGED_STATE_FILE).unlink()
+
+        result = apply_file(path, build_section("claude", "<new-vault>", "claude"))
+
+        self.assertTrue(result["written"])
+        self.assertIn("<new-vault>", path.read_text(encoding="utf-8"))
+        record = json.loads((self.home / ".unified-memory" / MANAGED_STATE_FILE).read_text(encoding="utf-8"))
+        self.assertEqual(len(record), 1)
+        # And the recreated record matches what is now on disk.
+        again = apply_file(path, build_section("claude", "<new-vault>", "claude"))
+        self.assertFalse(again["changed"])
 
 
 if __name__ == "__main__":
