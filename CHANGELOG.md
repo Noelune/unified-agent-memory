@@ -4,6 +4,25 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **OPT-07 提交幂等键**：同一事实文本重复提交时，`memory submit` 直接回答已有文件（`duplicate submission: <文件名> (already in <目录>)`）并记一条 `submit-duplicate` 审计，不再生成第二个 `*.md`；扫描限收件箱+已处理两层、跳过 `README.md`/`前缀登记.md`、上限 500 文件，超限降级为「未命中」由 promoter 复查兜底。语义变化：不同 Agent 提交同一文本收敛到同一个文件，审计里不再有第二条 `submit` 行（改为一条 `submit` + 一条 `submit-duplicate`）。audit 是 hash 链：若回滚本项，已写入的 `submit-duplicate` 行必须保留，否则 `--verify` 断链。
+- **OPT-08 升级不再覆盖用户改过的托管段**：`deploy.py apply` 在 `~/.unified-memory/managed-section.json` 按 `<agent>:<路径>` 记录上次写入的 sha256；升级时若段内内容既不等于记录值也不等于本次新默认，判定为用户手改——跳过写入（文件字节不变），结果带 `reason: user-modified-managed-block`，升级报告点名而不再谎称「已是最新」；记录缺失/损坏按全新安装处理（不会永久冻结升级）。`preview`/`rollback`/`selfcheck` 行为不变。
+
+### Fixed
+
+- **OPT-01（P0）** Vault 里有 1 条待裁决冲突时 `memory doctor` 抛 `TypeError: object of type 'int' has no len()`——CLI 与面板体检页同时拿不到报告，最需要被看见的冲突反而不可见。改为直接格式化计数，附「有冲突」回归用例。
+- **OPT-02（P0）** catchup 补跑向 `unified_memory.catchup` 传了未声明的 `--run`（argparse 只认 `--vault`/`--check`/`--json`），argparse 以退出码 2 拒绝而插件只记一行 `catch-up failed`——启动+每小时的补跑从未真正执行，错过的 03:00 晋升与周一 04:00 遗忘不会补。删除该 flag；修复后补跑首次会在真实 Vault 上真正执行晋升与遗忘，首轮结果可由报告的 `jobs` 字段核对。
+- **基线修复（非任务书 9 项）**：本分支此前为 core 新增的 `unindexed-notes` 体检项未同步客户端文案，`client-findings.test.ts` 两个用例在基线 commit 上即红；`src/client/view.ts` 补齐该 code 的文案与 hand-off 条目。
+
+### Changed — 文档口径修正（非 API 变更）
+
+- **OPT-03** 检索口径统一为三路（lexical/FTS5 含中英文 bigram、语义向量、内存概念图；RRF k=60，权重 1.0/1.0/0.9；预算为 `estimate_tokens` 启发式估算）；`docs/JSON-CONTRACT.md` 的 `streams` 示例与键说明改为代码实际返回的 `lexical`/`vector`/`graph`——外部消费者此前按文档解析 `bm25`/`trigram` 会读到不存在的键。**文档修正，非 API 变更。**
+- **OPT-04** 摄取/晋升口径对齐实现：凭据形状的行整行拒绝落盘（非「摄取前掩码」），脱敏只在 digest 输入与检索输出侧；duplicate 是精确文本判定（review 与 apply 一致），char-bigram ≥0.5 只用于 conflict/supersede 判定；`domain/conflict.py` 注释同步。
+- **OPT-05** doctor 检查项与工具数对齐：去掉已退役的 `graph bloat`，按 `_issues()` 实际注册项列清单（`unindexed-notes` 标注为本分支特有）；工具数统一为 6 并列全名（`package.json`/`dsh.plugin.json` 的 description 同步——**文档修正，非 API 变更**）。
+- **OPT-06** 写者契约表改真：canonical 写入统一经 `infra.vault.apply` 的四条路径（promoter/forgetter/repair/backfill），已知例外为 `decide` 的裁决替换与 `init_vault` 的模板创建（直接 `atomic_write`）；新增收件箱/审计/调度状态三类状态的唯一写者表；`decide.py` 行为未动（范围外）。
+- **OPT-09** `docs/ARCHITECTURE.md` 新增 `## Attention budget` 一节：四条注意力预算原则，每条锚定现有实现路径，纯文档。
+
 ## [0.9.2] — 2026-10-31
 
 ### Fixed — npm 包内容（0.9.1 的 npm 产物不可用，请直接装 0.9.2）
