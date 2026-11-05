@@ -43,6 +43,27 @@ function readCurrentVersion(): string {
   }
 }
 
+/**
+ * Read the version on disk RIGHT NOW, bypassing the import-time cache.
+ *
+ * `CURRENT_VERSION` is captured once, when the module is first imported, which
+ * is the right answer to "which code is running" and a very wrong answer to
+ * "what did the install just put there". The update route needs the second
+ * question answered: the host's `installBundle` RESOLVES with
+ * `application: 'failed'` on a pnpm failure instead of rejecting, so a claim of
+ * success has to be checked against the profile. Returns null when the file
+ * cannot be read — absent is not the same as "still on the old version".
+ */
+export function readInstalledVersion(): string | null {
+  try {
+    const pkg = JSON.parse(readFileSync(PKG_PATH, 'utf-8'))
+    const version = String(pkg.version ?? '')
+    return version === '' ? null : version
+  } catch {
+    return null
+  }
+}
+
 // ── Constants ───────────────────────────────────────────────────────
 
 const PKG_NAME = 'dsh-unified-agent-memory'

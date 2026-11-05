@@ -208,4 +208,52 @@ describe('startUpgradeReconcile', () => {
     await new Promise((resolve) => setTimeout(resolve, 50))
     expect(onUnhandled).not.toHaveBeenCalled()
   })
+
+  it('refuses to run against the real home when no home was passed', async () => {
+    // The guard that keeps `npm run check` from rewriting the developer's own
+    // `~/.dsh/AGENTS.md`. It has to fire for EVERY runner, and `node --test`
+    // (which runs test/*.test.mjs) exports only `NODE_TEST_CONTEXT` — it sets
+    // neither VITEST nor NODE_ENV. While that third signal was missing, the
+    // node suite reconciled against the real home and pointed the managed
+    // section of both AGENTS.md files at `C:/fixture-vault`.
+    //
+    // `USERPROFILE`/`HOME` are repointed at the temp dir first, on purpose: a
+    // regression test for "must not write the real home" that writes the real
+    // home when it fails is worse than no test. With the redirect, a broken
+    // guard lands its damage in `home`, which `afterEach` deletes.
+    const fakeHome = join(home, 'fake-user')
+    mkdirSync(fakeHome, { recursive: true })
+    const saved = {
+      vitest: process.env.VITEST,
+      nodeEnv: process.env.NODE_ENV,
+      nodeTest: process.env.NODE_TEST_CONTEXT,
+      userProfile: process.env.USERPROFILE,
+      home: process.env.HOME,
+    }
+    try {
+      process.env.USERPROFILE = fakeHome
+      process.env.HOME = fakeHome
+      delete process.env.VITEST
+      delete process.env.NODE_ENV
+      process.env.NODE_TEST_CONTEXT = 'child-v8'
+
+      startUpgradeReconcile(cfg())
+      await new Promise((resolve) => setTimeout(resolve, 100))
+
+      // Nothing was planned, and nothing was created under the would-be home.
+      expect(getUpgradeReport()).toBeNull()
+      expect(readdirSync(fakeHome)).toEqual([])
+    } finally {
+      for (const [key, value] of [
+        ['VITEST', saved.vitest],
+        ['NODE_ENV', saved.nodeEnv],
+        ['NODE_TEST_CONTEXT', saved.nodeTest],
+        ['USERPROFILE', saved.userProfile],
+        ['HOME', saved.home],
+      ] as const) {
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      }
+    }
+  })
 })
