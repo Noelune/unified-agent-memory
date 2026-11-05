@@ -441,8 +441,8 @@ export function makeRecallHandler(cfg: PluginConfig, deps: RecallDeps) {
 /**
  * Default dependencies: the plugin's own core runner.
  *
- * `--hybrid` because that is the fused index (BM25 + CJK bigram + vectors +
- * graph + trigram); it degrades to lexical when no embedding provider is
+ * `--hybrid` because that is the fused index (lexical + vectors + graph);
+ * it degrades to lexical when no embedding provider is
  * configured, so it is never a hard requirement.
  */
 export function defaultRecallDeps(cfg: PluginConfig, producer: string, warn: (reason: string) => void): RecallDeps {

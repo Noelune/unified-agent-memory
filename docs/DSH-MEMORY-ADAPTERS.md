@@ -30,7 +30,7 @@ working.
 
 | Component | What it does | Write boundary |
 |---|---|---|
-| `core/` (Python, stdlib only) | Vault index, five-stream hybrid recall (BM25 + CJK bigram + vector + graph + trigram), promotion, conflict handling, forgetting, health/GC and optional digest | Exactly three writers touch canonical notes — `promoter.promote`, `forgetter.demote`, `maintenance.repair_existing` — and each takes the vault's `file_lock` |
+| `core/` (Python, stdlib only) | Vault index, three-stream hybrid recall (lexical over FTS5 with ASCII words + CJK bigrams, semantic vectors, in-memory concept graph), promotion, conflict handling, forgetting, health/GC and optional digest | Exactly three writers touch canonical notes — `promoter.promote`, `forgetter.demote`, `maintenance.repair_existing` — and each takes the vault's `file_lock` |
 | `src/` (DSH host half) | Six tools (`memory_search`, `memory_show`, `memory_submit`, `memory_status`, `memory_preview`, `memory_setup`), loopback HTTP routes, the `agent/pre-step` recall hook, and optional settings/sidebar UI | Never writes canonical notes; `memory_submit` creates a `dsh-*.md` inbox file |
 | `Agent提交区/` | Isolated cross-agent submission files, read by `promoter --review` | Submission files only |
 

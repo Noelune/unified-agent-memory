@@ -147,10 +147,13 @@ The same flow in words:
    when `score = importance × (floor + decay) + access-reinforcement` drops
    below threshold, it is old enough, and it is not a durable/protected topic.
    High-importance knowledge (prefs/architecture/rules) persists indefinitely.
-5. **Recall** — hybrid search fuses five streams (BM25, CJK bigram BM25,
-   vectors, graph, trigram) with weighted RRF, diversifies per note, and caps
-   output by a real token budget. Everything is wrapped in `<memory-data>`
-   markers and redacted.
+5. **Recall** — hybrid search fuses three streams (lexical over FTS5 — one
+   table handling ASCII words and CJK bigrams —, semantic vectors, an
+   in-memory concept graph) with weighted RRF (k=60, weights 1.0/1.0/0.9),
+   diversifies per note, and caps output by a token budget measured with
+   `estimate_tokens()` (CJK≈1 char/token, ASCII≈4 chars/token). With no
+   embedding key the vector stream is empty and the result degrades to pure
+   lexical. Everything is wrapped in `<memory-data>` markers and redacted.
 6. **Observe & maintain** — `memory doctor` reports index size, inbox backlog,
    conflicts, vector coverage, graph bloat, sync-conflict copies and orphan
    indexes; `memory gc` prunes only derived data (default dry-run).

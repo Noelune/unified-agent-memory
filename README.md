@@ -32,7 +32,7 @@
 
 - **统一单一真理来源** — 全 Fleet 代理共享一套 Markdown 知识库，Obsidian 直接可读、可审、可改。
 - **纯 Python 标准库核心** — `core/` 零第三方依赖，SQLite FTS5 本地索引按 Vault 隔离，毫秒级检索，数据不出本机。
-- **五路混合检索** — BM25 + 中文 bigram + 语义向量 + 概念图谱 + trigram，加权 RRF 融合，按真实 Token 预算裁剪。
+- **三路混合检索** — lexical（FTS5，含中英文 bigram）、语义向量、概念图谱；加权 RRF，可选 Token 预算裁剪。
 - **完整生命周期管线** — 收件箱暂存 → Promoter 审核晋升 → 冲突裁决 → 版本化取代 → Forgetter 衰减归档，全程可逆、原子锁并发安全。
 - **自动召回（dsh 内置）** — 每轮对话开始前自动判断是否值得查记忆，命中就注入 `<memory-data>` 上下文，模型不必记得调工具。
 - **提示词隔离与凭据脱敏** — 检索输出强制 `<memory-data>` 包装；摄取前自动掩码 API Key/Token；OneDrive 等同步冲突副本不入索引。

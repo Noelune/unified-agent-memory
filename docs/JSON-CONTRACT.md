@@ -9,7 +9,7 @@
 |---|---|
 | `memory status --json` | 配置与索引健康度（§3） |
 | `memory search <query> --json` | 本地 FTS5 检索（plain，§4.1） |
-| `memory search <query> --hybrid --json` | 混合检索（BM25 + 中文 bigram + 向量 + 图 + trigram，§4.2） |
+| `memory search <query> --hybrid --json` | 混合检索（lexical + 向量 + 图，§4.2） |
 | `memory doctor --json` | 只读健康报告；`data.ok` 表示健康，命令本身的 `ok` 固定为 true（`orphanIndexes` 见 §5.4） |
 | `memory gc --json` | 派生数据清理报告（默认 dry-run；`--apply` 才删除） |
 | `memory search <query> --remote --json` | **例外：不产出信封**，见 §1.2 / §4.3 |
@@ -295,7 +295,7 @@ else:
     "query": "记忆系统",
     "mode": "hybrid",
     "count": 1,
-    "streams": {"bm25": 1, "vector": 22, "graph": 1, "trigram": 1},
+    "streams": {"lexical": 1, "vector": 22, "graph": 1},
     "results": [
       {
         "doc": "方案.md", "title": "方案", "line": "记忆系统升级方案已落地",
@@ -308,8 +308,8 @@ else:
 ```
 
 - `mode`：`--hybrid` 时为 `"hybrid"`。
-- `streams`：四路召回各自的候选条数，键为 `bm25`、`vector`、`graph`、`trigram`。
-  某路不可用（如向量未配置、图禁用、trigram 表缺失）时为 `0`，属**正常降级**。
+- `streams`：三路召回各自的候选条数，键为 `lexical`、`vector`、`graph`。
+  某路不可用（如向量未配置、图禁用）时为 `0`，属**正常降级**。
 - hybrid 记录字段与 plain **不同**：有 `line`/`type`/`importance`/`score`/`source_agent`，
   无 `snippet`；`score` 为 RRF 融合分（保留 4 位小数）。
 - 可选 `--format {full,compact,narrative}` 与 `--budget <n>` 会影响 `results` 条数与 `line` 长度；
