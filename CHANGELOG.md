@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file.
 
-## [Unreleased]
+## [0.9.3] — 2026-11-06
 
 ### Fixed — 侧边栏「可更新」按钮的假成功（更新后重启，版本没变）
 
