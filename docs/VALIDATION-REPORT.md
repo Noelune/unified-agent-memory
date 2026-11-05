@@ -128,7 +128,7 @@ the plugin was not installed into the Desktop profile as part of this pass — s
    effect there. Documented the install path in `docs/DESKTOP.md`.
 3. **Seven dead tests.** `test/*.test.mjs` were excluded from vitest and run by no
    script, and two of the three files asserted a pre-refactor API (`plugin.default`,
-   an optional `webServer`, four tools, `contextPath`, `memoryUiStatus`). Rewritten
+   an optional `webServer`, the pre-refactor tool list, `contextPath`, `memoryUiStatus`). Rewritten
    against the current contract and wired into the gates as `npm run test:node`.
 4. **`npm pack --json` was corrupted by the build's stdout.** Adding a `prepack`
    build made `audit:package` fail with a JSON parse error, because the build

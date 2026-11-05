@@ -15,7 +15,7 @@
  *     an absolute path into one developer's checkout
  *     (`C:/Users/<name>/review_repos/unified-agent-memory/core`), which meant a
  *     fresh public install warned at every boot that recall would spin on
- *     nothing. Recall now goes through the same `runCore()` the five tools use,
+ *     nothing. Recall now goes through the same `runCore()` the six tools use,
  *     so `pythonPath`/`corePath` have exactly one meaning for the whole plugin.
  *
  *   - The interpreter allowlist. The old package accepted only `default` or
@@ -485,7 +485,7 @@ export interface RecallContext {
  * Register the hook on a Cordis context.
  *
  * Best-effort by construction: a host without `ctx.on` (or a test double that
- * does not model events) simply gets no automatic recall, and the five tools
+ * does not model events) simply gets no automatic recall, and the six tools
  * keep working. Recall is an addition to the plugin, never a load requirement —
  * which is why it is not added to the exported `inject` list.
  */

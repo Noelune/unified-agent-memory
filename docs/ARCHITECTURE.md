@@ -155,15 +155,19 @@ The same flow in words:
    embedding key the vector stream is empty and the result degrades to pure
    lexical. Everything is wrapped in `<memory-data>` markers and redacted.
 6. **Observe & maintain** — `memory doctor` reports index size, inbox backlog,
-   conflicts, vector coverage, graph bloat, sync-conflict copies and orphan
-   indexes; `memory gc` prunes only derived data (default dry-run).
+   vector coverage, and the check codes `sync-conflict-copies` /
+   `conflicts-pending` / `inbox-stale` / `duplicate-facts` / `embedding-coverage` /
+   `index-bloat` / `orphan-indexes` / `unclassified-facts` (plus
+   `unindexed-notes`, which exists on the `fix/audit-20261101` lineage);
+   `memory gc` prunes only derived data (default dry-run).
 
 ## Interfaces
 
 - **CLI** — `memory init|use|search|show|submit|status|embed|digest|graph|doctor|gc`;
   lifecycle CLIs `promoter` / `forgetter` / `catchup` (missed-run recovery)
-- **dsh plugin** — `memory_search` (`hybrid` 开启三流融合检索；可选 `format`/`budget` 控制输出形态与预算),
-  `memory_show`, `memory_submit`, `memory_status`; startup + hourly
+- **dsh plugin** — six tools: `memory_search` (`hybrid` 开启三流融合检索；可选 `format`/`budget` 控制输出形态与预算),
+  `memory_show`, `memory_submit`, `memory_status`, `memory_preview`,
+  `memory_setup`; startup + hourly
   `unified_memory.catchup` replay of missed schedule runs
 - **Update scheme** — boot-time reconcile (`upgrade.json` state vs this build:
   install when nothing recorded, repair when drifted, refresh when the version
