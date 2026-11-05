@@ -20,12 +20,48 @@ from . import digest as digest_mod
 from ..query import preview as preview_mod
 from . import inbox as inbox_mod
 from ...domain.markdown import looks_like_credential
+from ...domain.policy import NON_SUBMISSION_FILES, PROCESSED_DIR
 from ...infra import config as config_mod
 from ...infra.config import resolve_vault
 from ...infra.console import emit_json
 from ...infra.store import record_audit, record_used_events
-from ...infra.vault import atomic_create, canonical_dir, ensure_vault
+from ...infra.vault import atomic_create, canonical_dir, ensure_vault, read_maybe
 from ..system import is_agent_file_prefix
+
+
+# A submission is deduplicated against at most this many existing files (the
+# inbox plus 已处理/). Unbounded, a large vault would turn every submit into a
+# full-history read; past the cap the check degrades to "no duplicate found"
+# and the promoter's own exact-text dedup remains the backstop.
+MAX_DUPLICATE_SCAN = 500
+
+
+def _find_duplicate_submission(inbox: Path, body: str) -> Path | None:
+    """Return the existing submission carrying this exact text, if any.
+
+    The promoter's exact-text dedup runs only at review time, so every retry
+    of a fact minted another dsh-*.md and a second `submit` audit row, and the
+    caller heard nothing until review day. Identity is the exact normalized
+    text — the same rule the promoter applies; similarity stays the review
+    stage's judgment call, not an identity check. Two layers deep, bookkeeping
+    files skipped, capped at MAX_DUPLICATE_SCAN.
+    """
+    wanted = body.strip()
+    if not wanted:
+        return None
+    scanned = 0
+    for dirpath in (inbox, inbox / PROCESSED_DIR):
+        if not dirpath.is_dir():
+            continue
+        for path in sorted(dirpath.glob("*.md")):
+            if path.name in NON_SUBMISSION_FILES:
+                continue
+            scanned += 1
+            if scanned > MAX_DUPLICATE_SCAN:
+                return None
+            if read_maybe(path).strip() == wanted:
+                return path
+    return None
 
 
 def cmd_submit(args: Namespace) -> None:
@@ -50,6 +86,11 @@ def cmd_submit(args: Namespace) -> None:
     inbox.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
     body = "\n".join(f"- {ln.strip()}" if not ln.strip().startswith("-") else ln.strip() for ln in lines if ln.strip())
+    dup = _find_duplicate_submission(inbox, body)
+    if dup is not None:
+        record_audit(vault, agent, "submit-duplicate", dup.name, lines[0][:120])
+        print(f"duplicate submission: {dup.name} (already in {dup.parent.name})")
+        return
     for seq in range(1, 1000):
         candidate = inbox / f"{agent}-{stamp}-{seq:02d}.md"
         if atomic_create(candidate, body + "\n"):
