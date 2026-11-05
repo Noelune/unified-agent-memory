@@ -506,6 +506,7 @@ const AGENT_PLAN: Record<string, AgentAction> = {
   'index-bloat': { mode: 'fix', label: '让 Agent 处理', risk: '会重建派生数据' },
   'doctor-failed': { mode: 'fix', label: '让 Agent 处理', risk: '会重建派生数据' },
   'orphan-indexes': { mode: 'fix', label: '让 Agent 处理', risk: '会删旧索引 · 可重建' },
+  'unindexed-notes': { mode: 'fix', label: '让 Agent 接索引', risk: '会改索引范围 · 会写索引' },
   'embedding-coverage': { mode: 'fix', label: '让 Agent 补向量', risk: '会写向量 · 需要 key' },
   'conflicts-pending': { mode: 'judge', label: '让 Agent 判断', risk: '能定就直接定 · 定不了写清理由问你' },
   'sync-conflict-copies': { mode: 'analyze', label: '让 Agent 分析', risk: '不动文件，只给合并建议' },
@@ -782,6 +783,12 @@ const ISSUE_COPY: Record<string, { title: string; detail: string; fix: string; c
     detail: '旧 vault 留下的索引文件，和现在的库无关，只是占磁盘。',
     fix: '清掉孤儿索引库，不影响当前 vault；不过刚生成的会等满 30 天才自动清，要立刻清加 --older-than 0。',
     command: 'memory gc --apply',
+  },
+  'unindexed-notes': {
+    title: '有笔记不在索引里',
+    detail: '记忆领地内的这几篇笔记没进索引，搜不到它们的内容。',
+    fix: '把路径加进 KNOWLEDGE_SUBDIRS（或把笔记移进已索引区域），再跑 memory sync。',
+    command: 'memory sync',
   },
   'unclassified-facts': {
     title: '有未归类的事实',
