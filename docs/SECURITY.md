@@ -12,9 +12,10 @@ adapter, package contents, and repository deployment helper.
    queries, whole-note bodies) is escaped through `encode_untrusted`, so
    vault text containing a literal `</memory-data>` cannot close the envelope
    early and read as instructions. Every tool description states the rule.
-2. **Read-only canonical, single write inbox.** Agents never edit canonical
-   notes directly; the only write path is 提交区 via memory_submit (validated:
-   credential-shaped lines are rejected at submission).
+2. **Read-only canonical, single submission entry.** Agents never edit canonical
+   notes directly; their only submission entry is 提交区 via memory_submit
+   (validated: credential-shaped lines are rejected at submission). Canonical
+   notes themselves are rewritten only by core's own lifecycle paths.
 3. **No plaintext credentials, ever.** Credential-shaped text (api_key=,
    token=, password=, sk-…, 32+ hex) is rejected at submission and redacted in
    all output (search/show) and before local or remote indexing. Store only

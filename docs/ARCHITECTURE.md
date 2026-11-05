@@ -225,10 +225,18 @@ The core package is deliberately separated from agent-specific adapters:
 
 | Component | Responsibility | Writes canonical notes? |
 |---|---|---|
-| `core/` | index, search, promotion, conflicts, forgetting | Only the three writers: `promoter.promote`, `forgetter.demote`, `maintenance.repair_existing`, each under the vault `file_lock` |
+| `core/` | index, search, promotion, conflicts, forgetting | Canonical writes go through the one executor `infra.vault.apply` — four call paths (promoter / forgetter / repair / backfill), each under the vault `file_lock`; known exceptions that write `atomic_write` directly: `decide`'s adjudication replacement and `init_vault`'s template creation |
 | `src/` (DSH host half) | six dsh tools, status UI, read/show/search and inbox submission | No |
 | `src/recall.ts` | optional pre-step recall and memory-discipline instructions | No |
 | `Agent提交区/` | isolated cross-agent submission files | Submission files only |
+
+Derived state has one writer each, and they are not the canonical-note paths:
+
+| Vault state | Sole writer |
+|---|---|
+| 收件箱 `Agent提交区/` (submission files) | `app/ingest/commands.py::cmd_submit`, `app/ingest/digest.py::_write_digest_facts` |
+| 审计日志 (hash-chained audit log) | `infra/store/audit.py::record_audit` |
+| 调度状态 (`调度状态.json`) | `infra/schedule.py::mark_schedule_run` |
 
 ### Hermes-side pipeline (external to this repo)
 

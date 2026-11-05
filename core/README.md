@@ -40,8 +40,9 @@ python -m unified_memory.forgetter --apply       # demote into 记忆遗忘区/
   isolated per vault and populated with redacted text. Schema upgrades rebuild
   the index automatically; old fixed-path `index.db` files are not read.
   Privacy stays on your machine; remote index is an optional advanced mode.
-- Canonical notes are read-only from this package; the only write path is the
-  submission inbox. Promotion takes a vault file lock and writes atomically.
+- Agents submit new content only into the submission inbox; core's own
+  lifecycle (promotion / forgetting / repair / backfill) rewrites canonical
+  notes through `infra.vault.apply` under the vault file lock.
 - Both promotion-stamp dialects are parsed: the repo form
   `（写入 2026-08-16｜来源：Agent提交区/x.md）` and the Hermes form
   ``（写入 2026-09-22｜来源：[[Agent提交区/x.md]]，事件 `…`｜有效至 …）``.

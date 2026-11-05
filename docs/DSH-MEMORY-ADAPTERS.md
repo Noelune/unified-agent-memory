@@ -2,7 +2,8 @@
 
 One package, `dsh-unified-agent-memory`, is the whole story: a dependency-free
 Python core, a DSH host half that exposes it as tools and routes, and one
-inbox directory that is the only write path.
+inbox directory that is the agents' only submission entry — canonical notes
+themselves are rewritten only by core's own lifecycle paths.
 
 Earlier releases spread the same idea across three package names —
 `unified-agent-memory` for the core, `dsh-hermes-memory` for the host tools and
@@ -30,7 +31,7 @@ working.
 
 | Component | What it does | Write boundary |
 |---|---|---|
-| `core/` (Python, stdlib only) | Vault index, three-stream hybrid recall (lexical over FTS5 with ASCII words + CJK bigrams, semantic vectors, in-memory concept graph), promotion, conflict handling, forgetting, health/GC and optional digest | Exactly three writers touch canonical notes — `promoter.promote`, `forgetter.demote`, `maintenance.repair_existing` — and each takes the vault's `file_lock` |
+| `core/` (Python, stdlib only) | Vault index, three-stream hybrid recall (lexical over FTS5 with ASCII words + CJK bigrams, semantic vectors, in-memory concept graph), promotion, conflict handling, forgetting, health/GC and optional digest | Canonical writes go through the one executor `infra.vault.apply` — four call paths (promoter / forgetter / repair / backfill), each under the vault's `file_lock`; known `atomic_write` exceptions: `decide`'s adjudication replacement and `init_vault`'s template creation |
 | `src/` (DSH host half) | Six tools (`memory_search`, `memory_show`, `memory_submit`, `memory_status`, `memory_preview`, `memory_setup`), loopback HTTP routes, the `agent/pre-step` recall hook, and optional settings/sidebar UI | Never writes canonical notes; `memory_submit` creates a `dsh-*.md` inbox file |
 | `Agent提交区/` | Isolated cross-agent submission files, read by `promoter --review` | Submission files only |
 

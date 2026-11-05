@@ -82,9 +82,10 @@ chars after.
 
 `export_markdown()` writes archive-format `YYYY-MM-DD.md` files into a
 directory **the caller names** — never into the vault. Canonical notes have
-exactly three writers (`promoter`, `forgetter`, `maintenance`), each of which
-takes the vault's `file_lock`, and a read-only adapter does not get to become a
-fourth one just because its output looks like an archive file. The operator
+one write executor (`infra.vault.apply`) with four call paths (`promoter`,
+`forgetter`, `repair`, `backfill`), each of which takes the vault's
+`file_lock`, and a read-only adapter does not get to become another writer
+just because its output looks like an archive file. The operator
 decides whether to import the result:
 
 ```bash

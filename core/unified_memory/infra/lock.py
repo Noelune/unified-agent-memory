@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """Per-vault advisory file lock (moved verbatim from common.py, B1).
 
-Three functions rewrite canonical notes (promote / demote / repair); every one
-of them takes the same per-vault ``file_lock`` — see
-``core/tests/test_write_lock.py``, which runs them concurrently against one
-vault and fails if any of them forgets.
+Four call paths rewrite canonical notes (promote / demote / repair / backfill),
+all through the one executor ``infra.vault.apply``; every one of them takes the
+same per-vault ``file_lock`` — see ``core/tests/test_write_lock.py``, which
+runs them concurrently against one vault and fails if any of them forgets.
 """
 from __future__ import annotations
 
