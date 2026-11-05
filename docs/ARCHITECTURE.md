@@ -106,6 +106,33 @@ under a `已取代` heading are indexed as `superseded`.
 The pyramid is **conceptual**: physical files stay in the user's curated
 layout; the index/model layer organizes content across layers.
 
+## Attention budget
+
+Attention is the scarcest resource in the loop: the vault, the index and the
+panel all exist so a human can supervise agents while spending as little of it
+as possible. Four rules govern anything that asks for it:
+
+1. **Quiet by default.** A healthy system says nothing: the doctor reports no
+   issues on a clean vault (`app/maintain/health.py::_issues`), and catch-up
+   reads one JSON stamp and runs nothing when nothing is due — a stamp is
+   written only on success (`infra/schedule.py::mark_schedule_run`).
+2. **Every finding carries its consequence and a runnable command.** A warning
+   without a next step is just a louder warning: each `_issue(...)` ships a
+   `hint`, and the pane renders a title/detail/fix/command per code
+   (`src/client/view.ts` `ISSUE_COPY`).
+3. **Numbers appear only when they change what the supervisor does.** “共 3 条
+   冲突” says the size of the job; the pane rewrites a detail into a counted
+   sentence for exactly the codes whose message is a number
+   (`src/client/view.ts::countedDetail`).
+4. **Before adding a setting, a notification or a panel element, ask whether
+   this attention is worth spending.** The mechanisms already here are the bar
+   to clear: promotion is human-confirmed by default (Lifecycle step 3),
+   forgetting is reversible (`unified_memory/forgetter.py` demotes, never
+   deletes), and the agent hand-off sends into a fresh conversation of its own
+   (`src/client/view.ts` `AGENT_PLAN`, `src/client/Console.tsx` `repair.send`);
+   hooks decide what happens automatically while docs decide how the model
+   treats the injected data (`integrations/claude/CLAUDE.md`).
+
 ## Lifecycle
 
 ```mermaid
