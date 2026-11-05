@@ -53,9 +53,9 @@ export function _resetCatchupForTesting(): void {
   lastLine = null
 }
 
-/** Run `python -m unified_memory.catchup --run --json` via the real core. */
+/** Run `python -m unified_memory.catchup --json` via the real core. */
 const defaultRunner: CatchupRunner = async (cfg) =>
-  runCore(cfg, ['--run', '--json'], {
+  runCore(cfg, ['--json'], {
     module: 'unified_memory.catchup',
     timeoutMs: CATCHUP_TIMEOUT_MS,
   })
