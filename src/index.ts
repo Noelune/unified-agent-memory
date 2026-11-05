@@ -60,7 +60,7 @@ import { profileNameOf, resolveConfig, runCore } from './utils.ts'
 import { registerAll } from './tools.ts'
 import type { ApprovalLike } from './tools.ts'
 import { installRecall } from './recall.ts'
-import { startUpdateWatch, getUpdateInfo } from './updater.ts'
+import { startUpdateWatch, getUpdateInfo, readInstalledVersion } from './updater.ts'
 import { buildStatusPayload } from './status-payload.ts'
 import { ONBOARDING_SCOPE, consentSatisfied, readOnboardingState } from './onboarding.ts'
 import { guard, guardWrite, queryParam, readBody, sendJson } from './routes.ts'
@@ -546,7 +546,11 @@ export function apply(ctx: Context, config: Record<string, unknown> = {}): void 
         }
         // 409 for "well-formed but could not be carried out" (unsupported host,
         // no known version, pnpm failure); 200 only for a real install.
-        const outcome = await applyUpdate(pluginManagerRef, getUpdateInfo())
+        //
+        // `readInstalledVersion` is the post-condition check: the host resolves
+        // its install result even when pnpm failed, so a claim of success is
+        // only reported after the profile's own package.json agrees.
+        const outcome = await applyUpdate(pluginManagerRef, getUpdateInfo(), readInstalledVersion)
         sendJson(res, outcome.ok ? 200 : 409, outcome)
       })()
     },

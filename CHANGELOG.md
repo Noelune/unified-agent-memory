@@ -4,6 +4,43 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed — 侧边栏「可更新」按钮的假成功（更新后重启，版本没变）
+
+**症状**：面板显示有新版本 → 点「可更新」→ 徽标变成「重启生效」→ 重启 DSH → 徽标仍然显示「可更新」，`package.json` 里的依赖版本没动。
+
+**根因**：宿主的 `pluginManager.installBundle` **不会因失败而 reject**——它把每个失败折进 resolve 的值里：
+
+```js
+{ changed: false, application: 'failed', error: { code, diagnostic? }, stage: 'install' }
+```
+
+`application ∈ 'cancelled' | 'failed' | 'applied' | 'restart-required' | 'overridden'`。`applyUpdate` 原来只 `try/catch` 包住这次调用，把「没抛异常」当成「装好了」，于是 pnpm 一次都没跑也照样回答 `status: 'installed', restartRequired: true`（实测 0.1 s 返回）——客户端忠实地画成「重启生效」，重启后什么都没变。
+
+**修复**：
+
+- `applyUpdate` 现在读取 install 结果的 `application`：`failed` 取 `error.diagnostic`（pnpm 原话），没有 diagnostic 就用 `error.code`（`incompatible-version`、`not-bundle` 这类预期拒绝只带 code）；`cancelled` 单独成一句「安装被取消，已恢复改动前的文件」。两者都回答 `status: 'failed'`、`restartRequired: false`。
+- 宿主把 `already-installed` 拒绝**以返回值形式**给出（不只是抛异常），remove-then-install 回退现在两种形态都识别，否则桌面端（带 HMR）的常规更新路径会被误报成失败。
+- 新增**后置条件校验**：host 说成功之后，用新导出的 `updater.readInstalledVersion()` 重新读 profile 里的 `package.json`。读到的版本 != 目标版本时回答 `failed` 并给出可复制的补救命令（`dsh plugin add dsh-unified-agent-memory@x.y.z --save-exact`），不再画「重启生效」。读不到（文件缺失/解析失败）视为「无法确认」，不据此伪造失败。
+- 成功时优先报告 host 声明的 `result.version`（manifest 实际版本），而不是 spec 里请求的版本——pnpm 的 `minimumReleaseAge` 可能把固定 spec 解析到更旧的发布。
+
+**测试**：`test/route-update.test.ts` 从 7 例增到 14 例，覆盖 resolved-failure 的三种 code、cancelled、already-installed 的返回值形态、后置校验的正/负/无法读取三态；`test/updater.test.ts` 补 `readInstalledVersion` 的读盘/缺失/无 version 三例。JS 898 例全绿，`tsc --noEmit` 通过。
+
+### Fixed — `npm run test:node` 会改写开发者本人的 `~/.dsh/AGENTS.md`
+
+**症状**：跑完 `npm run check`，`~/.dsh/AGENTS.md` 和 `~/.codex/AGENTS.md` 的托管段里，vault 路径变成了 `C:/fixture-vault`——一个只存在于测试夹具里的路径。用户的 Agent 从此被指向不存在的记忆库。
+
+**根因**：`startUpgradeReconcile()` 的测试守卫只认两个信号：
+
+```ts
+Boolean(process.env.VITEST) || process.env.NODE_ENV === 'test'
+```
+
+而 `node --test`（跑 `test/*.test.mjs` 的那套，24 例）**只导出 `NODE_TEST_CONTEXT`**，既不设 `VITEST` 也不设 `NODE_ENV`。于是那套测试里 `plugin.apply(ctx, { vaultPath: 'C:/fixture-vault' })` 触发的 reconcile 一路跑到真实 home，`deploy.py apply` 把托管段按夹具路径重写了。写之前有备份（`AGENTS.md.bak-*`），但没人会去看。
+
+**修复**：`isTestProcess()` 加第三个信号 `process.env.NODE_TEST_CONTEXT !== undefined`，注释里写明这条为什么不是理论风险。
+
+**测试**：`test/upgrade-boot.test.ts` 新增一例，断言「不传 home 时不得对真实 home 动手」。这条例外重要的一点是它自己不会造成它要防的破坏：断言前先把 `USERPROFILE`/`HOME` 指到临时目录，这样守卫一旦回归，破坏落在 `afterEach` 会删掉的目录里，而不是用户家里。实测把修复撤掉时该例会红（`expected { …(3) } to be null`），装回即绿。
+
 ## [0.9.2] — 2026-10-31
 
 ### Fixed — npm 包内容（0.9.1 的 npm 产物不可用，请直接装 0.9.2）

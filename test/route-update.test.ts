@@ -20,7 +20,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // The registry reading, held in a hoisted cell so the mock factory can see it.
-const state = vi.hoisted(() => ({ latest: '0.8.5' as string | null, current: '0.8.4' }))
+// `installedOnDisk` is what the route's post-condition check reads back: the
+// successful path sets it to the target, so the "host says installed" tests
+// exercise the confirmation instead of tripping over it.
+const state = vi.hoisted(() => ({
+  latest: '0.8.5' as string | null,
+  current: '0.8.4',
+  installedOnDisk: '0.8.5' as string | null,
+}))
 
 vi.mock('../src/updater.ts', () => ({
   checkForUpdate: vi.fn(),
@@ -30,6 +37,11 @@ vi.mock('../src/updater.ts', () => ({
     latestVersion: state.latest,
     updateAvailable: state.latest !== null && state.latest !== state.current,
   })),
+  // The route's post-condition check. Mocked along with the rest of the updater
+  // because the unmocked version reads THIS repo's package.json: a route test
+  // that asked whether v0.8.5 landed would be answered with the version of the
+  // plugin under test, which has nothing to do with the fixture.
+  readInstalledVersion: vi.fn(() => state.installedOnDisk),
 }))
 
 import * as host from '../src/index.ts'
@@ -133,6 +145,7 @@ async function post(
 beforeEach(() => {
   state.latest = '0.8.5'
   state.current = '0.8.4'
+  state.installedOnDisk = '0.8.5'
 })
 
 // ── applyUpdate: the decision ──────────────────────────────────────
@@ -231,6 +244,148 @@ describe('applyUpdate', () => {
       restartRequired: false, reason: '宿主的插件管理器不可用，请手动更新',
     })
   })
+
+  // ── The resolved-failure shape: installBundle does not throw ───────
+  //
+  // This is the regression the whole `application` inspection exists for. On a
+  // pnpm failure the host RESOLVES with `{ application: 'failed', error }`; the
+  // route used to read only the absence of a throw, so it answered "installed,
+  // restart to apply" in ~0.1 s while the profile was untouched. The user
+  // restarted and the sidebar still offered the same update.
+
+  it('reports a resolved failure as failed, with the host diagnostic', async () => {
+    const { pm, calls } = fakeManager({
+      install: async () => ({
+        changed: false,
+        application: 'failed',
+        error: { code: 'operation-error', diagnostic: 'ERR_PNPM_FETCH_404  GET https://r/dsh-unified-agent-memory: Not found' },
+        stage: 'install',
+        target: 'dsh-unified-agent-memory@0.8.5',
+      }),
+    })
+
+    const outcome = await applyUpdate(pm, { currentVersion: '0.8.4', latestVersion: '0.8.5' })
+
+    expect(outcome.ok).toBe(false)
+    expect(outcome.status).toBe('failed')
+    expect(outcome.restartRequired).toBe(false)
+    expect(outcome.reason).toContain('ERR_PNPM_FETCH_404')
+    // The code labels the diagnostic; it does not replace it.
+    expect(outcome.reason).toContain('operation-error')
+    expect(calls.remove).toEqual([])
+  })
+
+  it('names an expected refusal by its code when there is no diagnostic', async () => {
+    // `ManagementFailure` codes carry no diagnostic — `not-bundle`,
+    // `incompatible-version`, `stop-profile`. Those words are the reason.
+    const { pm, calls } = fakeManager({
+      install: async () => ({
+        changed: false,
+        application: 'failed',
+        error: { code: 'incompatible-version' },
+        stage: 'install',
+        target: 'dsh-unified-agent-memory@0.8.5',
+      }),
+    })
+
+    const outcome = await applyUpdate(pm, { currentVersion: '0.8.4', latestVersion: '0.8.5' })
+
+    expect(outcome.status).toBe('failed')
+    expect(outcome.reason).toContain('incompatible-version')
+    expect(calls.remove).toEqual([])
+  })
+
+  it('retries remove-then-install when the resolved failure is already-installed', async () => {
+    // The refusal reaches this route in BOTH shapes depending on the host path:
+    // a thrown message on some releases, a resolved `error.code` on others. A
+    // route that only recognised the throw would report the desktop app's normal
+    // update path as broken.
+    let attempt = 0
+    const { pm, calls } = fakeManager({
+      install: async () => {
+        attempt += 1
+        if (attempt === 1) {
+          return { changed: false, application: 'failed', error: { code: 'already-installed' }, stage: 'install', target: 'dsh-unified-agent-memory@0.8.5' }
+        }
+        return { changed: true, application: 'restart-required', restartReason: 'no-hmr', version: '0.8.5', stage: 'enable', target: 'dsh-unified-agent-memory@0.8.5' }
+      },
+    })
+
+    const outcome = await applyUpdate(pm, { currentVersion: '0.8.4', latestVersion: '0.8.5' })
+
+    expect(outcome.status).toBe('installed')
+    expect(outcome.version).toBe('0.8.5')
+    expect(calls.remove).toEqual(['dsh-unified-agent-memory'])
+    expect(calls.install).toHaveLength(2)
+  })
+
+  it('reports a cancelled run as failed rather than as an install', async () => {
+    const { pm } = fakeManager({
+      install: async () => ({ changed: false, application: 'cancelled', stage: 'install', target: 'dsh-unified-agent-memory@0.8.5' }),
+    })
+
+    const outcome = await applyUpdate(pm, { currentVersion: '0.8.4', latestVersion: '0.8.5' })
+
+    expect(outcome.status).toBe('failed')
+    expect(outcome.restartRequired).toBe(false)
+  })
+
+  // ── The post-condition: a claim of success must match the disk ─────
+
+  it('does not claim success when the profile still holds the old version', async () => {
+    // Observed in the field: the host answered `installed` and the profile was
+    // byte-identical to before. Verify wins over the host's word.
+    const { pm } = fakeManager({
+      install: async () => ({ changed: true, application: 'restart-required', restartReason: 'no-hmr', version: '0.8.5', stage: 'enable', target: 'dsh-unified-agent-memory@0.8.5' }),
+    })
+
+    const outcome = await applyUpdate(pm, { currentVersion: '0.8.4', latestVersion: '0.8.5' }, () => '0.8.4')
+
+    expect(outcome.ok).toBe(false)
+    expect(outcome.status).toBe('failed')
+    expect(outcome.restartRequired).toBe(false)
+    expect(outcome.reason).toContain('0.8.4')
+    // The reason has to say what to do, because the badge cannot retry this.
+    expect(outcome.reason).toContain('dsh plugin add dsh-unified-agent-memory@0.8.5')
+  })
+
+  it('accepts a host claim the profile confirms', async () => {
+    const { pm } = fakeManager({
+      install: async () => ({ changed: true, application: 'restart-required', restartReason: 'no-hmr', version: '0.8.5', stage: 'enable', target: 'dsh-unified-agent-memory@0.8.5' }),
+    })
+
+    const outcome = await applyUpdate(pm, { currentVersion: '0.8.4', latestVersion: '0.8.5' }, () => '0.8.5')
+
+    expect(outcome.status).toBe('installed')
+    expect(outcome.restartRequired).toBe(true)
+  })
+
+  it('treats an unreadable profile as "cannot confirm", not as a failure', async () => {
+    // A verify that throws or answers null is a missing measurement. Refusing
+    // to report the install would be inventing a failure from absent data.
+    const { pm } = fakeManager({
+      install: async () => ({ changed: true, application: 'restart-required', version: '0.8.5', stage: 'enable', target: 'dsh-unified-agent-memory@0.8.5' }),
+    })
+
+    const throws = await applyUpdate(pm, { currentVersion: '0.8.4', latestVersion: '0.8.5' }, () => { throw new Error('ENOENT') })
+    expect(throws.status).toBe('installed')
+
+    const empty = await applyUpdate(pm, { currentVersion: '0.8.4', latestVersion: '0.8.5' }, () => null)
+    expect(empty.status).toBe('installed')
+  })
+
+  it('reports a stale resolved release as a failure, not as the version it asked for', async () => {
+    // `minimumReleaseAge` can resolve a pinned spec to an older release than the
+    // one named. Both the host and the profile then agree on that older version:
+    // the install did happen, but it is not the update the badge offered.
+    const { pm } = fakeManager({
+      install: async () => ({ changed: true, application: 'restart-required', version: '0.8.4', stage: 'enable', target: 'dsh-unified-agent-memory@0.8.5' }),
+    })
+
+    const outcome = await applyUpdate(pm, { currentVersion: '0.8.4', latestVersion: '0.8.5' }, () => '0.8.4')
+    expect(outcome.status).toBe('failed')
+    expect(outcome.reason).toContain('0.8.5')
+  })
 })
 
 // ── The route: who may ask ─────────────────────────────────────────
@@ -302,5 +457,21 @@ describe('POST /update', () => {
     expect(out.code).toBe(409)
     expect(body.status).toBe('failed')
     expect(body.reason).toContain('pnpm exited 1')
+  })
+
+  it('answers 409 when the host claims success but the profile did not move', async () => {
+    // The end-to-end shape of the field bug: an install that "succeeded" in
+    // 0.1 s without running pnpm. The route reads the profile back through the
+    // real updater's `readInstalledVersion`, which the mock points at the stale
+    // version, and refuses to answer 200.
+    state.installedOnDisk = '0.8.4'
+    const { pm } = fakeManager({
+      install: async () => ({ changed: true, application: 'restart-required', version: '0.8.5', stage: 'enable', target: 'dsh-unified-agent-memory@0.8.5' }),
+    })
+    const { out, body } = await post(pm)
+
+    expect(out.code).toBe(409)
+    expect(body.status).toBe('failed')
+    expect(body.restartRequired).toBe(false)
   })
 })

@@ -19,8 +19,11 @@ const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)
 
 // Now import the module under test (after mocks are set up)
-const { checkForUpdate, getUpdateInfo, compareVersions, startUpdateWatch, _resetForTesting } =
+const { checkForUpdate, getUpdateInfo, compareVersions, startUpdateWatch, _resetForTesting, readInstalledVersion } =
   await import('../src/updater.ts')
+
+// The mocked node:fs handle, so a test can make one read fail.
+const { readFileSync: mockedReadFileSync } = await import('node:fs')
 
 describe('updater', () => {
   beforeEach(() => {
@@ -35,6 +38,27 @@ describe('updater', () => {
   it('reads current version from package.json at import', () => {
     const info = getUpdateInfo()
     expect(info.currentVersion).toBe('1.2.3')
+  })
+
+  // `CURRENT_VERSION` is a boot-time snapshot and answers "which code is
+  // running". The update route needs "what did the install just write", and only
+  // a fresh read answers that — conflating the two is what made a failed install
+  // report success.
+  it('re-reads the on-disk version instead of reusing the cached one', () => {
+    vi.mocked(mockedReadFileSync).mockImplementationOnce(
+      () => JSON.stringify({ version: '2.0.0' }) as never,
+    )
+    expect(readInstalledVersion()).toBe('2.0.0')
+  })
+
+  it('answers null when the manifest cannot be read, rather than inventing a version', () => {
+    vi.mocked(mockedReadFileSync).mockImplementationOnce(() => { throw new Error('ENOENT') })
+    expect(readInstalledVersion()).toBeNull()
+  })
+
+  it('answers null for a manifest with no version field', () => {
+    vi.mocked(mockedReadFileSync).mockImplementationOnce(() => JSON.stringify({ name: 'x' }) as never)
+    expect(readInstalledVersion()).toBeNull()
   })
 
   it('returns null state before first check', () => {

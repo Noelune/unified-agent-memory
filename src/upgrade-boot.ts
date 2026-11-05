@@ -244,9 +244,19 @@ function replan(cfg: PluginConfig, home: string): UpgradePlan | null {
  * writes outside its temp directory is a bug in the test, but a test cannot
  * prevent it on its own: the write is scheduled from inside the module under
  * test. So the module refuses by default.
+ *
+ * Three runners have to be recognised, and the third is the one that was
+ * missed: vitest sets `VITEST`, a hand-set suite sets `NODE_ENV=test`, and
+ * `node --test` sets **only** `NODE_TEST_CONTEXT`. That last gap is not
+ * theoretical — while it was open, `npm run test:node` reconciled against the
+ * real home and rewrote `~/.dsh/AGENTS.md` and `~/.codex/AGENTS.md` so that
+ * their managed section pointed at a test fixture (`C:/fixture-vault`). The
+ * checks that noticed nothing are the ones that compare nothing about `home`.
  */
 function isTestProcess(): boolean {
-  return Boolean(process.env.VITEST) || process.env.NODE_ENV === 'test'
+  return Boolean(process.env.VITEST)
+    || process.env.NODE_ENV === 'test'
+    || process.env.NODE_TEST_CONTEXT !== undefined
 }
 
 /**
