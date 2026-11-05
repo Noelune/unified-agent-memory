@@ -110,9 +110,9 @@ layout; the index/model layer organizes content across layers.
 
 ```mermaid
 flowchart TD
-    A[Agent 提交: memory submit / Agent提交区/] --> B{凭据脱敏引擎}
-    B -- 匹配 API Key / Token 模式 --> C[掩码清洗 REDACTED]
-    B -- 校验通过 --> D[写入 50-Agent-Context/Agent提交区/]
+    A[Agent 提交: memory submit / Agent提交区/] --> B{凭据行校验 CREDENTIAL_LINE_RE}
+    B -- 命中凭据形状 --> C[整行拒绝 SystemExit，不落盘]
+    B -- 未命中 --> D[写入 50-Agent-Context/Agent提交区/]
     D --> E[更新 SQLite FTS5 本地索引]
     D --> F[Promoter 审核管线]
     F -- 事实无冲突 --> G[晋升至 50-Agent-Context/ canonical 笔记]
@@ -138,10 +138,13 @@ The same flow in words:
    its own cursor, so switching between them never re-bills a date. See
    `docs/SESSIONDB.md` for the measured gap this closes and the reasons a
    schema dependency was avoided.
-3. **Promote** — the promoter classifies (English + Chinese rules), dedups
-   (char-bigram similarity), detects **supersession** (replacement cues such as
-   “改用/迁移到/instead of” move the old line under a `已取代` section) and
-   routes genuine contradictions to the conflict queue for human adjudication.
+3. **Promote** — the promoter classifies (English + Chinese rules); duplicates
+   are exact-text matches at both the review and apply stages (char-bigram
+   similarity never dedups — it only feeds conflict judgement: ≥0.5 with a
+   different value and the same subject is a conflict, and replacement cues
+   such as “改用/迁移到/instead of” turn it into a supersession that moves the
+   old line under a `已取代` section) and genuine contradictions are routed to
+   the conflict queue for human adjudication.
    Default is human-confirmed: `--review` → `--apply`; `--auto` is opt-in.
 4. **Forget** — a line is demoted to `记忆遗忘区/` (reversible, never deleted)
    when `score = importance × (floor + decay) + access-reinforcement` drops

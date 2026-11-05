@@ -7,10 +7,13 @@ strings, returns verdicts and dicts. That is what lets the rules be tested
 without a filesystem, and why both the queue writer and the CLI panel can
 share them.
 
-Rule (same as the vault's coordination convention):
-  - similarity >= 0.9 and identical text  -> duplicate (skip silently)
-  - similarity >= 0.5 but different value -> conflict (goes to the pending
-    queue for human adjudication; canonical keeps the old value meanwhile)
+Rule (see ``classify_against`` — the code below is the contract):
+  - exact (whitespace-normalized) text match -> duplicate (skip silently)
+  - char-bigram similarity >= 0.5 (``CONFLICT_SIM_THRESHOLD``) with a
+    different value and the same subject (when both sides have one) -> conflict
+    (goes to the pending queue for human adjudication; canonical keeps the old
+    value meanwhile). Replacement cues turn a conflict into a supersession one
+    stage up, in ``app/govern/review.py``.
 
 The vault side — reading and writing 情境信息/事实冲突待裁决.md and the
 adjudication log — lives in ``app/govern/queue.py``. ``unified_memory.conflict``
