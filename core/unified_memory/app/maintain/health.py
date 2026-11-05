@@ -211,7 +211,7 @@ def _flag_conflicts(report: dict) -> list[dict]:
         _issue(
             "warn",
             "conflicts-pending",
-            f"{len(conflicts)} fact conflict(s) awaiting adjudication",
+            f"{conflicts} fact conflict(s) awaiting adjudication",
             f"Run `python -m unified_memory.promoter --adjudicate` (queue: {SITUATION_DIR}/{CONFLICT_FILE}).",
         )
     ]

@@ -27,6 +27,34 @@ class DoctorTest(unittest.TestCase):
         self.assertEqual(report["conflicts"]["count"], 0)
         self.assertIsInstance(report["index"]["memories"], int)
 
+    def test_pending_conflict_is_reported(self):
+        """The first pending conflict must reach the report, not raise.
+
+        `_flag_conflicts` read `report["conflicts"]["count"]` — already an int —
+        and then called `len()` on it, so the first queued conflict crashed
+        `doctor()` with a TypeError. The finding the user most needs to see was
+        the one report they could not get: both the CLI and the health pane
+        died on it.
+        """
+        from unified_memory.common import CONFLICT_FILE, situation_dir
+
+        queue = situation_dir(self.vault) / CONFLICT_FILE
+        queue.parent.mkdir(parents=True, exist_ok=True)
+        queue.write_text(
+            "# 事实冲突待裁决\n\n"
+            "## 2026-11-05 03:01 冲突 #20261105030125-1\n"
+            "- 状态：[待裁决]\n"
+            "- 新提交：备份目录已迁移到 D:/backups\n"
+            "- 来源：[[Hermes会话自动归档/2026-11-04]]\n"
+            "- 既有：- 备份目录是 C:/backups（写入 2026-11-01）\n",
+            encoding="utf-8",
+        )
+        with patch("unified_memory.infra.providers.embed.configured", return_value=False):
+            report = health.doctor(self.vault)
+        self.assertEqual(report["conflicts"]["count"], 1)
+        issue = next(i for i in report["issues"] if i["code"] == "conflicts-pending")
+        self.assertIn("1 fact conflict(s)", issue["message"])
+
     def test_embeddings_configured_reaches_the_report(self):
         # Defect D1 (batch B): the provider import sat inside the function with
         # a wrong relative level and an `except Exception: pass` wrapper, so
