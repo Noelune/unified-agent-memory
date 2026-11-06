@@ -30,6 +30,8 @@ from ...infra.store.ledger import (
     refresh_doc,
 )
 from ...infra.vault import canonical_dir, canonical_path, processed_dir, read_maybe
+from ..maintain.conflict_scan import PROPAGATION_SOURCE, scan_propagation
+from .queue import append_conflict
 from .review import classify, parse_pending_list, pending_sources, review, target_path
 
 
@@ -48,7 +50,7 @@ def _plan_group(
     prior = set(active_fact_lines(existing))
     additions: list[str] = []
     supersedes: list[str] = []
-    pairs: list[tuple[str, str]] = []
+    pairs: list[tuple[str, str, str]] = []
     facts: list[tuple[str, str]] = []
     for entry in group:
         fact = entry.get("内容") or entry.get("fact") or ""
@@ -72,7 +74,7 @@ def _plan_group(
         old_bare = entry.get("取代") or entry.get("supersede") or ""
         if old_bare:
             supersedes.append(old_bare)
-            pairs.append((old_bare, claim_id))
+            pairs.append((old_bare, claim_id, fact))
     if not additions:
         return None
     text = append_active_facts(existing, additions)
@@ -146,24 +148,51 @@ def promote(vault: Path, entries: list[dict], *, locked: bool = False) -> list[s
     # Batch D: refresh the ledger projection for the touched notes and close
     # the superseded claims' validity windows (the pairing rode in the
     # ChangeSet meta, because only the planner knows old-bare → new-id).
-    if applied.changes:
-        conn = get_conn(vault)
-        try:
-            for change in applied.changes:
-                meta = change.meta or {}
-                refresh_doc(conn, vault, Path(change.doc))
-                if meta.get("kind") != "promotion":
-                    continue
-                for old_bare, new_id in meta.get("pairs", []):
-                    old_id = claim_id_for_text(conn, old_bare)
-                    if old_id:
-                        record_supersedence(
-                            conn, old_id, new_id, actor="promoter", decided_at=today
-                        )
-            conn.commit()
-        finally:
-            conn.close()
+    superseded = _ledger_supersedence(vault, applied, today)
+    # P1-3 propagation sweep (read-only scan → queue-only write): after the
+    # windows closed, find active facts still carrying the old value's
+    # meaning and hand them to adjudication. ``locked`` mirrors this call's
+    # own lock state — apply_pending/auto_promote hold the vault lock
+    # across promote(), and the queue's file_lock is not reentrant.
+    _enqueue_propagation(vault, superseded, locked=locked)
     return promoted
+
+
+def _ledger_supersedence(vault: Path, applied, today: str) -> list[tuple[str, str, str, str]]:
+    """Close superseded windows on the ledger; return the (old, new-id, new,
+    doc) tuples the propagation sweep needs. Batch D extraction."""
+    superseded: list[tuple[str, str, str, str]] = []
+    if not applied.changes:
+        return superseded
+    conn = get_conn(vault)
+    try:
+        for change in applied.changes:
+            meta = change.meta or {}
+            refresh_doc(conn, vault, Path(change.doc))
+            if meta.get("kind") != "promotion":
+                continue
+            for old_bare, new_id, new_fact in meta.get("pairs", []):
+                old_id = claim_id_for_text(conn, old_bare)
+                if old_id:
+                    record_supersedence(
+                        conn, old_id, new_id, actor="promoter", decided_at=today
+                    )
+                superseded.append((old_bare, new_id, new_fact, Path(change.doc).name))
+        conn.commit()
+    finally:
+        conn.close()
+    return superseded
+
+
+def _enqueue_propagation(vault: Path, superseded: list[tuple[str, str, str, str]], *, locked: bool) -> None:
+    """Hand the old value's remaining carriers to adjudication (P1-3)."""
+    for old_bare, new_id, new_fact, doc_name in superseded:
+        for hit in scan_propagation(vault, old_bare, exclude=(new_fact,), old_doc=doc_name):
+            append_conflict(
+                vault, hit["new"], hit["old"], PROPAGATION_SOURCE,
+                target_file=hit["doc"], cross_doc=hit["crossDoc"],
+                extra={"疑似旧值复述": new_id}, locked=locked,
+            )
 
 
 def _refresh_index(vault: Path) -> None:

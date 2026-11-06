@@ -5,9 +5,16 @@ import unittest
 from pathlib import Path
 
 from test_common import destroy_scratch, make_scratch_vault
+from unified_memory import index
 from unified_memory.app.govern.queue import read_conflicts
-from unified_memory.app.maintain.conflict_scan import SCAN_SOURCE, scan_conflicts
-from unified_memory.infra.vault import atomic_write, canonical_path
+from unified_memory.app.maintain.conflict_scan import (
+    PROPAGATION_SOURCE,
+    SCAN_SOURCE,
+    scan_conflicts,
+    scan_propagation,
+)
+from unified_memory.infra.store import record_access
+from unified_memory.infra.vault import atomic_write, canonical_dir, canonical_path
 
 KEYS = (
     "同步端口", "备份目录", "默认超时", "日志级别", "缓存大小",
@@ -74,6 +81,114 @@ class ConflictScanTest(unittest.TestCase):
         self.assertEqual(report["headless"], 2)
         self.assertIsInstance(report["elapsedMs"], int)
         self.assertEqual(_fingerprints(self.vault), self.before)
+
+
+class PropagationTest(unittest.TestCase):
+    """P1-3: a superseded value's remaining carriers are handed to adjudication.
+
+    The sweep runs at the two supersede completion points — promote with 取代
+    pairs and decide 用新 — read-only on canonical notes, queue-only writes.
+    """
+
+    def setUp(self):
+        self.vault = make_scratch_vault()
+        self._write_doc("env", "常用路径与环境", [
+            "备份目录是 C:/backups",
+            "备份目录在 C:/backups",  # paraphrase of the same value
+            "测试入口是 python -m unittest",
+        ])
+        self._write_doc("rules", "工程执行规则", ["提交前跑 npm run check"])
+
+    def tearDown(self):
+        destroy_scratch(self.vault)
+
+    def _write_doc(self, doc_id, heading, lines):
+        atomic_write(
+            canonical_path(self.vault, doc_id),
+            f"# {heading}\n\n" + "\n".join(f"- {line}" for line in lines) + "\n",
+        )
+
+    def _submit(self, fact):
+        inbox = canonical_dir(self.vault) / "Agent提交区"
+        inbox.mkdir(parents=True, exist_ok=True)
+        (inbox / "dsh-20261106-120000-01.md").write_text(f"- {fact}\n", encoding="utf-8")
+
+    def test_scan_propagation_flags_only_the_old_value_carriers(self):
+        hits = scan_propagation(
+            self.vault, "备份目录是 C:/backups",
+            exclude=("备份目录是 D:/backups",), old_doc="常用路径与环境.md",
+        )
+        self.assertEqual([hit["new"] for hit in hits], ["备份目录在 C:/backups"])
+        self.assertEqual(hits[0]["old"], "备份目录是 C:/backups")
+        self.assertEqual(hits[0]["used"], 0)
+        self.assertEqual(hits[0]["doc"], "常用路径与环境.md")
+
+    def test_promote_supersede_enqueues_the_paraphrase_queue_only(self):
+        self._submit("备份目录改用 D:/backups")
+        from unified_memory import promoter
+
+        promoter.write_pending_list(self.vault, promoter.review(self.vault, verbose=False))
+        promoter.apply_pending(self.vault)
+
+        entries = read_conflicts(self.vault)
+        self.assertEqual(len(entries), 1)
+        entry = entries[0]
+        self.assertEqual(entry["新"], "备份目录在 C:/backups")
+        self.assertEqual(entry["旧"], "备份目录是 C:/backups")
+        self.assertEqual(entry["来源"], PROPAGATION_SOURCE)
+        self.assertEqual(entry["目标"], "常用路径与环境.md")
+        # The marker key carries the superseding claim id.
+        self.assertTrue(entry.get("疑似旧值复述"), entry)
+        # The paraphrase itself stays untouched in canonical — queue-only.
+        env = canonical_path(self.vault, "env").read_text(encoding="utf-8")
+        self.assertIn("- 备份目录在 C:/backups", env)
+        self.assertIn("已取代", env)
+
+    def test_used_carriers_are_enqueued_first(self):
+        self._write_doc("env", "常用路径与环境", [
+            "备份目录是 C:/backups",
+            "备份目录在 C:/backups",
+            "备份目录位于 C:/backups",
+        ])
+        index.update_index(self.vault)
+        from unified_memory.infra.store import get_conn
+        from unified_memory.infra.store import claims as claims_mod
+
+        conn = get_conn(self.vault)
+        try:
+            cited = conn.execute(
+                "SELECT id FROM memories WHERE line = ? LIMIT 1", ("备份目录在 C:/backups",)
+            ).fetchone()
+        finally:
+            conn.close()
+        record_access(self.vault, [cited["id"]], event="used")
+        # forget_stats matches on (doc, line) with a line-only fallback; the
+        # index stores the full path, so make sure the sweep sees the count.
+        hits = scan_propagation(self.vault, "备份目录是 C:/backups")
+        self.assertEqual(
+            [hit["new"] for hit in hits],
+            ["备份目录在 C:/backups", "备份目录位于 C:/backups"],
+        )
+        self.assertEqual(hits[0]["used"], 1)
+        self.assertEqual(hits[1]["used"], 0)
+
+    def test_decide_yongxin_enqueues_the_paraphrase(self):
+        from unified_memory import promoter
+        from unified_memory.app.govern.queue import append_conflict
+
+        append_conflict(
+            self.vault, "备份目录是 D:/backups", "备份目录是 C:/backups", "dsh-x.md", "env",
+        )
+        entry = read_conflicts(self.vault)[0]
+        from unified_memory.app.govern.decide import decide
+
+        result = decide(self.vault, entry, "用新", why="演练裁决")
+        self.assertTrue(result["applied"])
+        entries = read_conflicts(self.vault)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["新"], "备份目录在 C:/backups")
+        self.assertEqual(entries[0]["来源"], PROPAGATION_SOURCE)
+        self.assertTrue(entries[0].get("疑似旧值复述"), entries[0])
 
 
 if __name__ == "__main__":
