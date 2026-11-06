@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased] — 下一个版本 0.11.0（3C 已入，随下一个特性一起发）
+
+### Added — 长会话分块提取（P0-3 工作包 3C）
+
+- digest 的提取从「取末尾 6000 字符」改为滑动窗口分块：6000 字符/块、块间 500 字符重叠（`_chunk_transcript`），逐块送同一 LLM、跨块按空白归一化精确文本去重（`_extract_facts_chunked`）。`_transcript_of` 不再截断，返回完整脱敏会话；queue / state 两种来源走同一分块管线。长会话头部不再静默丢失——原「丢头无记录」正是语义漂移的燃料。
+- 任一块失败即整个单元跳过（不写部分结果、不推进游标/队列 done），与单次路径相同的「无静默丢失」保证；skip 消息带「已送审字符/总字符」（信息性措辞，契约是状态本身）。
+- 报告新增 `charsSent` / `charsTotal`（sent 大于 total 的部分 = 窗口间重叠重发，3 块 13000 字会话实测 14000/13000），dry-run 预览行同步显示。
+- 新增 `core/tests/test_digest_chunks.py`（5 例：窗口几何与重叠、短文本单块、头部事实恢复 + 字符精确账、跨块回声去重、失败块整单元跳过）；已做「退回尾部截断即 3 红」反证。digest-queue 既有测试的 skip 消息期望同步更新。
+
 ## [0.10.0] — 2026-11-07
 
 ### Added — 摘要事实可溯源（P0-3 工作包 3A）
