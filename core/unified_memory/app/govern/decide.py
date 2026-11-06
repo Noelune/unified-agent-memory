@@ -218,6 +218,9 @@ def adjudicate(vault: Path) -> None:
     if not conflicts:
         print("no pending conflicts — nothing to adjudicate")
         return
+    # Oldest first: a long queue must not bury the conflict that has waited
+    # longest. The timestamp is a plain sortable "YYYY-MM-DD HH:MM" string.
+    conflicts.sort(key=lambda entry: str(entry.get("at", "")))
     print(f"{len(conflicts)} conflict(s) in {CONFLICT_FILE}:")
     for i, entry in enumerate(conflicts, 1):
         print(f"\n--- conflict {i} ---")

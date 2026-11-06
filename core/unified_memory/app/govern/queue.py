@@ -74,7 +74,12 @@ def append_conflict(
     side could not be located by a reader.
     """
     path = situation_dir(vault) / CONFLICT_FILE
-    fields = {"新": new_fact, "旧": existing_line, "来源": source}
+    fields = {
+        "新": new_fact,
+        "旧": existing_line,
+        "来源": source,
+        "at": time.strftime("%Y-%m-%d %H:%M"),
+    }
     if target_file:
         fields["目标"] = target_file
     if cross_doc:
@@ -158,6 +163,25 @@ def record_advice(
     return False
 
 
+def _legacy_timestamp(path: Path) -> str:
+    """Timestamp for entries written before the queue carried ``at``.
+
+    The file mtime is deliberately conservative (a touched file looks
+    younger) and is used for ordering / reporting only — never written back.
+    """
+    try:
+        return time.strftime("%Y-%m-%d %H:%M", time.localtime(path.stat().st_mtime))
+    except OSError:
+        return ""
+
+
+def _with_timestamps(entries: list[dict], fallback_at: str) -> list[dict]:
+    for entry in entries:
+        if not str(entry.get("at", "")).strip():
+            entry["at"] = fallback_at
+    return entries
+
+
 def read_conflicts(vault: Path) -> list[dict]:
     """Read the pending queue in both of the shapes it is written in.
 
@@ -170,6 +194,7 @@ def read_conflicts(vault: Path) -> list[dict]:
     conflict under it, not a decision waiting to be made.
     """
     path = situation_dir(vault) / CONFLICT_FILE
+    fallback_at = _legacy_timestamp(path)
     entries: list[dict] = []
     block: dict | None = None
 
@@ -211,7 +236,7 @@ def read_conflicts(vault: Path) -> list[dict]:
             continue
         block[key] = match.group(2).strip()
     flush()
-    return [entry for entry in entries if entry]
+    return _with_timestamps([entry for entry in entries if entry], fallback_at)
 
 
 def find_conflict(vault: Path, key: str) -> dict | None:

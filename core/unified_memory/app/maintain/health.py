@@ -146,9 +146,24 @@ def _check_canonical(ctx: Path, vault: Path, report: dict) -> None:
 
 
 def _check_conflicts(vault: Path, report: dict) -> None:
-    """Fill the ``conflicts`` section."""
+    """Fill the ``conflicts`` section, including queue age."""
     conflicts = read_conflicts(vault)
-    report["conflicts"] = {"count": len(conflicts)}
+    now = time.time()
+    ages: list[float] = []
+    for entry in conflicts:
+        at = str(entry.get("at", "")).strip()
+        try:
+            stamp = time.mktime(time.strptime(at, "%Y-%m-%d %H:%M"))
+        except (ValueError, OverflowError):
+            continue
+        ages.append(_days_ago(stamp, now))
+    report["conflicts"] = {
+        "count": len(conflicts),
+        "oldestDays": round(max(ages), 1) if ages else 0,
+        # STALE_INBOX_DAYS is the project's existing aging constant; reusing it
+        # keeps this threshold sourced rather than a new invented number.
+        "staleCount": sum(1 for days in ages if days > STALE_INBOX_DAYS),
+    }
 
 
 def _check_embeddings(vault: Path, report: dict) -> None:
@@ -205,16 +220,27 @@ def _flag_sync(report: dict) -> list[dict]:
 
 def _flag_conflicts(report: dict) -> list[dict]:
     conflicts = report["conflicts"]["count"]
-    if not conflicts:
-        return []
-    return [
-        _issue(
-            "warn",
-            "conflicts-pending",
-            f"{conflicts} fact conflict(s) awaiting adjudication",
-            f"Run `python -m unified_memory.promoter --adjudicate` (queue: {SITUATION_DIR}/{CONFLICT_FILE}).",
+    issues: list[dict] = []
+    if conflicts:
+        issues.append(
+            _issue(
+                "warn",
+                "conflicts-pending",
+                f"{conflicts} fact conflict(s) awaiting adjudication",
+                f"Run `python -m unified_memory.promoter --adjudicate` (queue: {SITUATION_DIR}/{CONFLICT_FILE}).",
+            )
         )
-    ]
+    stale = int(report["conflicts"].get("staleCount") or 0)
+    if stale:
+        issues.append(
+            _issue(
+                "warn",
+                "conflicts-stale",
+                f"{stale} conflict(s) older than {STALE_INBOX_DAYS} days",
+                f"Adjudicate the oldest entries first (queue: {SITUATION_DIR}/{CONFLICT_FILE}).",
+            )
+        )
+    return issues
 
 
 def _flag_inbox(report: dict) -> list[dict]:

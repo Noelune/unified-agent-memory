@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased] — 下一个版本为 0.10.0（含 breaking change）
 
+### Added — 冲突队列时间戳与老化可见（N1）
+
+- `append_conflict` 写入 `at`（`YYYY-MM-DD HH:MM`）；`read_conflicts` 对旧格式条目回退到队列文件 mtime，只用于排序与展示、不回写。`_signature` 仍只取三键，去重行为不变。
+- `doctor` 的 `conflicts` 段新增 `oldestDays` / `staleCount`，并新增 warn 级 `conflicts-stale`；阈值复用已有的 `STALE_INBOX_DAYS = 7`，不新造数字。
+- `promoter --adjudicate` 按 `at` 升序展示，最老在前。
+- 新增 `core/tests/test_conflict_queue_age.py`（5 例），含旧格式兼容、幂等、老化报告与排序；已做「删掉实现即变红」反证。
+
 ### Changed — 五个 B5 兼容垫片退役（BREAKING）
 
 `core/unified_memory/` 下的 `conflict.py`、`preview.py`、`stats.py`、`inbox.py`、`maintenance.py` 是 B5.2–B5.4 拆分时约定「保留一个 minor」的 re-export 垫片，现已到期删除。`core/tests/` 的导入全部切到实现模块，`test_module_surface.py` 的冻结契约收口到仍在的 `memory` / `promoter` 两个垫片。运行时代码、CLI 入口与架构白名单本就不引用这些路径。

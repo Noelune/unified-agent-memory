@@ -509,6 +509,7 @@ const AGENT_PLAN: Record<string, AgentAction> = {
   'unindexed-notes': { mode: 'fix', label: '让 Agent 接索引', risk: '会改索引范围 · 会写索引' },
   'embedding-coverage': { mode: 'fix', label: '让 Agent 补向量', risk: '会写向量 · 需要 key' },
   'conflicts-pending': { mode: 'judge', label: '让 Agent 判断', risk: '能定就直接定 · 定不了写清理由问你' },
+  'conflicts-stale': { mode: 'judge', label: '让 Agent 判断', risk: '先处理最老的 · 定不了写清理由问你' },
   'sync-conflict-copies': { mode: 'analyze', label: '让 Agent 分析', risk: '不动文件，只给合并建议' },
   'vault-missing': { mode: 'analyze', label: '让 Agent 诊断', risk: '可能要改配置，先问你' },
 }
@@ -752,6 +753,12 @@ const ISSUE_COPY: Record<string, { title: string; detail: string; fix: string; c
     title: '事实互相矛盾',
     detail: '在你裁决之前，冲突双方都不算生效，检索会绕开这段记忆。',
     fix: '先交给 Agent 判断：能定的它直接定掉并说明理由，定不了才留在这里，并写明推荐哪一种。',
+    command: 'python -m unified_memory.promoter --adjudicate',
+  },
+  'conflicts-stale': {
+    title: '有矛盾等了太久',
+    detail: '裁决队列里躺着超过一周没处理的矛盾，越积越多会把新提交压在后面。',
+    fix: '按最老优先的顺序先裁决这几条，能定的直接定掉，定不了写清理由留给人工。',
     command: 'python -m unified_memory.promoter --adjudicate',
   },
   'inbox-stale': {
