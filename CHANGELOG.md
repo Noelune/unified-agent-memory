@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file.
 
-## [Unreleased] — 下一个版本为 0.10.0（含 breaking change）
+## [0.10.0] — 2026-11-07
 
 ### Added — 摘要事实可溯源（P0-3 工作包 3A）
 
