@@ -32,6 +32,12 @@ python -m unified_memory.forgetter --dry-run     # list candidates
 python -m unified_memory.forgetter --apply       # demote into 记忆遗忘区/
 ```
 
+`memory init` is the ONE initializer: it creates the vault skeleton, the
+template notes and the config entry, and it is the only command that does.
+Every other command (`status` / `submit` / `search` / …) reports
+`vault structure: MISSING` and points here instead of creating anything —
+so a stray read-only command can never stand up a half-initialized vault.
+
 ## Design
 
 - Pure Python standard library — zero third-party dependencies.
