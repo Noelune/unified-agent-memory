@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Fixed — 退役模块的陈旧文档引用清零；两个扫查命令进入对外契约
+
+- 10 处文档/注释仍指向 0.10.0 已删除的 flat 模块（README core 表的 `conflict.py`、JSON-CONTRACT 六处实现指针、ARCHITECTURE 的图与正文、src 两处注释），全部改指真实模块路径；正文里「旧公共导入仍保留」的 0.10.0 后失实句一并更正。
+- `scan-conflicts` / `verify-drift` 补入对外契约（§5.5 / §5.6：报告字段、去重与幂等语义、LLM 成本说明、只入队不改 canonical 的保证），并加入 §0 命令表、ARCHITECTURE Interfaces CLI 行与 core/README usage。两个报告形状已与 CLI 实际输出逐字段比对（含缺失源归档进 skipped、候选字段集）。
+
 ## [0.11.0] — 2026-11-07
 
 ### Added — 已退役 shim 的清理注册（upgrade-cleanup）
