@@ -42,6 +42,7 @@ import {
 import {
   BADGE_TAB, COMMAND_NOTE, CONFLICT_ADVICE_LABEL, CONFLICT_CHOICES, CONFLICT_EMPTY,
   CONFLICT_INCOMING_LABEL, CONFLICT_LEAD, CONFLICT_NOW_LABEL, CONFLICT_RULES_NOTE,
+  conflictSourceHint,
   CONSOLE_TABS, SEVERITY_LABEL, TAB_LABEL,
   conflictSides, decideOutcomeText, decideReasonText,
   healthFindings, healthRows, healthSummary, highlightParts,
@@ -370,6 +371,9 @@ function InboxTab(props: { conflicts: ConflictsFeed }): Child {
                   factLine(sides.incoming),
                   sides.incoming.meta
                     ? h('div', { className: 'dsh-memory-factmeta' }, sides.incoming.meta)
+                    : null,
+                  conflictSourceHint(it.source)
+                    ? h('div', { className: 'dsh-memory-factmeta' }, conflictSourceHint(it.source))
                     : null,
                   sides.advice
                     ? h('div', { className: 'dsh-memory-advice' },

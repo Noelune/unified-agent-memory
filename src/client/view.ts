@@ -596,6 +596,25 @@ export const CONFLICT_RULES_NOTE =
   '取代＝删掉记忆里那行、换成新的 · 保留旧＝记忆不动、这条作废 · 共存＝两条都留着'
 
 /**
+ * Why a machine queued this row, in the words a person can act on.
+ *
+ * The scan sources (P1-3 supersede sweep, 3B drift verify) enqueue suspects a
+ * HUMAN must judge; “来自 supersede-scan” names the machine, not the question.
+ * Unknown sources get no hint — the meta line already names them as 来自 …,
+ * and an unexplained sentence invented for an unfamiliar source would be a
+ * guess dressed as fact.
+ */
+export const CONFLICT_SOURCE_HINTS: Record<string, string> = {
+  'supersede-scan': '这条来自取代扫查：旧值刚被取代，而这条仍在用旧的说法——请确认它该一并取代，还是其实仍是对的。',
+  'drift-verify': '这条来自漂移复核：它的源会话原文里没有与它等价的内容——请确认它是否被误读或已过时。',
+}
+
+/** The hint for one queue source, "" when this build has no words for it. */
+export function conflictSourceHint(source?: string): string {
+  return (source && CONFLICT_SOURCE_HINTS[source]) || ''
+}
+
+/**
  * The three rulings, in the words a person uses.
  *
  * Values are the core's own decision tokens (`用新` / `保留旧` / `并存`); labels
