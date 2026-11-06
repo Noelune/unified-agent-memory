@@ -22,7 +22,7 @@ from ..app.ingest.commands import (
     cmd_note_cli,
     cmd_submit,
 )
-from ..app.maintain.commands import cmd_backfill_ids, cmd_doctor, cmd_drift, cmd_gc
+from ..app.maintain.commands import cmd_backfill_ids, cmd_doctor, cmd_drift, cmd_gc, cmd_scan_conflicts
 from ..app.query.commands import (
     cmd_audit,
     cmd_explain,
@@ -258,6 +258,16 @@ def _add_maintain_parsers(sub: argparse._SubParsersAction) -> None:
     p_backfill.add_argument("--dry-run", action="store_true", help="print the would-be diff, write nothing")
     p_backfill.add_argument("--json", action="store_true", help="emit the machine-readable report")
     p_backfill.set_defaults(fn=cmd_backfill_ids)
+
+    p_scan = sub.add_parser(
+        "scan-conflicts",
+        help="re-scan stored facts for contradictions (read-only by default)",
+    )
+    p_scan.add_argument("--vault", "-v", help="path to the vault (default: UNIFIED_MEMORY_VAULT env / config)")
+    p_scan.add_argument("--dry-run", action="store_true", help="report only (default)")
+    p_scan.add_argument("--apply", action="store_true", help="queue the conflicts found")
+    p_scan.add_argument("--json", action="store_true", help="machine-readable output")
+    p_scan.set_defaults(fn=cmd_scan_conflicts)
 
 
 def main(argv: list[str] | None = None) -> None:

@@ -12,6 +12,7 @@ from argparse import Namespace
 from pathlib import Path
 
 from . import backfill as backfill_mod
+from . import conflict_scan as conflict_scan_mod
 from . import drift as drift_mod
 from . import health as health_mod
 from ...infra.config import resolve_vault
@@ -177,3 +178,27 @@ def cmd_drift(args: Namespace) -> None:
         sys.exit(1)
     if args.strict and report.has_warnings:
         sys.exit(1)
+
+
+def cmd_scan_conflicts(args: Namespace) -> None:
+    """Re-scan stored facts for contradictions; read-only unless --apply."""
+    vault = Path(args.vault) if getattr(args, "vault", None) else resolve_vault()
+    report = conflict_scan_mod.scan_conflicts(
+        vault, dry_run=not getattr(args, "apply", False)
+    )
+    if getattr(args, "json", False):
+        emit_json("scan-conflicts", report)
+        return
+    mode = "dry-run" if report["dryRun"] else "applied"
+    print(
+        f"scan-conflicts: {mode}, {len(report['hits'])} hit(s), "
+        f"{report['candidatePairs']} pair(s) over {report['groups']} subject "
+        f"group(s) in {report['elapsedMs']} ms"
+    )
+    for hit in report["hits"]:
+        other = hit["crossDoc"] or hit["doc"]
+        print(f"  - {hit['doc']}: {hit['new']}  <->  {other}: {hit['old']}")
+    for warning in report["warnings"]:
+        print(f"  ! {warning}")
+    if not report["dryRun"]:
+        print(f"  {report['newConflicts']} new conflict(s) queued")

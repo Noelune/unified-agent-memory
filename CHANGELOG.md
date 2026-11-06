@@ -11,6 +11,13 @@ All notable changes to this project are documented in this file.
 - `promoter --adjudicate` 按 `at` 升序展示，最老在前。
 - 新增 `core/tests/test_conflict_queue_age.py`（5 例），含旧格式兼容、幂等、老化报告与排序；已做「删掉实现即变红」反证。
 
+### Added — 已入库事实的跨文档矛盾只读复扫（N2）
+
+- 新模块 `app/maintain/conflict_scan.py`：按 `subject_of` 分组，组内两两复用 `classify_against` 的同一套规则；无主题行走 `lexical_search` top-20 召回。只读 canonical 笔记，只写裁决队列。
+- 新子命令 `python -m unified_memory.memory scan-conflicts`，默认 `--dry-run` 只出报告，`--apply` 才入队；命中带 `来源: conflict-scan` / `目标` / `跨文档`，复用 `_signature` 保证重复扫描幂等。
+- 报告含 `groups` / `headless` / `candidatePairs` / `hits` / `newConflicts` / `elapsedMs` / `warnings`；单主题组最多扫 200 对，超限只 warn 不阻塞。
+- 新增 `core/tests/test_conflict_scan.py`（4 例）：10 对夹具矛盾全命中、10 对 look-alike 零误报、canonical sha256 前后不变、连续 apply 幂等、无主题行不炸；已做「禁用判定即变红」反证与临时 vault 的 CLI dry-run / apply 端到端验证。
+
 ### Changed — 五个 B5 兼容垫片退役（BREAKING）
 
 `core/unified_memory/` 下的 `conflict.py`、`preview.py`、`stats.py`、`inbox.py`、`maintenance.py` 是 B5.2–B5.4 拆分时约定「保留一个 minor」的 re-export 垫片，现已到期删除。`core/tests/` 的导入全部切到实现模块，`test_module_surface.py` 的冻结契约收口到仍在的 `memory` / `promoter` 两个垫片。运行时代码、CLI 入口与架构白名单本就不引用这些路径。
