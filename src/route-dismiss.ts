@@ -77,7 +77,7 @@ export function buildDismissArgs(name: string): string[] {
  * "data": result}` (core/unified_memory/memory.py), so the outer `ok` is *not*
  * an independent "the command ran" flag — it is a copy of `data.ok`. A business
  * refusal (`not-found` / `outside-inbox` / `io-error:*`, core/unified_memory/
- * inbox.py) therefore arrives with `ok:false` at BOTH levels:
+ * app/ingest/inbox.py) therefore arrives with `ok:false` at BOTH levels:
  *
  *   {"ok": false, "command": "dismiss",
  *    "data": {"ok": false, "name": "ghost.md", "movedTo": null,

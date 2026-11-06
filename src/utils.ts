@@ -347,7 +347,7 @@ export function buildSubmitArgv(cfg: PluginConfig, fact: string): string[] {
 
 // ── Preview argv builder ─────────────────────────────────────────────
 
-/** Valid memory_preview views (mirrors core preview.py VIEWS). */
+/** Valid memory_preview views (mirrors core app/query/preview.py VIEWS). */
 const PREVIEW_VIEWS = new Set(['pending', 'conflicts', 'forgetting', 'recent'])
 
 /**

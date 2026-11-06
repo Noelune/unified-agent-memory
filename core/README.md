@@ -20,6 +20,8 @@ memory status
 memory doctor                                    # read-only health report
 memory gc                                        # dry-run: what derived data could be pruned
 memory gc --apply                                # prune orphan indexes, old logs, graph; VACUUM
+memory scan-conflicts                            # re-scan stored facts for contradictions (dry-run; --apply enqueues)
+memory verify-drift                              # re-check provenance facts against their session archives (dry-run; --apply enqueues; calls the LLM)
 
 # promotion (the ONLY entry point, human-confirmed by default):
 python -m unified_memory.promoter --review       # build the pending list
