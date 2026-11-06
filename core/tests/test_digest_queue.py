@@ -168,7 +168,12 @@ class DigestQueueTest(unittest.TestCase):
             return_value=None,
         ):
             report = digest_mod.digest(self.vault, source="queue")
-        self.assertEqual(report["skipped"], [f"claude-code {transcript.name}"])
+        # 3C names the failure and how far it got: the message is informational
+        # (the contract is the STATE — entry unmarked, cursor untouched), so the
+        # wording may carry more detail than the old bare label.
+        self.assertEqual(len(report["skipped"]), 1)
+        self.assertIn(f"claude-code {transcript.name}", report["skipped"][0])
+        self.assertIn("chunk extraction failed", report["skipped"][0])
         self.assertFalse(hookstate.done_path().exists())
         # A later successful run can still process it.
         with patch("unified_memory.infra.providers.embed.configured", return_value=True), patch(

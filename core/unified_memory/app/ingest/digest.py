@@ -55,7 +55,8 @@ from ...infra.vault import atomic_create, atomic_write, canonical_dir, read_mayb
 SESSION_DIRS = ("会话归档", "Hermes会话自动归档")
 CHAT_URL = "https://api.siliconflow.cn/v1/chat/completions"
 DEFAULT_CHAT_MODEL = "Qwen/Qwen2.5-7B-Instruct"
-MAX_INPUT_CHARS = 6000      # per-file transcript cap sent to the LLM
+MAX_INPUT_CHARS = 6000      # per-chunk cap sent to the LLM (3C: chunked, not tail-truncated)
+CHUNK_OVERLAP = 500         # context shared between neighbouring chunks (3C)
 MAX_FACTS_PER_FILE = 30
 CURSOR_KEY = "digest_cursor"
 STATE_CURSOR_KEY = "digest_cursor_state"
@@ -109,11 +110,12 @@ def _date_of(path: Path) -> str:
     return path.stem[:10]  # YYYY-MM-DD prefix
 
 
-def _transcript_of(path: Path, cap: int = MAX_INPUT_CHARS) -> str:
+def _transcript_of(path: Path) -> str:
+    """The archive's full text, redacted. 3C: no tail truncation here — the
+    extraction stage chunks the whole session instead, so the head of a long
+    session is no longer dropped without a trace."""
     raw = path.read_text(encoding="utf-8", errors="replace")
-    # Redact BEFORE sending anywhere; keep the tail (most recent) when long.
-    clean = redact(raw)
-    return clean[-cap:] if len(clean) > cap else clean
+    return redact(raw)
 
 
 def _parse_facts(text: str) -> list[str]:
@@ -167,6 +169,50 @@ def chat_completion(messages: list[dict], *, temperature: float, max_tokens: int
         return data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError):
         return None
+
+
+def _chunk_transcript(
+    text: str, cap: int = MAX_INPUT_CHARS, overlap: int = CHUNK_OVERLAP
+) -> list[str]:
+    """Sliding windows of <= cap chars sharing `overlap` chars between
+    neighbours (3C), so a fact straddling a boundary is visible from both
+    sides. A single chunk when the text already fits."""
+    if len(text) <= cap:
+        return [text]
+    step = cap - overlap
+    chunks: list[str] = []
+    start = 0
+    while start < len(text):
+        chunks.append(text[start : start + cap])
+        if start + cap >= len(text):
+            break
+        start += step
+    return chunks
+
+
+def _extract_facts_chunked(transcript: str) -> tuple[list[str] | None, int, int]:
+    """Per-chunk extraction with cross-chunk dedup (3C).
+
+    Returns (facts, chars_sent, chars_total). ``facts`` is None when ANY chunk
+    failed: a partial extraction must neither be written nor advance the
+    cursor — the same no-silent-loss guarantee the single-shot path had. The
+    per-file fact cap applies to the aggregate.
+    """
+    total = len(transcript)
+    seen: set[str] = set()
+    facts: list[str] = []
+    sent = 0
+    for chunk in _chunk_transcript(transcript):
+        extracted = chat_extract_facts(chunk)
+        if extracted is None:
+            return None, sent, total
+        sent += len(chunk)
+        for fact in extracted:
+            key = " ".join(fact.split())
+            if key not in seen:
+                seen.add(key)
+                facts.append(fact)
+    return facts[:MAX_FACTS_PER_FILE], sent, total
 
 
 def chat_extract_facts(transcript: str) -> list[str] | None:
@@ -333,7 +379,7 @@ def digest(vault: Path, dry_run: bool = False, limit: int = 0, source: str = "ar
         pending = pending[:limit]
     report = {
         "files": avail_files, "pending": len(pending), "written": 0, "facts": 0,
-        "skipped": [], "source": source,
+        "skipped": [], "source": source, "charsSent": 0, "charsTotal": 0,
     }
     if degraded is not None:
         return degraded
@@ -343,9 +389,13 @@ def digest(vault: Path, dry_run: bool = False, limit: int = 0, source: str = "ar
         report["skipped"].append("no SiliconFlow API key (digest requires it)")
         return report
     for label, date, transcript, origin in pending:
-        facts = chat_extract_facts(transcript)
+        facts, sent, total = _extract_facts_chunked(transcript)
+        report["charsSent"] += sent
+        report["charsTotal"] += total
         if facts is None:
-            report["skipped"].append(label)
+            # 3C: a failed chunk means an incomplete extraction — the unit is
+            # skipped whole (no partial write, cursor untouched).
+            report["skipped"].append(f"{label} (chunk extraction failed, {sent}/{total} chars sent)")
             continue
         if not dry_run:
             written = _write_digest_facts(vault, facts, origin=origin)
@@ -362,7 +412,7 @@ def digest(vault: Path, dry_run: bool = False, limit: int = 0, source: str = "ar
             report["facts"] += len(facts)
             # Preview lines go to stderr so programmatic callers (e.g. the
             # Hermes dream promoter) get pure JSON on stdout.
-            print(f"[dry-run] {label}: {len(facts)} fact(s)", file=sys.stderr)
+            print(f"[dry-run] {label}: {len(facts)} fact(s), {sent}/{total} chars sent", file=sys.stderr)
             for f in facts[:6]:
                 print(f"    - {f[:70]}", file=sys.stderr)
         # Advance the cursor / mark the queue entry done only on a real run
