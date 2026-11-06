@@ -14,7 +14,7 @@ from pathlib import Path
 from test_common import destroy_scratch, make_scratch_vault
 from unified_memory import promoter
 from unified_memory.common import canonical_dir, canonical_path
-from unified_memory.conflict import read_conflicts
+from unified_memory.app.govern.queue import read_conflicts
 
 
 class AutoPromoteArchiveTests(unittest.TestCase):

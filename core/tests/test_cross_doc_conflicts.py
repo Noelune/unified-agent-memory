@@ -14,7 +14,7 @@ from pathlib import Path
 from test_common import destroy_scratch, make_scratch_vault
 from unified_memory import promoter
 from unified_memory.common import canonical_dir, canonical_path, situation_dir
-from unified_memory.conflict import read_conflicts
+from unified_memory.app.govern.queue import read_conflicts
 
 OLD_LINE = "- 同步端口为 8443（写入 2026-01-01｜来源：Agent提交区/old-20260101-01.md）\n"
 

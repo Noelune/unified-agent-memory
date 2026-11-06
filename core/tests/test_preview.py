@@ -16,9 +16,10 @@ import shutil
 import tempfile
 
 from test_common import destroy_scratch, make_scratch_vault
-from unified_memory import memory, preview
+from unified_memory import memory
 from unified_memory.common import AGENT_CONTEXT, SUBMISSION_DIR, canonical_dir, read_maybe
-from unified_memory.preview import INBOX_REL
+from unified_memory.app.query import preview
+from unified_memory.app.query.preview import INBOX_REL
 
 
 def _empty_inbox(vault: Path) -> Path:
@@ -147,7 +148,7 @@ class PreviewViewTest(unittest.TestCase):
         self.assertNotIn("reason", data)
 
     def test_a_queued_conflict_surfaces_with_both_sides(self):
-        from unified_memory.conflict import append_conflict
+        from unified_memory.app.govern.queue import append_conflict
 
         append_conflict(
             self.vault, "the relay listens on 9090", "the relay listens on 8080", "a.md", "env"
@@ -208,7 +209,7 @@ class PreviewViewTest(unittest.TestCase):
         # Null, not `{choice: "", why: ""}`: the panel draws the advice block
         # when it has something to say, and an empty object would make every
         # row claim an agent had looked at it.
-        from unified_memory.conflict import append_conflict
+        from unified_memory.app.govern.queue import append_conflict
 
         append_conflict(self.vault, "端口是 9090", "端口是 8080", "a.md", "env")
 
@@ -219,7 +220,7 @@ class PreviewViewTest(unittest.TestCase):
         # This is the payload the row is rendered from: without it the panel can
         # only show the same two undifferentiated lines that made the queue
         # unreadable in the first place.
-        from unified_memory.conflict import read_conflicts, record_advice
+        from unified_memory.app.govern.queue import read_conflicts, record_advice
 
         self._conflict_file().write_text(
             "# 事实冲突待裁决队列\n\n---\n"
@@ -251,7 +252,7 @@ class PreviewViewTest(unittest.TestCase):
         # The reason is free text an agent wrote from vault content, so it can
         # quote a key it happened to read. Every other string on this row goes
         # through redact; the newest one does not get to skip it.
-        from unified_memory.conflict import read_conflicts, record_advice
+        from unified_memory.app.govern.queue import read_conflicts, record_advice
 
         self._conflict_file().write_text(
             "## 2026-10-19 03:01 冲突 #20261019030125-1\n"

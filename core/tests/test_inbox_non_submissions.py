@@ -40,7 +40,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from test_common import destroy_scratch, make_scratch_vault
 
-from unified_memory import health, inbox, memory, preview, promoter, stats
+from unified_memory import health, memory, promoter
+from unified_memory.app.ingest import inbox
+from unified_memory.app.query import preview, stats
 from unified_memory.common import NON_SUBMISSION_FILES, canonical_dir
 
 REGISTRY = "前缀登记.md"

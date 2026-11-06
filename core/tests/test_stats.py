@@ -12,8 +12,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_common import _GUARD_INDEX_DB, assert_guard_intact  # arms the isolation guard
 from unified_memory import index as index_mod
 from unified_memory import memory as mem_mod
-from unified_memory import stats as stats_mod
-from unified_memory.preview import INBOX_REL as INBOX_REL_FOR_TEST
+from unified_memory.app.query import stats as stats_mod
+from unified_memory.app.query.preview import INBOX_REL as INBOX_REL_FOR_TEST
 
 
 class _ScratchIndexTest(unittest.TestCase):

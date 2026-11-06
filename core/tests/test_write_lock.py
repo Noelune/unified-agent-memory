@@ -33,7 +33,8 @@ import unittest
 from unittest import mock
 
 from test_common import destroy_scratch, make_scratch_vault
-from unified_memory import common, forgetter, maintenance, promoter
+from unified_memory import common, forgetter, promoter
+from unified_memory.app.maintain import repair as maintenance
 from unified_memory import memory as mem_mod
 from unified_memory.infra import vault as vault_mod
 

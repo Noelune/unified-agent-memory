@@ -72,7 +72,7 @@ class AuditTrailTests(unittest.TestCase):
             encoding="utf-8",
         )
         promoter.auto_promote(self.vault, verbose=False)
-        from unified_memory.conflict import read_conflicts
+        from unified_memory.app.govern.queue import read_conflicts
 
         entry = read_conflicts(self.vault)[0]
         promoter.decide(self.vault, entry, "用新")

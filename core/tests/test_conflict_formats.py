@@ -28,21 +28,23 @@ from unified_memory.common import (
     read_maybe,
     situation_dir,
 )
-from unified_memory.conflict import (
+from unified_memory.domain.conflict import (
     ADVICE_CHOICE,
     ADVICE_WHY,
-    append_conflict,
     classify_against,
     describe,
     entry_key,
+    same_subject,
+    split_change,
+    subject_of,
+)
+from unified_memory.app.govern.queue import (
+    append_conflict,
     find_conflict,
     read_conflicts,
     record_adjudication,
     record_advice,
     remove_conflict,
-    same_subject,
-    split_change,
-    subject_of,
 )
 
 BLOCK = (

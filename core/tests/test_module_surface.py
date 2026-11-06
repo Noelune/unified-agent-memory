@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Shim surface — the one-minor compatibility promise of B5.2–B5.4.
+"""Shim surface — the remaining compatibility promise of B5.2–B5.4.
 
-Four big flat modules were split across layers: ``memory`` (B5.2),
-``conflict`` (B5.4a), ``promoter`` and ``maintenance`` (B5.4c). Every old path
-survives as a re-export shim so that callers we do not control — a user's own
-script, the panel integrations, ``python -m unified_memory.promoter --auto`` —
-keep working (taskbook §0.7).
+Two flat modules still survive as re-export shims: ``memory`` (B5.2) and
+``promoter`` (B5.4c). The ``conflict``, ``maintenance``, ``preview``, ``stats``
+and ``inbox`` shims were retired once their callers moved to the owning
+modules (taskbook §0.7).
 
 A promise nobody checks is not a promise, so this file freezes the public
 surface measured at the pre-B5 baseline (commit 805fad8) and asserts two
@@ -45,20 +44,6 @@ SURFACE = {
         # surface
         "build_parser", "main",
     ),
-    "unified_memory.conflict": (
-        # pure rules -> domain.conflict
-        "char_bigrams", "similarity", "CONFLICT_SIM_THRESHOLD",
-        "_SUBJECT_COLON", "_SUBJECT_DASH", "_SUBJECT_VERB", "_DATE_ONLY",
-        "_NOT_A_SUBJECT", "subject_of", "same_subject", "classify_against",
-        "_signature", "entry_key", "ADVICE_CHOICE", "ADVICE_WHY",
-        "_BLOCK_FIELD", "_BLOCK_KEYS", "_BLOCK_ID", "_SETTLED_MARKERS",
-        "_parse_inline_conflict", "_ADVICE_LINE", "_BULLET",
-        "_PROVENANCE_TAIL", "_RECORDED_AT", "_SOURCE_IN_STAMP", "_WIKILINK",
-        "describe", "_BOUNDARY", "_SNAP_LIMIT", "split_change",
-        # vault queue I/O -> app.govern.queue
-        "append_conflict", "record_advice", "read_conflicts", "find_conflict",
-        "_drop_block", "remove_conflict", "record_adjudication",
-    ),
     "unified_memory.promoter": (
         # review
         "CATEGORY_RULES", "UNCLASSIFIED_TARGET", "UNCLASSIFIED_DOC",
@@ -77,9 +62,6 @@ SURFACE = {
         "_move_to_superseded", "_STAMP_TAIL", "_comparable",
         # cron + entry point + the odd neighbours the old module re-exported
         "register_cron", "main", "shlex_quote", "repair_existing",
-    ),
-    "unified_memory.maintenance": (
-        "TEMPLATE_PLACEHOLDER_RE", "plan_repair", "repair_existing",
     ),
 }
 
@@ -115,20 +97,6 @@ OWNERS = {
         "plain_reason": "unified_memory.surface.cli",
         "build_parser": "unified_memory.surface.cli",
         "emit_json": "unified_memory.infra.console",
-    },
-    "unified_memory.conflict": {
-        "char_bigrams": "unified_memory.domain.conflict",
-        "similarity": "unified_memory.domain.conflict",
-        "classify_against": "unified_memory.domain.conflict",
-        "entry_key": "unified_memory.domain.conflict",
-        "split_change": "unified_memory.domain.conflict",
-        "describe": "unified_memory.domain.conflict",
-        "append_conflict": "unified_memory.app.govern.queue",
-        "record_advice": "unified_memory.app.govern.queue",
-        "read_conflicts": "unified_memory.app.govern.queue",
-        "find_conflict": "unified_memory.app.govern.queue",
-        "remove_conflict": "unified_memory.app.govern.queue",
-        "record_adjudication": "unified_memory.app.govern.queue",
     },
     "unified_memory.promoter": {
         "review": "unified_memory.app.govern.review",

@@ -16,8 +16,7 @@ Rule (see ``classify_against`` — the code below is the contract):
     stage up, in ``app/govern/review.py``.
 
 The vault side — reading and writing 情境信息/事实冲突待裁决.md and the
-adjudication log — lives in ``app/govern/queue.py``. ``unified_memory.conflict``
-re-exports both halves so the flat import path keeps working for one minor.
+adjudication log — lives in ``app/govern/queue.py``.
 """
 from __future__ import annotations
 

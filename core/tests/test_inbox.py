@@ -5,8 +5,8 @@ import shutil
 import tempfile
 import unittest
 
-from unified_memory import inbox
-from unified_memory.preview import INBOX_REL
+from unified_memory.app.ingest import inbox
+from unified_memory.app.query.preview import INBOX_REL
 
 
 class ProcessInboxItemTest(unittest.TestCase):

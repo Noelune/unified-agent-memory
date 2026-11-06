@@ -86,7 +86,8 @@ class AdviseCliTest(unittest.TestCase):
     """
 
     def setUp(self):
-        from unified_memory.conflict import append_conflict, entry_key, read_conflicts
+        from unified_memory.domain.conflict import entry_key
+        from unified_memory.app.govern.queue import append_conflict, read_conflicts
 
         self.vault = make_scratch_vault()
         append_conflict(
@@ -117,7 +118,7 @@ class AdviseCliTest(unittest.TestCase):
         self.assertEqual(payload["data"]["key"], self.key)
         self.assertEqual(payload["data"]["choice"], "并存")
 
-        from unified_memory.conflict import find_conflict
+        from unified_memory.app.govern.queue import find_conflict
 
         entry = find_conflict(self.vault, self.key)
         self.assertEqual(entry["建议"], "并存")
@@ -133,7 +134,7 @@ class AdviseCliTest(unittest.TestCase):
         self.assertEqual(payload["data"]["reason"], "unknown-choice")
         self.assertEqual(payload["data"]["allowed"], ["用新", "保留旧", "并存"])
 
-        from unified_memory.conflict import find_conflict
+        from unified_memory.app.govern.queue import find_conflict
 
         self.assertNotIn("建议", find_conflict(self.vault, self.key))
 
@@ -190,7 +191,7 @@ class AdviseCliTest(unittest.TestCase):
         self.assertIs(payload["ok"], False)
         self.assertEqual(payload["data"]["reason"], "no-reason")
 
-        from unified_memory.conflict import find_conflict
+        from unified_memory.app.govern.queue import find_conflict
 
         self.assertNotIn("建议", find_conflict(self.vault, self.key))
 
@@ -202,7 +203,7 @@ class AdviseCliTest(unittest.TestCase):
         ])
 
         self.assertEqual(payload["data"]["why"], "第一行。 第二行。")
-        from unified_memory.conflict import find_conflict
+        from unified_memory.app.govern.queue import find_conflict
 
         self.assertEqual(find_conflict(self.vault, self.key)["解释"], "第一行。 第二行。")
 
