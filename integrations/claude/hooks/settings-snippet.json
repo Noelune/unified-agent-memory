@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "exec",
-            "command": "python",
+            "command": "python3",
             "args": [
               "${CLAUDE_PROJECT_DIR}/integrations/hooks/memory_hook.py",
               "session-start"
@@ -20,7 +20,7 @@
         "hooks": [
           {
             "type": "exec",
-            "command": "python",
+            "command": "python3",
             "args": [
               "${CLAUDE_PROJECT_DIR}/integrations/hooks/memory_hook.py",
               "prompt-submit"
@@ -35,7 +35,7 @@
         "hooks": [
           {
             "type": "exec",
-            "command": "python",
+            "command": "python3",
             "args": [
               "${CLAUDE_PROJECT_DIR}/integrations/hooks/memory_hook.py",
               "session-end"
