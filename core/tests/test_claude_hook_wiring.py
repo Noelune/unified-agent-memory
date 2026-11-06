@@ -57,7 +57,7 @@ class ClaudeHookWiringTest(unittest.TestCase):
     def _run_event(self, event: str, payload: dict) -> subprocess.CompletedProcess:
         entry = _snippet_entries()[event]
         self.assertEqual(entry.get("type"), "exec", event)
-        self.assertEqual(entry.get("command"), "python", event)
+        self.assertEqual(entry.get("command"), "python3", event)
         args = entry["args"]
         self.assertEqual(len(args), 2, event)
         self.assertEqual(args[1], "prompt-submit" if event == "UserPromptSubmit" else

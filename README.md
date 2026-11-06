@@ -105,18 +105,21 @@
 ```bash
 # 1. 克隆仓库并安装 Core
 git clone https://github.com/Noelune/unified-agent-memory.git && cd unified-agent-memory
+python3 -m venv .venv && source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -e ./core
 
 # 2. 初始化 Vault 模版结构
 python setup/setup.py init --vault ~/Documents/AgentMemory
 
-# 3. 提交与检索知识测试
+# 3. 提交一条事实
 memory submit "staging 服务器环境绑定在 127.0.0.1:8080" --agent alpha
-memory search "staging 服务器"
 
-# 4. 执行 Promoter 归纳与应用
+# 4. 执行 Promoter 归纳与应用（收件箱事实晋升后才可检索）
 python -m unified_memory.promoter --review
 python -m unified_memory.promoter --apply
+
+# 5. 检索验证
+memory search "staging 服务器"
 ```
 
 新事实与既有事实冲突时默认由 Agent 先裁决（`memory decide` / `memory advise`），判不了才轮到人——命令与四种裁决的含义见 [docs/DEPLOY.md › Conflicts](docs/DEPLOY.md#conflicts--the-agent-decides-first-you-get-asked-only-when-it-cant)。
@@ -133,9 +136,9 @@ python -m unified_memory.promoter --apply
 # 一个完整的"人肉"工作流，无需任何 agent：
 python setup/setup.py init --vault ~/Documents/AgentMemory   # 1. 初始化 vault
 memory submit "the build server is at 127.0.0.1:8080" --agent you   # 2. 写一条事实
-memory search "build server"                                # 3. 检索（FTS5 本地索引）
-python -m unified_memory.promoter --review                   # 4. 生成待晋升清单
-python -m unified_memory.promoter --apply                    # 5. 晋升进 canonical
+python -m unified_memory.promoter --review                   # 3. 生成待晋升清单
+python -m unified_memory.promoter --apply                    # 4. 晋升进 canonical
+memory search "build server"                                # 5. 检索（FTS5 本地索引，晋升后才可查到）
 python setup/setup.py cron --vault ~/Documents/AgentMemory   # 6. 定时：每日晋升+每周遗忘，错过自动补跑
 ```
 
