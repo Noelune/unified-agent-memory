@@ -4,6 +4,20 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased] — 下一个版本为 0.10.0（含 breaking change）
 
+### Added — 摘要事实可溯源（P0-3 工作包 3A）
+
+- digest 产物头部写入机器可读的来源注释：`<!-- digest-source: <origin> -->`——archive 源为 vault 内归档相对路径，queue 源为会话转录路径，state 源为 `state.db <日>`；晋升后任一事实可回溯到源会话。注释行永远不会被当成事实行（`fact_lines` 显式跳过 HTML 注释——此前会把这行头当事实晋升，已一并修掉）。
+- review 逐文件读入来源并入待晋升条目（`溯源` 键），待晋升清单以 `｜溯源:<…>` 字段往返（`write_pending_list` / `parse_pending_list` 位置标记解析）。
+- 晋升把来源写成事实行尾的独立括号组 `（溯源：…）`（新 `write_provenance()`）——刻意放在晋升戳**外**：STAMP_RE 的非贪婪 source 组会吞掉戳内新增字段。`strip_suffix` 同时移除该组，去重与索引看到的仍是裸事实（带溯源的事实重新提交仍判 duplicate）。digest 单元改为 `(label, date, transcript, origin)` 四元组。
+- 新增 `core/tests/test_provenance.py`（4 例：戳/溯源解析与剥离往返、产物头写入/不写入、digest→review→清单→apply 全链 + 晋升后再提交判 duplicate）；已做「删掉晋升溯源写入即变红」反证。临时 vault CLI 端到端：头部 → 清单 `｜溯源:` → canonical 行尾 `（溯源：会话归档/2026-11-06.md）`。
+
+### Added — 取代后的旧值携带者扫查入队（P1-3）
+
+- 新 `app/maintain/conflict_scan.py::scan_propagation`：以被取代的旧值为种子，用晋升同款规则（`classify_against`）在全库 active 事实中找「同义复述」嫌疑；排除刚写入的后继行；`old_doc` 作为 `跨文档` 字段；命中按 `used` 事件次数降序（复用 `forget_stats`），被引用最多的排最前。只读 canonical，零写入。
+- 取代的两个收尾点自动扫查入队：`promote()` 账本收尾（`_ledger_supersedence` / `_enqueue_propagation` 抽取；取代配对扩为 (旧, 新id, 新文) 以便排除自身后继）与 `decide._apply_replace` 的 `用新` 收尾（`_ledger_after_replace` / `_enqueue_carriers` 抽取）。队列条目带 `来源: supersede-scan` 与 `疑似旧值复述: <新 claim id>` 标记；`append_conflict` 增加 `extra`（JSON 逐字合并，未知键对两侧读取器与渲染器均惰性）与 `locked` 参数（vault `file_lock` 不可重入，持锁调用方用 `locked=True`——与 `record_advice`/`remove_conflict` 同款）。
+- **只入队不改 canonical**：误报代价是一次人眼，不是一次错误改写。函数预算门抓到三处超 60 行（`_apply_replace` 71 / `promote` 63 / `append_conflict` 66），已抽子函数收口。
+- 新增 `core/tests/test_conflict_scan.py::PropagationTest`（4 例：纯扫查选择与排除、promote 链入队+改写体不被改写、used 排序、decide 用新入队）；已做「禁用两处扫查钩即变红」反证。临时 vault CLI 端到端：改用提交 → 旧值入已取代区 → 改写体仍在 active 且入队一条 supersede-scan。
+
 ### Added — 冲突队列时间戳与老化可见（N1）
 
 - `append_conflict` 写入 `at`（`YYYY-MM-DD HH:MM`）；`read_conflicts` 对旧格式条目回退到队列文件 mtime，只用于排序与展示、不回写。`_signature` 仍只取三键，去重行为不变。
