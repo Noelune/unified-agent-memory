@@ -46,6 +46,12 @@ export interface CleanupDeps {
   vaultPath: string | null
   /** Existing agent instruction files; their dirs are where deploy.py backs up. */
   instructionFiles: readonly string[]
+  /**
+   * This build's package root, when known — the only place a retired PACKAGE
+   * artifact (something the npm tarball used to ship) can be named. Optional:
+   * callers that cannot know it simply retire nothing there.
+   */
+  installPath?: string
   now?: () => Date
 }
 
@@ -86,10 +92,22 @@ export interface RetiredArtifact {
  *     reason: '0.9 renamed the wrapper; the old one is never invoked',
  *     paths: (d) => [join(d.home, '.unified-memory', 'bin', 'memory.old')],
  *   }
- *
- * Empty today: every file the current build writes is one it still owns.
  */
-export const RETIRED_PATHS: RetiredArtifact[] = []
+export const RETIRED_PATHS: RetiredArtifact[] = [
+  {
+    key: 'flat-core-shims',
+    reason:
+      '0.10.0 retired the five B5 re-export shims (breaking; migration map in ' +
+      'CHANGELOG). Over-copy installs keep the stale files, which re-export ' +
+      'from modules this build still ships — harmless but dead.',
+    paths: (d) =>
+      d.installPath
+        ? ['conflict', 'preview', 'stats', 'inbox', 'maintenance'].map((name) =>
+            join(d.installPath as string, 'core', 'unified_memory', `${name}.py`),
+          )
+        : [],
+  },
+]
 
 /** A filename shape this project generates, with an optional retention bound. */
 export interface GarbageRule {

@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased] — 下一个版本 0.11.0（3C 已入，随下一个特性一起发）
 
+### Added — 已退役 shim 的清理注册（upgrade-cleanup）
+
+- `RETIRED_PATHS` 注册 `flat-core-shims`：0.10.0 BREAKING 删除的五个 B5 re-export shim（`conflict` / `preview` / `stats` / `inbox` / `maintenance`，位于 `core/unified_memory/`）。覆盖式升级（备份 + tarball 覆盖）会把 stale shim 留在安装里；此前的清理机制只认 `home` 下的派生物，够不到包内文件——`CleanupDeps` 增加 `installPath`（调用方 `upgrade-boot` 传入 `INSTALL_ROOT`），退休声明按包内精确路径删除。注册即迁移：下一次运行时升级的 reconcile 扫尾会自动清掉这五个 stale 文件，clean npm 安装与缺失路径静默跳过。此前 RETIRED_PATHS 为空表，本次是该机制的首次真实使用。
+- 新增 3 例测试（五 shim 作为数据被清、无 installPath 时惰性、干净安装静默满足）；已做「paths 返回空即变红」反证。
+
 ### Added — 长会话分块提取（P0-3 工作包 3C）
 
 - digest 的提取从「取末尾 6000 字符」改为滑动窗口分块：6000 字符/块、块间 500 字符重叠（`_chunk_transcript`），逐块送同一 LLM、跨块按空白归一化精确文本去重（`_extract_facts_chunked`）。`_transcript_of` 不再截断，返回完整脱敏会话；queue / state 两种来源走同一分块管线。长会话头部不再静默丢失——原「丢头无记录」正是语义漂移的燃料。

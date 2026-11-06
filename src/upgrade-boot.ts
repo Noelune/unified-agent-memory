@@ -90,6 +90,7 @@ function sweepCleanup(cfg: PluginConfig, home: string): CleanupResult {
       home,
       vaultPath: cfg.vaultPath && cfg.vaultPath !== '(not set)' ? cfg.vaultPath : null,
       instructionFiles: detectInstructionTargets(home).map((t) => t.path),
+      installPath: INSTALL_ROOT,
     })
   } catch {
     return { removed: [], failed: [], freedBytes: 0 }
