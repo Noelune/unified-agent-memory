@@ -2,6 +2,27 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased] — 下一个版本为 0.10.0（含 breaking change）
+
+### Changed — 五个 B5 兼容垫片退役（BREAKING）
+
+`core/unified_memory/` 下的 `conflict.py`、`preview.py`、`stats.py`、`inbox.py`、`maintenance.py` 是 B5.2–B5.4 拆分时约定「保留一个 minor」的 re-export 垫片，现已到期删除。`core/tests/` 的导入全部切到实现模块，`test_module_surface.py` 的冻结契约收口到仍在的 `memory` / `promoter` 两个垫片。运行时代码、CLI 入口与架构白名单本就不引用这些路径。
+
+**迁移映射**（外部脚本若仍使用旧路径，按表切换即可，函数与常量名不变）：
+
+| 旧路径 | 新路径 |
+|---|---|
+| `unified_memory.conflict`（纯规则：`classify_against` / `similarity` / `entry_key` …） | `unified_memory.domain.conflict` |
+| `unified_memory.conflict`（队列 I/O：`append_conflict` / `read_conflicts` …） | `unified_memory.app.govern.queue` |
+| `unified_memory.preview` | `unified_memory.app.query.preview` |
+| `unified_memory.stats` | `unified_memory.app.query.stats` |
+| `unified_memory.inbox` | `unified_memory.app.ingest.inbox` |
+| `unified_memory.maintenance` | `unified_memory.app.maintain.repair` |
+
+已排查本机项目外的引用：仅存在于 0.8.8 备份目录、临时解包副本、历史计划文档与一次性探针脚本中，均为历史快照，不是正在运行的脚本；备份目录保持原样以免破坏快照完整性。
+
+**发布约定**：删除公共导入路径属 breaking change，按 semver 下一个版本为 `0.10.0`。本轮不单独发版——`0.9.3` 刚发布、运行时尚未对齐，且下一批「矛盾复扫 + 队列治理」（N1/N2）会新增 `scan-conflicts` 子命令，与该 breaking 一起发布才值得一个版本。当前 npm 与本机运行时对齐 `0.9.3`。
+
 ## [0.9.3] — 2026-11-06
 
 ### Fixed — 侧边栏「可更新」按钮的假成功（更新后重启，版本没变）
