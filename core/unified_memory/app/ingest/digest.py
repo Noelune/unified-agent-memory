@@ -133,19 +133,21 @@ def _parse_facts(text: str) -> list[str]:
     return facts
 
 
-def chat_extract_facts(transcript: str) -> list[str] | None:
-    """Ask the SiliconFlow chat model to distill facts; None on any failure."""
+def chat_completion(messages: list[dict], *, temperature: float, max_tokens: int) -> str | None:
+    """One SiliconFlow chat call; the assistant text, or None on any failure.
+
+    The one HTTP path every LLM feature shares (digest extraction, 3B drift
+    entailment): no key or any transport/shape failure degrades to None and
+    the caller reports it — never raises into the caller's flow.
+    """
     key = embed.get_api_key()
     if not key:
         return None
     payload = {
         "model": DEFAULT_CHAT_MODEL,
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": transcript},
-        ],
-        "temperature": 0.2,
-        "max_tokens": 1200,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
     }
     req = urllib.request.Request(
         CHAT_URL,
@@ -162,8 +164,22 @@ def chat_extract_facts(transcript: str) -> list[str] | None:
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError, json.JSONDecodeError):
         return None
     try:
-        content = data["choices"][0]["message"]["content"]
+        return data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError):
+        return None
+
+
+def chat_extract_facts(transcript: str) -> list[str] | None:
+    """Ask the SiliconFlow chat model to distill facts; None on any failure."""
+    content = chat_completion(
+        [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": transcript},
+        ],
+        temperature=0.2,
+        max_tokens=1200,
+    )
+    if content is None:
         return None
     return _parse_facts(content)
 

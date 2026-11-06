@@ -14,6 +14,7 @@ from pathlib import Path
 from . import backfill as backfill_mod
 from . import conflict_scan as conflict_scan_mod
 from . import drift as drift_mod
+from . import drift_verify as drift_verify_mod
 from . import health as health_mod
 from ...infra.config import resolve_vault
 from ...infra.console import emit_json
@@ -202,3 +203,28 @@ def cmd_scan_conflicts(args: Namespace) -> None:
         print(f"  ! {warning}")
     if not report["dryRun"]:
         print(f"  {report['newConflicts']} new conflict(s) queued")
+
+
+def cmd_verify_drift(args: Namespace) -> None:
+    """Re-check provenance-carrying facts against their source archives (3B)."""
+    vault = resolve_vault()
+    ensure_vault(vault)
+    report = drift_verify_mod.verify_drift(
+        vault, apply=getattr(args, "apply", False), limit=getattr(args, "limit", 0)
+    )
+    if getattr(args, "json", False):
+        emit_json("verify-drift", report)
+        return
+    mode = "applied" if report["dryRun"] is False else "dry-run (re-run with --apply to enqueue)"
+    print(f"verify-drift: {mode}")
+    print(
+        f"checked {report['checked']} provenance fact(s): prefiltered {report['prefiltered']}, "
+        f"llm {report['llmChecked']}, supported {report['supported']}, "
+        f"unsupported {report['unsupported']}, undecidable {report['undecidable']}"
+    )
+    for reason in report["skipped"]:
+        print(f"  skipped: {reason}")
+    for entry in report["candidates"]:
+        print(f"  candidate: {entry['doc']}: {entry['fact'][:60]}  (sim {entry['similarity']}, {entry['verdict']})")
+    if report["enqueued"]:
+        print(f"  {report['enqueued']} candidate(s) queued (source: {drift_verify_mod.DRIFT_SOURCE})")
