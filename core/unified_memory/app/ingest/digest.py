@@ -168,13 +168,19 @@ def chat_extract_facts(transcript: str) -> list[str] | None:
     return _parse_facts(content)
 
 
-def _write_digest_facts(vault: Path, facts: list[str]) -> int:
+def _write_digest_facts(vault: Path, facts: list[str], origin: str = "") -> int:
     if not facts:
         return 0
     inbox = canonical_dir(vault) / "Agent提交区"
     inbox.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
     body = "\n".join(f"- {f}" for f in facts) + "\n"
+    if origin:
+        # 3A provenance (P0-3): the machine-readable source line review reads
+        # back so a digest fact can be traced to its session archive after
+        # promotion. A comment never parses as a fact line (fact_lines skips
+        # it), so this cannot leak a fact into the pending list by itself.
+        body = f"<!-- digest-source: {origin} -->\n" + body
     for seq in range(1, 100):
         candidate = inbox / f"digest-{stamp}-{seq:02d}.md"
         if atomic_create(candidate, body):
@@ -189,14 +195,15 @@ def _cursor(vault: Path, key: str = CURSOR_KEY) -> str:
     return get_meta(vault, key)
 
 
-def _queue_units() -> tuple[list[tuple[str, str, str]], dict[str, str]]:
+def _queue_units() -> tuple[list[tuple[str, str, str, str]], dict[str, str]]:
     """Hook-queue entries -> digest work units plus their paths (done-marking).
 
     The queue is written by the hook runtime's session-end (E1) and drained
     here. Idempotency lives in queue.done (one path per line): already
     processed paths are skipped; bad lines and missing transcripts are skipped
     too (the drain never crashes on a bad entry). The transcript itself goes
-    through the platform adapter, which redacts every line at its exit.
+    through the platform adapter, which redacts every line at its exit. The
+    fourth field is the provenance origin (3A): the transcript path, verbatim.
     """
     queue = hookstate.queue_path()
     if not queue.is_file():
@@ -209,7 +216,7 @@ def _queue_units() -> tuple[list[tuple[str, str, str]], dict[str, str]]:
             for ln in done_file.read_text(encoding="utf-8", errors="replace").splitlines()
             if ln.strip()
         }
-    units: list[tuple[str, str, str]] = []
+    units: list[tuple[str, str, str, str]] = []
     paths: dict[str, str] = {}
     for raw in queue.read_text(encoding="utf-8", errors="replace").splitlines():
         line = raw.strip()
@@ -231,7 +238,7 @@ def _queue_units() -> tuple[list[tuple[str, str, str]], dict[str, str]]:
         label = f"claude-code {transcript_file.name}"
         if label in paths:
             label = f"{label} #{len(units) + 1}"
-        units.append((label, ts[:10], claude_code_transcript(transcript_file)))
+        units.append((label, ts[:10], claude_code_transcript(transcript_file), path))
         paths[label] = path
     return units, paths
 
@@ -254,27 +261,30 @@ def _mark_queue_done(path: str) -> None:
     atomic_write(done_file, "\n".join(lines) + "\n")
 
 
-def _units(vault: Path, source: str, cursor: str) -> list[tuple[str, str, str]]:
-    """Collect ``(label, date, transcript)`` work items newer than ``cursor``.
+def _units(vault: Path, source: str, cursor: str) -> list[tuple[str, str, str, str]]:
+    """Collect ``(label, date, transcript, origin)`` work items newer than the
+    cursor.
 
-    Both sources are projected onto the same triple, which is why digest never
-    has to know where a transcript came from. Archive files are read lazily so
-    a no-op run does not touch 82 files; the state source already filters by
-    date inside SQL.
+    Both sources are projected onto the same quadruple, which is why digest
+    never has to know where a transcript came from — except for provenance
+    (3A), where the origin IS the answer: the archive path relative to the
+    vault, or the state.db day. Archive files are read lazily so a no-op run
+    does not touch 82 files; the state source already filters by date inside
+    SQL.
     """
     if source == "state":
         return [
-            (f"state.db {day}", day, transcript)
+            (f"state.db {day}", day, transcript, f"state.db {day}")
             for day, transcript in sessiondb.dated_transcripts(since=cursor)
         ]
     return [
-        (p.name, _date_of(p), _transcript_of(p))
+        (p.name, _date_of(p), _transcript_of(p), str(p.relative_to(vault)))
         for p in _archive_files(vault)
         if _date_of(p) > cursor
     ]
 
 
-def _pending_units(vault: Path, source: str, cursor_key: str) -> tuple[list[tuple[str, str, str]], dict | None, dict[str, str]]:
+def _pending_units(vault: Path, source: str, cursor_key: str) -> tuple[list[tuple[str, str, str, str]], dict | None, dict[str, str]]:
     """Collect the work units for one digest source.
 
     Returns (pending, degraded-report-or-None, queue-paths): an unreadable
@@ -316,13 +326,13 @@ def digest(vault: Path, dry_run: bool = False, limit: int = 0, source: str = "ar
     if not embed.configured():
         report["skipped"].append("no SiliconFlow API key (digest requires it)")
         return report
-    for label, date, transcript in pending:
+    for label, date, transcript, origin in pending:
         facts = chat_extract_facts(transcript)
         if facts is None:
             report["skipped"].append(label)
             continue
         if not dry_run:
-            written = _write_digest_facts(vault, facts)
+            written = _write_digest_facts(vault, facts, origin=origin)
             if facts and not written:
                 # The inbox could not allocate a file. Do NOT advance the
                 # cursor / mark the queue entry done: the old code did, so the

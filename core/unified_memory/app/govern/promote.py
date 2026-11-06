@@ -16,7 +16,7 @@ from pathlib import Path
 
 from ...domain import state as domain_state
 from ...domain.facts import _move_to_superseded, active_fact_lines, append_active_facts
-from ...domain.markdown import bare_fact_line, write_stamp
+from ...domain.markdown import bare_fact_line, write_provenance, write_stamp
 from ...domain.model import Change, ChangeSet
 from ...domain.policy import CANONICAL_DOCS, CONFLICT_FILE, NON_SUBMISSION_FILES, SUBMISSION_DIR
 from ...infra import vault as vault_mod
@@ -59,10 +59,13 @@ def _plan_group(
         if not bare or bare in prior:
             continue
         src = entry.get("来源") or entry.get("source") or "inbox"
+        # 3A provenance (P0-3): digest-sourced entries carry the session
+        # archive they were distilled from; it rides the fact line for good.
+        origin = entry.get("溯源") or entry.get("provenance") or ""
         # Batch D: every promoted fact is born with its permanent block id
         # (PLAN §4.1 — the id is generated once, 改文字不改 ID).
         claim_id = new_claim_id()
-        line = f"- {fact}{write_stamp(src, today)} ^c-{claim_id}\n"
+        line = f"- {fact}{write_stamp(src, today)}{write_provenance(origin)} ^c-{claim_id}\n"
         additions.append(line)
         facts.append((src, fact))
         prior.add(bare)

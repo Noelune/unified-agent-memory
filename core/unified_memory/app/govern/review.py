@@ -110,6 +110,22 @@ def _best_overlap(fact: str, existing: list[str], min_sim: float) -> str | None:
     return best_line if best_sim >= min_sim else None
 
 
+def _digest_source(text: str) -> str:
+    """The provenance origin a digest file carries (3A), "" for plain submits.
+
+    `_write_digest_facts` stamps every digest artifact with a one-line
+    ``<!-- digest-source: … -->`` header; review reads it back so the origin
+    survives promotion on the fact line itself.
+    """
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line.startswith("<!-- digest-source: ") and line.endswith(" -->"):
+            return line[len("<!-- digest-source: "):-len(" -->")].strip()
+        if line and not line.startswith("<!--"):
+            break  # past the header zone — plain submission file
+    return ""
+
+
 def _entry(
     vault: Path,
     clean: str,
@@ -117,6 +133,7 @@ def _entry(
     target: Path,
     src_name: str,
     supersede: str | None = None,
+    origin: str = "",
 ) -> dict:
     """Build a pending-list entry (shared by pending and supersede kinds)."""
     entry = {
@@ -127,6 +144,8 @@ def _entry(
     }
     if supersede is not None:
         entry["supersede"] = supersede
+    if origin:
+        entry["溯源"] = origin
     return entry
 
 
@@ -136,13 +155,15 @@ def _verdict(
     src_name: str,
     adjudicated: set[str],
     existing_cache: dict[Path, list[str]],
+    origin: str = "",
 ) -> tuple[str, dict | None]:
     """Decide one submitted fact and do the queue I/O it needs.
 
     Returns (kind, entry). kind ∈ settled | duplicate | supersede | conflict |
     cross | pending; entry is the pending-list entry for supersede/pending and
     None otherwise. Queue writes (append_conflict) happen here, exactly where
-    the inline loop did them — same module, same layer, same order.
+    the inline loop did them — same module, same layer, same order. ``origin``
+    is the file's digest provenance (3A), attached to every entry it yields.
     """
     if bare_fact_line(f"- {clean}") in adjudicated:
         # A human already ruled on this fact; honouring the adjudication log
@@ -169,7 +190,7 @@ def _verdict(
     if status == "conflict":
         if hit and SUPERSESSION_RE.search(clean):
             # Replacement cue: keep both in history, mark old superseded.
-            return "supersede", _entry(vault, clean, doc_id, target, src_name, supersede=hit)
+            return "supersede", _entry(vault, clean, doc_id, target, src_name, supersede=hit, origin=origin)
         append_conflict(vault, clean, hit or "", src_name, doc_id)
         return "conflict", None
     # Below the conflict threshold, a replacement cue with a looser
@@ -177,7 +198,7 @@ def _verdict(
     if SUPERSESSION_RE.search(clean):
         topic_hit = _best_overlap(clean, existing, min_sim=0.3)
         if topic_hit:
-            return "supersede", _entry(vault, clean, doc_id, target, src_name, supersede=topic_hit)
+            return "supersede", _entry(vault, clean, doc_id, target, src_name, supersede=topic_hit, origin=origin)
     # Contradictions living in ANOTHER note are invisible to the
     # target-note comparison above; recall candidates corpus-wide and
     # apply the same subject/value rules before queueing.
@@ -185,7 +206,7 @@ def _verdict(
     if cross is not None:
         append_conflict(vault, clean, cross[1], src_name, doc_id, cross_doc=cross[0])
         return "cross", None
-    return "pending", _entry(vault, clean, doc_id, target, src_name)
+    return "pending", _entry(vault, clean, doc_id, target, src_name, origin=origin)
 
 
 def _print_review(result: dict) -> None:
@@ -233,9 +254,11 @@ def review(vault: Path, verbose: bool = True, only: set[str] | None = None) -> d
         if src.name in NON_SUBMISSION_FILES or (only is not None and src.name not in only):
             continue
         source_files.add(src.name)
-        for fact in fact_lines(src.read_text(encoding="utf-8", errors="replace")):
+        text = src.read_text(encoding="utf-8", errors="replace")
+        origin = _digest_source(text)
+        for fact in fact_lines(text):
             clean = redact(fact.strip())
-            kind, entry = _verdict(vault, clean, src.name, adjudicated, existing_cache)
+            kind, entry = _verdict(vault, clean, src.name, adjudicated, existing_cache, origin=origin)
             if kind == "settled":
                 settled += 1
             elif kind == "duplicate":
@@ -324,7 +347,8 @@ def write_pending_list(vault: Path, result: dict) -> None:
         lines.append("_无待晋升事实。_")
     for i, p in enumerate(result["pending"], 1):
         extra = f"｜取代:{p['supersede']}" if p.get("supersede") else ""
-        lines.append(f"- [ ] {i}. 分类:{p['doc']}｜目标:{p['target']}｜来源:{p['source']}{extra}｜内容:{p['fact']}")
+        origin = f"｜溯源:{p['溯源']}" if p.get("溯源") else ""
+        lines.append(f"- [ ] {i}. 分类:{p['doc']}｜目标:{p['target']}｜来源:{p['source']}{extra}{origin}｜内容:{p['fact']}")
     lines.append("")
     atomic_write(path, "\n".join(lines))
     return path
@@ -356,7 +380,7 @@ def parse_pending_list(vault: Path) -> list[dict]:
             continue
         fields: dict[str, str] = {}
         payload = m.group(1)
-        markers = [(key, payload.find(key + ":")) for key in ("分类", "目标", "来源", "取代", "内容")]
+        markers = [(key, payload.find(key + ":")) for key in ("分类", "目标", "来源", "取代", "溯源", "内容")]
         markers = [(key, pos) for key, pos in markers if pos >= 0]
         for key, pos in markers:
             end = min((other for _, other in markers if other > pos), default=len(payload))
