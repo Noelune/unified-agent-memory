@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file.
 
-## [Unreleased] — 下一个版本 0.11.0（3C 已入，随下一个特性一起发）
+## [0.11.0] — 2026-11-07
 
 ### Added — 已退役 shim 的清理注册（upgrade-cleanup）
 
