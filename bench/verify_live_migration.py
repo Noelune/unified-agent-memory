@@ -21,7 +21,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "core"))
 
-from unified_memory import schema  # noqa: E402
+from unified_memory.infra.store import schema  # noqa: E402
 
 
 def counts(path: Path, with_ledger: bool = True) -> dict:

@@ -14,16 +14,16 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from unified_memory.infra.store import get_conn, update_index
 from test_common import destroy_scratch, make_scratch_vault
-from unified_memory import index, schema
+from unified_memory.infra.store import schema
 from unified_memory.app.retrieve import pipeline as search
-from unified_memory.common import canonical_dir
+from unified_memory.infra.vault import canonical_dir
 
 LINE = "- the staging server runs on 127.0.0.1:8080（写入 2026-01-01｜来源：Agent提交区/x-1.md）\n"
 
-
 def _rows(vault: Path, needle: str = "staging server") -> list[sqlite3.Row]:
-    conn = index.get_conn(vault)
+    conn = get_conn(vault)
     try:
         return conn.execute(
             "SELECT id, doc, line, text_hash, legacy_id, access_count "
@@ -32,7 +32,6 @@ def _rows(vault: Path, needle: str = "staging server") -> list[sqlite3.Row]:
         ).fetchall()
     finally:
         conn.close()
-
 
 class OccurrenceIdentityTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -45,7 +44,7 @@ class OccurrenceIdentityTests(unittest.TestCase):
         ctx = canonical_dir(self.vault)
         (ctx / "我的偏好摘要.md").write_text(LINE, encoding="utf-8")
         (ctx / "工程执行规则.md").write_text(LINE, encoding="utf-8")
-        index.update_index(self.vault)
+        update_index(self.vault)
         rows = _rows(self.vault)
         self.assertEqual(len(rows), 2)
         self.assertEqual({r["doc"] for r in rows},
@@ -57,9 +56,9 @@ class OccurrenceIdentityTests(unittest.TestCase):
         ctx = canonical_dir(self.vault)
         (ctx / "我的偏好摘要.md").write_text(LINE, encoding="utf-8")
         (ctx / "工程执行规则.md").write_text(LINE, encoding="utf-8")
-        index.update_index(self.vault)
+        update_index(self.vault)
         (ctx / "我的偏好摘要.md").unlink()
-        index.update_index(self.vault)
+        update_index(self.vault)
         result = search.hybrid_search(self.vault, "staging server", limit=8)
         self.assertGreaterEqual(result["count"], 1)
         hits = [i for i in result["results"] if "staging server" in i["line"]]
@@ -70,7 +69,7 @@ class OccurrenceIdentityTests(unittest.TestCase):
     def test_duplicate_line_in_one_note_is_one_memory(self) -> None:
         ctx = canonical_dir(self.vault)
         (ctx / "我的偏好摘要.md").write_text(LINE + LINE, encoding="utf-8")
-        index.update_index(self.vault)
+        update_index(self.vault)
         rows = _rows(self.vault)
         self.assertEqual(len(rows), 1)
 
@@ -81,9 +80,9 @@ class OccurrenceIdentityTests(unittest.TestCase):
             LINE + "- another fact here（写入 2026-01-02｜来源：Agent提交区/x-2.md）\n",
             encoding="utf-8",
         )
-        index.update_index(self.vault)
+        update_index(self.vault)
         result = search.hybrid_search(self.vault, "staging server", limit=3)
-        conn = index.get_conn(self.vault)
+        conn = get_conn(self.vault)
         try:
             before = conn.execute(
                 "SELECT access_count FROM memories WHERE line LIKE '%staging%'"
@@ -95,8 +94,8 @@ class OccurrenceIdentityTests(unittest.TestCase):
             LINE + "- a different sibling line（写入 2026-01-03｜来源：Agent提交区/x-3.md）\n",
             encoding="utf-8",
         )
-        index.update_index(self.vault)
-        conn = index.get_conn(self.vault)
+        update_index(self.vault)
+        conn = get_conn(self.vault)
         try:
             after = conn.execute(
                 "SELECT access_count FROM memories WHERE line LIKE '%staging%'"
@@ -104,7 +103,6 @@ class OccurrenceIdentityTests(unittest.TestCase):
         finally:
             conn.close()
         self.assertEqual(after, before)
-
 
 class OccurrenceMigrationTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -116,7 +114,7 @@ class OccurrenceMigrationTests(unittest.TestCase):
         self._tmp.cleanup()
 
     def test_v4_rows_are_remapped_and_remembered(self) -> None:
-        conn = index.get_conn(self.vault)
+        conn = get_conn(self.vault)
         try:
             conn.execute(
                 "INSERT INTO memories (id, doc, line, type, importance, status, "
@@ -140,7 +138,7 @@ class OccurrenceMigrationTests(unittest.TestCase):
         finally:
             conn.close()
 
-        conn = index.get_conn(self.vault)  # triggers the v4 -> v5 migration
+        conn = get_conn(self.vault)  # triggers the v4 -> v5 migration
         try:
             row = conn.execute(
                 "SELECT id, text_hash, legacy_id, access_count FROM memories"
@@ -169,7 +167,6 @@ class OccurrenceMigrationTests(unittest.TestCase):
             self.assertEqual(schema._read_version(conn), int(schema.SCHEMA_VERSION))
         finally:
             conn.close()
-
 
 if __name__ == "__main__":
     unittest.main()

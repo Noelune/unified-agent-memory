@@ -19,8 +19,8 @@ from setup.remote_index_server import Handler  # noqa: E402
 
 from test_common import destroy_scratch, make_scratch_vault  # noqa: E402
 from unified_memory import memory as mem_mod  # noqa: E402
-from unified_memory.common import canonical_path  # noqa: E402
-
+from unified_memory.infra.vault import canonical_path
+# noqa: E402
 
 class RemoteServer:
     def __init__(self, vault, token):
@@ -34,7 +34,6 @@ class RemoteServer:
     def close(self):
         self.server.shutdown()
         self.server.server_close()
-
 
 class RemoteSearchTest(unittest.TestCase):
     def setUp(self):
@@ -177,7 +176,6 @@ class RemoteSearchTest(unittest.TestCase):
             )
             response = client.recv(4096)
         self.assertTrue(response.startswith(b"HTTP/1.0 408"))
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -12,7 +12,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from unified_memory import schema
+from unified_memory.infra.store import schema
 
 
 def _fill_learning_data(conn: sqlite3.Connection) -> None:

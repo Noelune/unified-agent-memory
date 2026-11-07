@@ -157,7 +157,7 @@ Hermes 集成（`integrations/hermes/`）只是"其中一个 Agent 接进来"的
 
 | 路径 | 功能说明 |
 |---|---|
-| `core/` | 零第三方依赖 Python 包：`memory.py` (初始化/检索/提交), `promoter.py` (审核/应用/裁决), `forgetter.py` (衰减归档), `catchup.py` (错过补跑), `conflict.py` (冲突判定) |
+| `core/` | 零第三方依赖 Python 包：`memory.py` (初始化/检索/提交), `promoter.py` (审核/应用/裁决), `forgetter.py` (衰减归档), `catchup.py` (错过补跑), `domain/conflict.py` (冲突判定), `app/maintain/` (体检·修复·扫查·漂移复核) |
 | `vault-template/` | 即用型 Obsidian Vault 模版：7 份标准化 Canonical 笔记、提交区、情境信息与记忆遗忘区 |
 | `src/` | DSH 宿主半边：工具注册、路由、`agent/pre-step` 自动召回、浏览器侧边栏面板、升级规划器（`upgrade.ts`）与唯一写入点（`upgrade-run.ts`） |
 | `lib/` | 构建产物：插件入口与 `client-ui.js`（由 `build.mjs` 生成，不手改） |

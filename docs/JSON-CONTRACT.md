@@ -12,6 +12,8 @@
 | `memory search <query> --hybrid --json` | 混合检索（lexical + 向量 + 图，§4.2） |
 | `memory doctor --json` | 只读健康报告；`data.ok` 表示健康，命令本身的 `ok` 固定为 true（`orphanIndexes` 见 §5.4） |
 | `memory gc --json` | 派生数据清理报告（默认 dry-run；`--apply` 才删除） |
+| `memory scan-conflicts --json` | 已入库事实的跨文档矛盾复扫（默认 dry-run；`--apply` 才入裁决队列，§5.5） |
+| `memory verify-drift --json` | 溯源事实对源会话的漂移复核（默认 dry-run；`--apply` 才入队，§5.6；每次对有锚点的事实调一次 LLM） |
 | `memory search <query> --remote --json` | **例外：不产出信封**，见 §1.2 / §4.3 |
 | `memory preview <view> --json` | 只读治理视图（§5） |
 | `memory note <name> --json` | 读**一条**提交区条目的正文（§5.2） |
@@ -50,7 +52,7 @@
   消费方必须按「读一整行 → 解析」处理，不可假设跨行美化格式。
 
 > 实现：`core/unified_memory/memory.py` 的 `emit_json()`；`preview` 走
-> `core/unified_memory/preview.py` 的 `envelope()`（同形信封）；`note` / `dismiss`
+> `core/unified_memory/app/query/preview.py` 的 `envelope()`（同形信封）；`note` / `dismiss`
 > 各自在 `cmd_note` / `cmd_dismiss` 内直接 `json.dumps`（同形信封）。
 
 ### 1.1 业务拒绝：**也打印信封且 exit 0**（区别于「非零退出」的失败）
@@ -439,7 +441,7 @@ else:
 `view '<view>' is unsupported: <reason>`，**不打印** `no items in view '<view>'`，
 以免与真正的"空视图"混淆。
 
-> 实现：`core/unified_memory/preview.py` 的 `build()` 与 `_conflicts()`。
+> 实现：`core/unified_memory/app/query/preview.py` 的 `build()` 与 `_conflicts()`。
 
 ### 5.2 `memory note <name> --json`
 
@@ -472,7 +474,7 @@ else:
 | `not-found` | 名字合法但文件不存在或不可读（`OSError`） |
 
 > `reason` **不在此枚举**里的情形：`read_inbox_item()` 只产出上面两个值。
-> 名字校验与路径前缀校验都在 `preview.py` 的 `_safe_inbox_name()` / `read_inbox_item()`
+> 名字校验与路径前缀校验都在 `app/query/preview.py` 的 `_safe_inbox_name()` / `read_inbox_item()`
 > 里，`note` 与 `dismiss` 共用。
 
 ### 5.3 `memory dismiss <name> --json`
@@ -496,7 +498,7 @@ else:
 | `movedTo` | string \| null | 成功时为目标路径，**相对提交区**（如 `已处理/a-note.md`）；失败时为 `null` |
 | `reason` | string \| null | 成功时为 `null`；失败时为下表枚举之一 |
 
-`reason` 枚举（全部来自 `core/unified_memory/inbox.py` 的 `process_inbox_item()`）：
+`reason` 枚举（全部来自 `core/unified_memory/app/ingest/inbox.py` 的 `process_inbox_item()`）：
 
 | 值 | 含义 |
 |---|---|
@@ -510,7 +512,7 @@ else:
 （`name.20260922-043501.md`、`name.20260922-043501-2.md`），**两份都保留**。
 探测到 `_MAX_VARIANTS`（1000）次仍无空位才报 `io-error:`。
 
-> 实现：`core/unified_memory/inbox.py`（`process_inbox_item` / `_unique_target`），
+> 实现：`core/unified_memory/app/ingest/inbox.py`（`process_inbox_item` / `_unique_target`），
 > 与 promoter 的 `archive_sources` 共用同一把 vault 锁，因此探测与移动对并发归档是原子的。
 
 ### 5.3.1 `memory accept <name> --json` — 对一条提交说「是」
@@ -582,7 +584,7 @@ else:
 > 而 `_adjudicated_facts` 从此永久压掉这条事实 —— 一个叫「跳过」的按钮会**静默地永久结掉**
 > 用户拒绝回答的问题。CLI 里它是给终端前的人「先不做」用的，语义不同。
 
-**队列有两种写法，读的时候都认**（`core/unified_memory/conflict.py`）：
+**队列有两种写法，读的时候都认**（解析规则在 `domain/conflict.py`，读写 IO 在 `app/govern/queue.py`）：
 
 ```
 - [ ] 冲突 {"新":"…","旧":"…","来源":"…","目标":"…"}      ← core 自己写，一行一条
@@ -682,6 +684,53 @@ else:
 `files` / `count` 是**派生自磁盘的事实**，不是用户正文；但路径本身来自用户环境，按数据对待。
 
 ---
+
+### 5.5 `memory scan-conflicts --json`
+
+只读复扫 canonical 笔记找矛盾对（`app/maintain/conflict_scan.py`）：按 `subject_of`
+分组、组内复用 `classify_against` 同一套规则；无主题行走 `lexical_search` top-20 召回。
+默认 dry-run；`--apply` 才把命中写入裁决队列（`来源: conflict-scan`，`_signature` 去重保证
+重复运行幂等）。**只入队，绝不改 canonical。**
+
+```json
+{
+  "ok": true, "command": "scan-conflicts",
+  "data": {
+    "dryRun": true, "groups": 12, "headless": 2, "candidatePairs": 40,
+    "hits": [{"new": "…", "old": "…", "doc": "常用路径与环境.md", "crossDoc": "工程执行规则.md"}],
+    "newConflicts": 1, "elapsedMs": 12, "warnings": []
+  }
+}
+```
+
+- `hits` 的键：`new` / `old` / `doc`（命中行所在笔记名）/ `crossDoc`（另一侧所在笔记名）。
+- `warnings`：单主题组超过 200 对时截断扫查并在此说明（只 warn，不阻塞）。
+
+### 5.6 `memory verify-drift --json`
+
+对每条带 `（溯源：…）` 的 active 事实（含 `情境信息/未归类事实.md`）取回源会话归档复核
+（`app/maintain/drift_verify.py`）。两级判定，成本从低到高：①`similarity` 预筛——原文无任何
+≥0.3 相似行直接判 `不支持`（零 LLM 花费）；②其余走一次 LLM 蕴含判定（temperature 0，回答限定
+支持/不支持/无法判断；传输失败计入无法判断，不猜答案）。源文本过 `redact` 才出进程。
+默认 dry-run；`--apply` 才入队（`来源: drift-verify`，`旧` = 逐字证据行，extra 带
+`证据` / `溯源` / `疑似漂移`）；`--limit N` 限制核查条数（LLM 成本上界）。
+
+```json
+{
+  "ok": true, "command": "verify-drift",
+  "data": {
+    "checked": 2, "prefiltered": 1, "llmChecked": 1, "supported": 1,
+    "unsupported": 1, "undecidable": 0, "skipped": [],
+    "candidates": [{"doc": "…", "fact": "…", "origin": "会话归档/2026-11-06.md",
+                     "anchor": "…", "similarity": 0.059, "verdict": "不支持"}],
+    "enqueued": 0, "dryRun": true, "elapsedMs": 1400
+  }
+}
+```
+
+- `enqueued` 是**真实队列增量**（`--apply` 时按入队前后差值计，签名去重后可为 0）。
+- `candidates[].verdict ∈ 不支持`（仅不支持的进候选；`无法判断` 只计数不入队）。
+- 缺失源归档的条目进 `skipped`（带原因），不算失败也不算不支持。
 
 ## 6. 宿主路由载荷：`buildStatusPayload`
 

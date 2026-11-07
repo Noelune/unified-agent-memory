@@ -16,9 +16,9 @@ from pathlib import Path
 
 from ...domain import state as domain_state
 from ...domain.facts import _move_to_superseded, active_fact_lines, append_active_facts
-from ...domain.markdown import bare_fact_line, write_stamp
+from ...domain.markdown import bare_fact_line, write_provenance, write_stamp
 from ...domain.model import Change, ChangeSet
-from ...domain.policy import CANONICAL_DOCS, CONFLICT_FILE, NON_SUBMISSION_FILES, SUBMISSION_DIR
+from ...domain.policy import AGENT_CONTEXT, CANONICAL_DOCS, CONFLICT_FILE, NON_SUBMISSION_FILES, SUBMISSION_DIR
 from ...infra import vault as vault_mod
 from ...infra.lock import file_lock
 from ...infra.schedule import mark_schedule_run
@@ -30,6 +30,8 @@ from ...infra.store.ledger import (
     refresh_doc,
 )
 from ...infra.vault import canonical_dir, canonical_path, processed_dir, read_maybe
+from ..maintain.conflict_scan import PROPAGATION_SOURCE, scan_propagation
+from .queue import append_conflict
 from .review import classify, parse_pending_list, pending_sources, review, target_path
 
 
@@ -48,7 +50,7 @@ def _plan_group(
     prior = set(active_fact_lines(existing))
     additions: list[str] = []
     supersedes: list[str] = []
-    pairs: list[tuple[str, str]] = []
+    pairs: list[tuple[str, str, str]] = []
     facts: list[tuple[str, str]] = []
     for entry in group:
         fact = entry.get("内容") or entry.get("fact") or ""
@@ -59,17 +61,20 @@ def _plan_group(
         if not bare or bare in prior:
             continue
         src = entry.get("来源") or entry.get("source") or "inbox"
+        # 3A provenance (P0-3): digest-sourced entries carry the session
+        # archive they were distilled from; it rides the fact line for good.
+        origin = entry.get("溯源") or entry.get("provenance") or ""
         # Batch D: every promoted fact is born with its permanent block id
         # (PLAN §4.1 — the id is generated once, 改文字不改 ID).
         claim_id = new_claim_id()
-        line = f"- {fact}{write_stamp(src, today)} ^c-{claim_id}\n"
+        line = f"- {fact}{write_stamp(src, today)}{write_provenance(origin)} ^c-{claim_id}\n"
         additions.append(line)
         facts.append((src, fact))
         prior.add(bare)
         old_bare = entry.get("取代") or entry.get("supersede") or ""
         if old_bare:
             supersedes.append(old_bare)
-            pairs.append((old_bare, claim_id))
+            pairs.append((old_bare, claim_id, fact))
     if not additions:
         return None
     text = append_active_facts(existing, additions)
@@ -143,24 +148,51 @@ def promote(vault: Path, entries: list[dict], *, locked: bool = False) -> list[s
     # Batch D: refresh the ledger projection for the touched notes and close
     # the superseded claims' validity windows (the pairing rode in the
     # ChangeSet meta, because only the planner knows old-bare → new-id).
-    if applied.changes:
-        conn = get_conn(vault)
-        try:
-            for change in applied.changes:
-                meta = change.meta or {}
-                refresh_doc(conn, vault, Path(change.doc))
-                if meta.get("kind") != "promotion":
-                    continue
-                for old_bare, new_id in meta.get("pairs", []):
-                    old_id = claim_id_for_text(conn, old_bare)
-                    if old_id:
-                        record_supersedence(
-                            conn, old_id, new_id, actor="promoter", decided_at=today
-                        )
-            conn.commit()
-        finally:
-            conn.close()
+    superseded = _ledger_supersedence(vault, applied, today)
+    # P1-3 propagation sweep (read-only scan → queue-only write): after the
+    # windows closed, find active facts still carrying the old value's
+    # meaning and hand them to adjudication. ``locked`` mirrors this call's
+    # own lock state — apply_pending/auto_promote hold the vault lock
+    # across promote(), and the queue's file_lock is not reentrant.
+    _enqueue_propagation(vault, superseded, locked=locked)
     return promoted
+
+
+def _ledger_supersedence(vault: Path, applied, today: str) -> list[tuple[str, str, str, str]]:
+    """Close superseded windows on the ledger; return the (old, new-id, new,
+    doc) tuples the propagation sweep needs. Batch D extraction."""
+    superseded: list[tuple[str, str, str, str]] = []
+    if not applied.changes:
+        return superseded
+    conn = get_conn(vault)
+    try:
+        for change in applied.changes:
+            meta = change.meta or {}
+            refresh_doc(conn, vault, Path(change.doc))
+            if meta.get("kind") != "promotion":
+                continue
+            for old_bare, new_id, new_fact in meta.get("pairs", []):
+                old_id = claim_id_for_text(conn, old_bare)
+                if old_id:
+                    record_supersedence(
+                        conn, old_id, new_id, actor="promoter", decided_at=today
+                    )
+                superseded.append((old_bare, new_id, new_fact, Path(change.doc).name))
+        conn.commit()
+    finally:
+        conn.close()
+    return superseded
+
+
+def _enqueue_propagation(vault: Path, superseded: list[tuple[str, str, str, str]], *, locked: bool) -> None:
+    """Hand the old value's remaining carriers to adjudication (P1-3)."""
+    for old_bare, new_id, new_fact, doc_name in superseded:
+        for hit in scan_propagation(vault, old_bare, exclude=(new_fact,), old_doc=doc_name):
+            append_conflict(
+                vault, hit["new"], hit["old"], PROPAGATION_SOURCE,
+                target_file=hit["doc"], cross_doc=hit["crossDoc"],
+                extra={"疑似旧值复述": new_id}, locked=locked,
+            )
 
 
 def _refresh_index(vault: Path) -> None:
@@ -311,11 +343,25 @@ def _resolve_target(vault: Path, entry: dict) -> Path:
     if raw:
         if raw in CANONICAL_DOCS:
             return canonical_path(vault, raw)
+        # The core-written queue entries (conflict-scan, drift-verify) carry
+        # the canonical FILE NAME ("常用路径与环境.md") or a path relative to
+        # 50-Agent-Context ("情境信息/未归类事实.md") — resolving those as
+        # vault-relative created a stray file at the vault root and left the
+        # real note untouched. Resolve by name, then under AGENT_CONTEXT,
+        # before falling back to the hand-written vault-relative form.
+        by_name = next((doc for doc, name in CANONICAL_DOCS.items() if name == raw), "")
+        if by_name:
+            return canonical_path(vault, by_name)
+        base = Path(vault).resolve()
+        rel = raw.replace("\\", "/")
+        in_context = (base / AGENT_CONTEXT / rel).resolve()
+        if in_context.is_relative_to(base) and in_context.suffix == ".md" and in_context.is_file():
+            return in_context
         # The block format is written on Windows (`50-Agent-Context\常用路径
         # 与环境.md`). Treat `\` as a separator everywhere so the same vault
         # read on Linux resolves to the same note instead of to a file whose
         # name contains a backslash.
-        candidate = (Path(vault) / raw.replace("\\", "/")).resolve()
-        if candidate.is_relative_to(Path(vault).resolve()) and candidate.suffix == ".md":
+        candidate = (base / rel).resolve()
+        if candidate.is_relative_to(base) and candidate.suffix == ".md":
             return candidate
     return target_path(vault, classify(str(entry.get("新", ""))))

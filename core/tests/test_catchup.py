@@ -7,14 +7,15 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from unified_memory.infra.store import update_index
 from test_common import destroy_scratch, make_scratch_vault
 from unified_memory import catchup, forgetter, promoter
-from unified_memory.common import canonical_dir, canonical_path, read_maybe, read_schedule_state
+from unified_memory.infra.schedule import read_schedule_state
+from unified_memory.infra.vault import canonical_dir, canonical_path, read_maybe
 
 WEDNESDAY = dt.datetime(2026, 10, 28, 12, 0)  # after both anchors this week
 MONDAY_EARLY = dt.datetime(2026, 10, 26, 2, 0)  # Monday before 04:00
 MONDAY_LATE = dt.datetime(2026, 10, 26, 5, 0)  # Monday after 04:00
-
 
 class WeeklyAnchorTest(unittest.TestCase):
     def test_before_monday_04_the_anchor_is_last_week(self):
@@ -25,7 +26,6 @@ class WeeklyAnchorTest(unittest.TestCase):
 
     def test_midweek_anchor_is_that_weeks_monday(self):
         self.assertEqual(catchup.weekly_anchor(WEDNESDAY), dt.date(2026, 10, 26))
-
 
 class DueTest(unittest.TestCase):
     def setUp(self):
@@ -63,7 +63,6 @@ class DueTest(unittest.TestCase):
         catchup.run(self.vault, now=dt.datetime(2026, 10, 23, 12, 0))
         report = catchup.due(self.vault, now=MONDAY_EARLY)
         self.assertFalse(report["forget"])
-
 
 class RunTest(unittest.TestCase):
     def setUp(self):
@@ -107,7 +106,6 @@ class RunTest(unittest.TestCase):
         self.assertIn("staging server runs on 127.0.0.1:8080", read_maybe(canonical_path(self.vault, "env")))
         self.assertEqual(read_schedule_state(self.vault)["last_promote"], "2026-10-28")
 
-
 class ForgetterStampTest(unittest.TestCase):
     def setUp(self):
         self.vault = make_scratch_vault()
@@ -121,16 +119,14 @@ class ForgetterStampTest(unittest.TestCase):
             read_maybe(ui) + "- 临时会议纪要备忘（写入 2020-01-01｜来源：Agent提交区/x.md）\n",
             encoding="utf-8",
         )
-        from unified_memory import index
-
-        index.update_index(self.vault)
+        
+        update_index(self.vault)
         forgetter.demote(self.vault, dry_run=False)
         self.assertEqual(read_schedule_state(self.vault).get("last_forget"), dt.date.today().isoformat())
 
     def test_demote_dry_run_does_not_stamp(self):
         forgetter.demote(self.vault, dry_run=True)
         self.assertNotIn("last_forget", read_schedule_state(self.vault))
-
 
 class ForgetterPosixCronTest(unittest.TestCase):
     def setUp(self):
@@ -164,6 +160,92 @@ class ForgetterPosixCronTest(unittest.TestCase):
         self.assertEqual(crontab.count("unified_memory.forgetter"), 1, "second register must not duplicate")
         self.assertEqual(calls[-1][0], "crontab")
 
-
 if __name__ == "__main__":
     unittest.main()
+
+
+class CatchupDriftTest(unittest.TestCase):
+    """The daily drift job: stamp-gated, bounded, retry-on-transport."""
+
+    def setUp(self):
+        self.vault = make_scratch_vault()
+
+    def tearDown(self):
+        destroy_scratch(self.vault)
+
+    def _seed(self, count=1, anchored=False):
+        from unified_memory.domain.policy import UNCLASSIFIED_FACT_REL
+        from unified_memory.infra.vault import canonical_dir
+
+        unclassified = canonical_dir(self.vault) / UNCLASSIFIED_FACT_REL
+        unclassified.parent.mkdir(parents=True, exist_ok=True)
+        unclassified.write_text(
+            "".join(
+                f"- 孤儿事实 {i}（写入 2026-11-08｜来源：Agent提交区/x.md）"
+                "（溯源：50-Agent-Context/会话归档/2099-01-01.md）\n"
+                for i in range(count)
+            ),
+            encoding="utf-8",
+        )
+        archive = canonical_dir(self.vault) / "会话归档" / "2099-01-01.md"
+        archive.parent.mkdir(parents=True, exist_ok=True)
+        # The archive ECHOES the facts (equal text) so every one passes the
+        # similarity pre-filter and reaches the patched LLM.
+        archive.write_text(
+            "".join(f"- 孤儿事实 {i}" + "\n" for i in range(count)),
+            encoding="utf-8",
+        )
+
+    def test_first_run_verifies_and_stamps_the_day(self):
+        self._seed(count=1)
+        with patch(
+            "unified_memory.app.maintain.drift_verify.chat_completion",
+            return_value="支持",
+        ):
+            report = catchup.run(self.vault, now=dt.datetime(2026, 11, 8, 3, 0))
+        self.assertEqual(report["drift"]["status"], "ran")
+        self.assertEqual(report["drift"]["checked"], 1)
+        self.assertEqual(read_schedule_state(self.vault).get("last_drift"), "2026-11-08")
+
+    def test_same_day_second_run_is_skipped(self):
+        self._seed(count=1)
+        with patch(
+            "unified_memory.app.maintain.drift_verify.chat_completion",
+            return_value="支持",
+        ):
+            catchup.run(self.vault, now=dt.datetime(2026, 11, 8, 3, 0))
+        with patch(
+            "unified_memory.app.maintain.drift_verify.chat_completion",
+            side_effect=AssertionError("must not run twice a day"),
+        ) as llm:
+            report = catchup.run(self.vault, now=dt.datetime(2026, 11, 8, 9, 0))
+        self.assertEqual(report["drift"]["status"], "skipped")
+        llm.assert_not_called()
+
+    def test_transport_failure_does_not_consume_the_day(self):
+        self._seed(count=1)
+        with patch(
+            "unified_memory.app.maintain.drift_verify.chat_completion",
+            return_value=None,
+        ):
+            report = catchup.run(self.vault, now=dt.datetime(2026, 11, 8, 3, 0))
+        self.assertEqual(report["drift"]["status"], "partial")
+        self.assertEqual(report["drift"]["llmErrors"], 1)
+        self.assertNotEqual(read_schedule_state(self.vault).get("last_drift"), "2026-11-08")
+        # The next catchup retries the same day.
+        with patch(
+            "unified_memory.app.maintain.drift_verify.chat_completion",
+            return_value="支持",
+        ):
+            report = catchup.run(self.vault, now=dt.datetime(2026, 11, 8, 4, 0))
+        self.assertEqual(report["drift"]["status"], "ran")
+
+    def test_daily_limit_bounds_the_cost(self):
+        self._seed(count=catchup.DRIFT_DAILY_LIMIT + 5)
+        with patch(
+            "unified_memory.app.maintain.drift_verify.chat_completion",
+            return_value="支持",
+        ) as llm:
+            report = catchup.run(self.vault, now=dt.datetime(2026, 11, 8, 3, 0))
+        self.assertEqual(report["drift"]["checked"], catchup.DRIFT_DAILY_LIMIT)
+        self.assertEqual(llm.call_count, catchup.DRIFT_DAILY_LIMIT)

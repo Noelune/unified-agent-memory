@@ -34,10 +34,12 @@ from pathlib import Path
 from . import forgetter, promoter
 from .app.ingest import digest as digest_mod
 from .app.maintain.backfill import ensure_backfilled
+from .app.maintain.drift_verify import verify_drift
 from .infra.config import resolve_vault
 from .infra.schedule import mark_schedule_run, read_schedule_state
 from .infra.vault import ensure_vault
 
+DRIFT_DAILY_LIMIT = 10  # provenance facts re-checked per day (LLM cost ceiling)
 PROMOTE_HOUR = 3   # daily promotion fires at 03:00 local
 FORGET_HOUR = 4    # weekly forgetting fires Monday 04:00 local
 FORGET_WEEKDAY = 0  # Monday
@@ -133,7 +135,37 @@ def run(vault: Path, now: dt.datetime | None = None) -> dict:
         report["queue"] = digest_mod.digest(vault, source="queue")
     except Exception as exc:  # noqa: BLE001 — must never fail the catchup
         report["queue"] = {"status": "failed", "detail": str(exc)}
+    # Daily drift verification (3B): stamp-gated, LLM cost bounded — see
+    # _run_drift_job for the retry-on-transport-failure semantics.
+    try:
+        _run_drift_job(vault, report, now)
+    except Exception as exc:  # noqa: BLE001 — must never fail the catchup
+        report["drift"] = {"status": "failed", "detail": str(exc)}
     return report
+
+
+def _run_drift_job(vault: Path, report: dict, now) -> None:
+    """Verify provenance facts against their sources once a day (3B), bounded
+    at DRIFT_DAILY_LIMIT facts/day — the LLM cost ceiling. An LLM-transport
+    failure does NOT consume the day (the next catchup retries), while a
+    genuine run does."""
+    today = (now or dt.datetime.now()).strftime("%Y-%m-%d")
+    if read_schedule_state(vault).get("last_drift") == today:
+        report["drift"] = {"status": "skipped", "detail": "already run today"}
+        return
+    drift_report = verify_drift(vault, apply=True, limit=DRIFT_DAILY_LIMIT)
+    report["drift"] = {"status": "ran", **{
+        key: drift_report[key]
+        for key in ("checked", "prefiltered", "llmChecked", "llmErrors",
+                    "unsupported", "enqueued")
+    }}
+    if drift_report["llmErrors"] == 0 or drift_report["llmChecked"] == 0:
+        mark_schedule_run(vault, "drift", day=today)
+    else:
+        report["drift"]["status"] = "partial"
+        report["drift"]["detail"] = (
+            f"{drift_report['llmErrors']}/{drift_report['llmChecked']} LLM calls "
+            "unreachable — will retry next catchup")
 
 
 def _print_report(report: dict, as_json: bool) -> None:

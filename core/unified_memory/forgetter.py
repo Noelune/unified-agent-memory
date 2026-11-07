@@ -30,10 +30,10 @@ import re
 import time
 from pathlib import Path
 
-from . import index
 from .domain.markdown import bare_fact_line, is_versioned, parse_stamp
 from .domain.model import Change, ChangeSet
-from .domain.policy import CANONICAL_DOCS, PROTECTED_TOPICS
+from .domain.policy import CANONICAL_DOCS, PROTECTED_TOPICS, classify_type, salience_for
+from .infra.store import record_audit
 from .infra import vault as vault_mod
 from .infra.config import resolve_vault
 from .infra import schedule as schedule_mod
@@ -152,7 +152,7 @@ def _forget_candidates(vault: Path) -> list[tuple[Path, str]]:
             if stats is not None:
                 importance, used, last_access = stats
             else:
-                importance = index.salience_for(index.classify_type(parsed["bare"]))
+                importance = salience_for(classify_type(parsed["bare"]))
                 used = parsed["used"]
                 last_access = ""
             # Ebbinghaus-style reinforcement: a recently recalled fact has not
@@ -235,7 +235,7 @@ def demote(vault: Path, dry_run: bool = True) -> list[str]:
             moved += int(meta["moved"])
             names.append(change.doc.name)
             moved_lines.extend(meta["lines"])
-    index.record_audit(
+    record_audit(
         vault, "forgetter", "demote",
         ", ".join(names),
         "; ".join(ln[:60] for ln in moved_lines),

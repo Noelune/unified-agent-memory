@@ -33,7 +33,7 @@ sys.path.insert(0, str(ROOT / "bench"))
 
 import golden_fixture  # noqa: E402
 
-from unified_memory import index  # noqa: E402
+from unified_memory.infra.store import update_index  # noqa: E402
 from unified_memory import memory as memory_mod  # noqa: E402
 from unified_memory.app.retrieve import pipeline as search  # noqa: E402
 
@@ -185,7 +185,7 @@ def main() -> int:
         fixture_vault = golden_fixture.build_fixture_vault(tmp_root / "fixture")
         memory_mod.UNIFIED_MEMORY_VAULT = fixture_vault
         _pin_state(tmp_root, "fixture")
-        index.update_index(fixture_vault)
+        update_index(fixture_vault)
         _patch_embed_off()
         fixture_rows = _evaluate(fixture_vault, golden_fixture.GOLDEN)
         report["fixture"] = {"aggregate": _aggregate(fixture_rows), "items": fixture_rows}
@@ -197,7 +197,7 @@ def main() -> int:
             real_vault = copy_vault_to_temp(Path(args.vault), tmp_root / "real")
             memory_mod.UNIFIED_MEMORY_VAULT = real_vault
             _pin_state(tmp_root, "real")
-            index.update_index(real_vault)
+            update_index(real_vault)
             from build_golden import build as build_real  # noqa: E402
 
             real_items = build_real(real_vault)
@@ -221,7 +221,7 @@ def main() -> int:
             )
             memory_mod.UNIFIED_MEMORY_VAULT = lat_vault
             _pin_state(tmp_root, "latency")
-            index.update_index(lat_vault)
+            update_index(lat_vault)
             items = (
                 golden_fixture.GOLDEN
                 if args.fixture_only

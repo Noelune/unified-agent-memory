@@ -51,6 +51,50 @@ from ...infra.lock import file_lock
 from ...infra.vault import atomic_write, read_maybe, situation_dir
 
 
+def _conflict_fields(
+    new_fact: str,
+    existing_line: str,
+    source: str,
+    target_file: str,
+    cross_doc: str,
+    extra: dict | None,
+) -> dict:
+    """One queue entry's field dict (the JSON shape the readers accept)."""
+    fields = {
+        "新": new_fact,
+        "旧": existing_line,
+        "来源": source,
+        "at": time.strftime("%Y-%m-%d %H:%M"),
+    }
+    if target_file:
+        fields["目标"] = target_file
+    if cross_doc:
+        fields["跨文档"] = cross_doc
+    if extra:
+        fields.update(extra)
+    return fields
+
+
+def _write_conflict_entry(vault: Path, fields: dict) -> None:
+    """Append one deduplicated entry; caller holds the vault file_lock."""
+    path = situation_dir(vault) / CONFLICT_FILE
+    if not path.exists():
+        atomic_write(
+            path,
+            "# 事实冲突待裁决\n\n"
+            "> 新提交事实与 canonical 既有行高度相似但值不同。裁决命令：\n"
+            "> \"python -m unified_memory.promoter adjudicate\"（交互式）。\n\n",
+        )
+    wanted = _signature(fields)
+    if any(_signature(existing) == wanted for existing in read_conflicts(vault)):
+        return
+    entry = "- [ ] 冲突 " + json.dumps(fields, ensure_ascii=False, separators=(",", ":")) + "\n"
+    current = read_maybe(path)
+    if not current.endswith("\n"):
+        current += "\n"
+    atomic_write(path, current + entry)
+
+
 def append_conflict(
     vault: Path,
     new_fact: str,
@@ -58,6 +102,8 @@ def append_conflict(
     source: str,
     target_file: str = "",
     cross_doc: str = "",
+    extra: dict | None = None,
+    locked: bool = False,
 ) -> None:
     """Queue one conflict; never touches canonical notes.
 
@@ -72,34 +118,24 @@ def append_conflict(
     target (batch A): the old line was invisible to the target-note-only
     comparison, so without the field the queue showed a conflict whose "旧"
     side could not be located by a reader.
+
+    ``extra`` merges verbatim into the JSON entry (P1-3 propagation carries
+    its marker + supersession record this way). Unknown keys are inert: both
+    queue readers keep them, both renderers ignore them. ``locked=True`` is
+    for callers already holding the vault file_lock (the lock is not
+    reentrant) — the same pattern record_advice/remove_conflict use.
     """
-    path = situation_dir(vault) / CONFLICT_FILE
-    fields = {
-        "新": new_fact,
-        "旧": existing_line,
-        "来源": source,
-        "at": time.strftime("%Y-%m-%d %H:%M"),
-    }
-    if target_file:
-        fields["目标"] = target_file
-    if cross_doc:
-        fields["跨文档"] = cross_doc
-    with file_lock(vault):
-        if not path.exists():
-            atomic_write(
-                path,
-                "# 事实冲突待裁决\n\n"
-                "> 新提交事实与 canonical 既有行高度相似但值不同。裁决命令：\n"
-                "> \"python -m unified_memory.promoter adjudicate\"（交互式）。\n\n",
+    if not locked:
+        with file_lock(vault):
+            append_conflict(
+                vault, new_fact, existing_line, source,
+                target_file=target_file, cross_doc=cross_doc,
+                extra=extra, locked=True,
             )
-        wanted = _signature(fields)
-        if any(_signature(existing) == wanted for existing in read_conflicts(vault)):
-            return
-        entry = "- [ ] 冲突 " + json.dumps(fields, ensure_ascii=False, separators=(",", ":")) + "\n"
-        current = read_maybe(path)
-        if not current.endswith("\n"):
-            current += "\n"
-        atomic_write(path, current + entry)
+        return
+    _write_conflict_entry(vault, _conflict_fields(
+        new_fact, existing_line, source, target_file, cross_doc, extra,
+    ))
 
 
 def record_advice(
@@ -208,7 +244,7 @@ def read_conflicts(vault: Path) -> list[dict]:
         block = None
 
     for raw in read_maybe(path).splitlines():
-        line = raw.strip()
+        line = raw.strip().lstrip("﻿")
 
         if line.startswith("- [ ] 冲突"):
             flush()

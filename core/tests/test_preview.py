@@ -17,10 +17,11 @@ import tempfile
 
 from test_common import destroy_scratch, make_scratch_vault
 from unified_memory import memory
-from unified_memory.common import AGENT_CONTEXT, SUBMISSION_DIR, canonical_dir, read_maybe
+
 from unified_memory.app.query import preview
 from unified_memory.app.query.preview import INBOX_REL
-
+from unified_memory.domain.policy import AGENT_CONTEXT, CONFLICT_FILE, SUBMISSION_DIR
+from unified_memory.infra.vault import canonical_dir, read_maybe, situation_dir
 
 def _empty_inbox(vault: Path) -> Path:
     """Return a scratch inbox with no pre-existing files.
@@ -33,11 +34,9 @@ def _empty_inbox(vault: Path) -> Path:
         stale.unlink()
     return inbox
 
-
 def _touch(path: Path, mtime: float) -> None:
     """Pin an mtime so mtime-ordered views are deterministic."""
     os.utime(path, (mtime, mtime))
-
 
 class PreviewViewTest(unittest.TestCase):
     def setUp(self):
@@ -130,7 +129,7 @@ class PreviewViewTest(unittest.TestCase):
         self.assertEqual(keys, sorted(keys))
 
     def _conflict_file(self) -> Path:
-        from unified_memory.common import CONFLICT_FILE, situation_dir
+        
 
         return situation_dir(self.vault) / CONFLICT_FILE
 
@@ -275,7 +274,6 @@ class PreviewViewTest(unittest.TestCase):
             data = preview.build(self.vault, view, 10)
             self.assertEqual(data["status"], "ok", view)
 
-
 class PreviewEnvelopeTest(unittest.TestCase):
     def test_items_carry_untrusted_flag(self):
         # build() is exercised through the CLI in test_json_output; here we
@@ -284,7 +282,6 @@ class PreviewEnvelopeTest(unittest.TestCase):
         parsed = json.loads(payload)
         self.assertIs(parsed["ok"], True)
         self.assertEqual(parsed["data"]["view"], "pending")
-
 
 class PreviewCliTest(unittest.TestCase):
     def setUp(self):
@@ -353,7 +350,6 @@ class PreviewCliTest(unittest.TestCase):
         for view in preview.VIEWS:
             self.assertIn(view, str(cm.exception.code))
 
-
 class ReadInboxItemTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -399,7 +395,7 @@ class ReadInboxItemTest(unittest.TestCase):
         self.assertNotIn("reason", got)
 
     def test_inbox_rel_is_derived_from_common_not_redeclared(self):
-        # common.py already owns AGENT_CONTEXT / SUBMISSION_DIR; INBOX_REL must
+        # py already owns AGENT_CONTEXT / SUBMISSION_DIR; INBOX_REL must
         # be their composition, never a hand-typed duplicate literal.
         expected = os.path.join(AGENT_CONTEXT, SUBMISSION_DIR)
         self.assertEqual(INBOX_REL, expected)
@@ -410,7 +406,6 @@ class ReadInboxItemTest(unittest.TestCase):
             fh.write("- body\n")
         got = preview.read_inbox_item(self.tmp, "u.md")
         self.assertIs(got["untrusted"], True)
-
 
 class NoteJsonContractTest(unittest.TestCase):
     """docs/JSON-CONTRACT.md §2: vault-derived records must carry `untrusted`.
@@ -447,7 +442,6 @@ class NoteJsonContractTest(unittest.TestCase):
     def test_cmd_note_text_still_prints_the_bare_body(self):
         # The human path must not regress into printing JSON.
         self.assertEqual(memory.cmd_note(self.tmp, "n.md"), "- 事实\n")
-
 
 class NoteCliExitCodeTest(unittest.TestCase):
     """`memory note` must not report success for a miss.
@@ -506,7 +500,6 @@ class NoteCliExitCodeTest(unittest.TestCase):
         self.assertIs(payload["ok"], True)
         self.assertIsNone(payload["data"]["body"])
         self.assertEqual(payload["data"]["reason"], "invalid-name")
-
 
 if __name__ == "__main__":
     unittest.main()

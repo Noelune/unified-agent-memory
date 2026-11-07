@@ -22,7 +22,7 @@ from ..app.ingest.commands import (
     cmd_note_cli,
     cmd_submit,
 )
-from ..app.maintain.commands import cmd_backfill_ids, cmd_doctor, cmd_drift, cmd_gc, cmd_scan_conflicts
+from ..app.maintain.commands import cmd_backfill_ids, cmd_doctor, cmd_drift, cmd_gc, cmd_scan_conflicts, cmd_verify_drift
 from ..app.query.commands import (
     cmd_audit,
     cmd_explain,
@@ -209,6 +209,24 @@ def _add_govern_parsers(sub: argparse._SubParsersAction) -> None:
     p_stats.set_defaults(fn=cmd_stats_cli)
 
 
+def _add_drift_parsers(sub: argparse._SubParsersAction) -> None:
+    """drift (code-memory sync) and verify-drift (3B semantic drift)."""
+    p_drift = sub.add_parser("drift", help="detect code-memory synchronization drift")
+    p_drift.add_argument("--vault", "-v", help="path to the vault (default: UNIFIED_MEMORY_VAULT env)")
+    p_drift.add_argument("--template", "-t", action="store_true", help="check against vault-template/")
+    p_drift.add_argument("--strict", action="store_true", help="treat warnings as errors")
+    p_drift.set_defaults(fn=cmd_drift)
+
+    p_verify = sub.add_parser(
+        "verify-drift",
+        help="re-check provenance-carrying facts against their source archives (3B)",
+    )
+    p_verify.add_argument("--apply", action="store_true", help="enqueue unsupported candidates (default: report only)")
+    p_verify.add_argument("--limit", type=int, default=0, help="check at most N facts (0 = all)")
+    p_verify.add_argument("--json", action="store_true", help="emit the machine-readable report")
+    p_verify.set_defaults(fn=cmd_verify_drift)
+
+
 def _add_maintain_parsers(sub: argparse._SubParsersAction) -> None:
     """doctor / gc / drift / audit / cite."""
     p_doctor = sub.add_parser("doctor", help="read-only health report (vault, index, queues)")
@@ -230,11 +248,7 @@ def _add_maintain_parsers(sub: argparse._SubParsersAction) -> None:
     p_gc.add_argument("--json", action="store_true", help="emit the machine-readable report")
     p_gc.set_defaults(fn=cmd_gc)
 
-    p_drift = sub.add_parser("drift", help="detect code-memory synchronization drift")
-    p_drift.add_argument("--vault", "-v", help="path to the vault (default: UNIFIED_MEMORY_VAULT env)")
-    p_drift.add_argument("--template", "-t", action="store_true", help="check against vault-template/")
-    p_drift.add_argument("--strict", action="store_true", help="treat warnings as errors")
-    p_drift.set_defaults(fn=cmd_drift)
+    _add_drift_parsers(sub)
 
     p_audit = sub.add_parser("audit", help="read or verify the hash-chained audit log")
     p_audit.add_argument("--agent", help="filter by agent/source")

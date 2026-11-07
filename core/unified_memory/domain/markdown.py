@@ -230,20 +230,32 @@ def strip_suffix(line: str) -> str:
     out = BLOCK_ID_RE.sub("", line or "")
     out = EN_STAMP_RE.sub("", STAMP_RE.sub("", out))
     out = USAGE_TAG_RE.sub("", out)
+    out = PROVENANCE_RE.sub("", out)
     out = out.strip()
     return out
+
+
+# A UTF-8 BOM survives read_text(encoding="utf-8") as a leading ﻿ on the
+# FIRST line only (Windows editors write it). Without stripping, a BOM'd
+# heading becomes a fact candidate and the first fact's bullet stops matching.
+_BOM = "﻿"
+
+
+def _no_bom(line: str) -> str:
+    return line.lstrip(_BOM) if line.startswith(_BOM) else line
 
 
 def fact_lines(text: str) -> list[str]:
     """Parse a submission file into fact lines (skips headers/comments/blank).
 
     `---` separators are layout, not facts: a submission that uses them as
-    dividers used to produce one `---` claim per divider.
+    dividers used to produce one `---` claim per divider. HTML comments are
+    layout too — the digest provenance header (3A) must not become a fact.
     """
     lines = []
     for raw in text.splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
+        line = _no_bom(raw.strip())
+        if not line or line.startswith("#") or line.startswith("<!--"):
             continue
         if line.startswith(("- ", "• ", "* ")):
             line = line[2:].strip()
@@ -260,7 +272,7 @@ def bare_fact_line(line: str) -> str:
     for it keeps backfill from appending block ids to horizontal rules and the
     ledger from storing them as claims.
     """
-    t = line.strip()
+    t = _no_bom(line.strip())
     if t.startswith(("- ", "• ", "* ")):
         t = t[2:]
     t = strip_suffix(t).strip()
@@ -276,6 +288,23 @@ def is_versioned(line: str) -> bool:
 def write_stamp(src_name: str, when: str | None = None) -> str:
     day = when or time.strftime("%Y-%m-%d")
     return f"（写入 {day}｜来源：Agent提交区/{src_name}）"
+
+
+# 3A provenance (P0-3): a digest-sourced fact carries the session archive it
+# was distilled from, as its own trailing parenthesised group — a field inside
+# the promotion stamp would be swallowed by STAMP_RE's source group
+# (`[^）]+?`), which is exactly why this rides outside it.
+PROVENANCE_RE = re.compile(r"（溯源：[^）]*）")
+
+
+def write_provenance(origin: str) -> str:
+    """The trailing provenance group for a promoted fact, "" when untraceable.
+
+    Kept OUTSIDE the promotion stamp so `parse_stamp`'s source group cannot
+    swallow it; `strip_suffix` removes both, so dedup and the search index
+    never see it.
+    """
+    return f"（溯源：{origin}）" if origin else ""
 
 
 # --------------------------------------------------------------------------
@@ -335,7 +364,7 @@ def doc_lines(text: str) -> list[tuple[str, str, str]]:
     out: list[tuple[str, str, str]] = []
     heading = ""
     for raw in text.splitlines():
-        stripped = raw.strip()
+        stripped = _no_bom(raw.strip())
         if stripped.startswith("#"):
             heading = stripped
             continue

@@ -21,15 +21,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from test_common import destroy_scratch, make_scratch_vault
 from unified_memory import promoter
-from unified_memory.common import (
-    ADJUDICATED_FILE,
-    CONFLICT_FILE,
-    canonical_dir,
-    read_maybe,
-    situation_dir,
-)
+from unified_memory.domain.policy import ADJUDICATED_FILE, CONFLICT_FILE
+from unified_memory.infra.vault import canonical_dir, read_maybe, situation_dir
 from unified_memory.domain.conflict import (
     ADVICE_CHOICE,
+    best_similarity,
     ADVICE_WHY,
     classify_against,
     describe,
@@ -698,3 +694,24 @@ class SubjectTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BestSimilarityTest(unittest.TestCase):
+    """The shared max-similarity scan (review overlap + drift anchor)."""
+
+    def test_returns_the_best_line_and_score(self):
+        lines = ["完全无关的一行", "部署脚本在 D:/scripts/deploy.py", "另一条无关"]
+        sim, line = best_similarity("部署脚本是 D:/scripts/deploy.py", lines)
+        self.assertIn("deploy.py", line)
+        self.assertGreater(sim, 0.5)
+
+    def test_no_candidates_means_zero_and_empty(self):
+        self.assertEqual(best_similarity("任何文本", []), (0.0, ""))
+
+    def test_review_overlap_threshold_still_filters(self):
+        # _best_overlap keeps the threshold semantics on top of the shared scan.
+        from unified_memory.app.govern.review import _best_overlap
+
+        lines = ["备份目录是 C:/backups"]
+        self.assertIsNone(_best_overlap("完全无关的查询", lines, min_sim=0.3))
+        self.assertEqual(_best_overlap("备份目录是 C:/backups", lines, min_sim=0.3), "备份目录是 C:/backups")

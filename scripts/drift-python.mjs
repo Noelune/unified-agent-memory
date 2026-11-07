@@ -2,7 +2,9 @@
 /**
  * drift-python.mjs — run the Python core's drift check without a pip install.
  *
- * `python -m unified_memory.drift` only resolves when the core package is
+ * `python -m unified_memory.memory drift` (the real CLI; the flat
+ * `unified_memory.drift` shim never had a main and silently no-opped) only
+ * resolves when the core package is
  * installed into the active interpreter. This repo is routinely checked out
  * next to interpreters that have no `unified_memory` installed, and mutating a
  * shared interpreter (e.g. an agent's venv) just to run a check is not
@@ -30,7 +32,7 @@ const python = process.env.UNIFIED_MEMORY_PYTHON || process.env.PYTHON || 'pytho
 
 const result = spawnSync(
   python,
-  ['-m', 'unified_memory.drift', '--template', ...process.argv.slice(2)],
+  ['-m', 'unified_memory.memory', 'drift', '--template', ...process.argv.slice(2)],
   {
     cwd: ROOT,
     stdio: 'inherit',

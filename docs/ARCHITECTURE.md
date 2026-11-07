@@ -37,10 +37,10 @@ flowchart TB
         HC[health.py<br/>doctor · gc]
         I[index.py<br/>index orchestration + public compatibility exports]
         SC[schema.py<br/>SQLite schema + per-vault connection lifecycle]
-        MA[maintenance.py<br/>canonical repair + reversible backups]
-        S[search.py<br/>hybrid: BM25 + vectors + graph, RRF]
+        MA[repair.py (app/maintain)<br/>canonical repair + reversible backups]
+        S[pipeline.py (app/retrieve)<br/>hybrid: lexical + vectors + graph, RRF]
         E[embed.py<br/>SiliconFlow Qwen3-Embedding-4B · optional]
-        G[graph.py<br/>concept co-occurrence · optional]
+        G[graph.py (app/retrieve)<br/>concept co-occurrence · optional]
         DG[digest.py<br/>session → facts · optional]
     end
 
@@ -74,9 +74,9 @@ copy** of the vault, rebuilt incrementally from content digests. It holds:
 
 `index.py` remains the public compatibility facade. SQLite schema creation,
 migration and per-vault connections live in `schema.py`; canonical duplicate
-and template cleanup lives in `maintenance.py`. The old public imports remain
-re-exported so existing CLI, remote-index and integration callers do not need
-to change.
+and template cleanup lives in `app/maintain/repair.py`. The five B5 re-export
+shims were removed in 0.10.0 (breaking; the migration map lives in the
+CHANGELOG), so callers import the real modules by path.
 
 | Table | Purpose |
 |---|---|
@@ -193,7 +193,7 @@ The same flow in words:
 
 ## Interfaces
 
-- **CLI** — `memory init|use|search|show|submit|status|embed|digest|graph|doctor|gc`;
+- **CLI** — `memory init|use|search|show|submit|status|embed|digest|graph|doctor|gc|scan-conflicts|verify-drift`;
   lifecycle CLIs `promoter` / `forgetter` / `catchup` (missed-run recovery)
 - **dsh plugin** — six tools: `memory_search` (`hybrid` 开启三流融合检索；可选 `format`/`budget` 控制输出形态与预算),
   `memory_show`, `memory_submit`, `memory_status`, `memory_preview`,

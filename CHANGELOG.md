@@ -2,7 +2,83 @@
 
 All notable changes to this project are documented in this file.
 
-## [Unreleased] — 下一个版本为 0.10.0（含 breaking change）
+## [Unreleased]
+
+### Fixed — upgrade-cleanup 补注册 0.12.0 退役的八个 shim
+
+0.12.0 的 BREAKING 退役删了八个 flat shim（schema/config/embed/drift/health/digest/index/common），但 RETIRED_PATHS 只注册了 0.10.0 的五个——覆盖式升级会把八个 stale 文件留在安装里。flat-core-shims 条目扩至 13 个路径（清理测试同步植 13 验 13）。生产证据：0.10.0 五个 shim 已在真实运行时被 reconcile 扫尾自动清除（dsh 重启触发）。
+
+## [0.12.0] — 2026-11-08
+
+### Added — 每日漂移复核上节奏（catchup drift job）
+
+- `catchup` 在 promote/forget 之后每日执行一次 `verify-drift`（3B）：溯源事实对源会话复核，候选入裁决队列供人工裁决。**默认启用**（参与层哲学），成本有界：`DRIFT_DAILY_LIMIT = 10` 条/天（LLM 花销天花板），戳控于 `调度状态.json` 的 `last_drift`。
+- 传输失败（LLM 不可达）**不消耗当日**：`_entail` 返回 (verdict, transport_failed)，报告增 `llmErrors`——「模型判不了」与「模型不可达」被调度器区分，后者下次 catchup 重试；无 key 时相似度预筛仍零成本运行。
+- catchup --json 增 `drift` 键（checked / prefiltered / llmChecked / llmErrors / unsupported / enqueued）。`_run_drift_job` / `_enqueue_candidates` 抽取满足预算门。
+- 新增 CatchupDriftTest（4 例：首验盖戳 / 同日跳过 / 传输失败重试 / 限额封顶），反证一次。
+
+### Fixed — digest 提取在随附模型+提示词组合下完全失效（P1，真模型验证）
+
+- **症状**：digest 对含明确持久事实的会话恒返回「- (无)」——实测「事实 + 5 组日常对话（195 字符）」即可淹没提取，9000 字真实形状会话提取为零条。每次 digest 消耗游标却零产出。此缺陷从未被测试抓到：单测 mock 掉了 LLM，端到端用的是手写产物。
+- **根因**：SYSTEM_PROMPT 把「没有则输出 (无)」的出口放在指令中心且无示例，Qwen2.5-7B 被噪声锚定；换 14B/32B/Qwen3-8B 同提示词同输入即可全提取——是模型能力边界，不是管线缺陷。
+- **修复**：①SYSTEM_PROMPT 重写（逐段检查、保留具体数值与路径、即使只有一条也要输出、few-shot 示例），短对话与噪声场景实测改善；②`DEFAULT_CHAT_MODEL` 升至 `Qwen/Qwen2.5-14B-Instruct`（同提示词同噪声下 7B 全漏、14B/32B/Qwen3-8B 全提取；8B 为推理模型，思考 token 2-5 倍消耗会打满 TPM——实测 429，故选非推理 14B，约为 7B 的 2 倍 token 成本）。
+- **真模型端到端**：9047 字会话 → 2 块（9547/9047）→ 3 条事实入收件箱（含 3A 溯源头）→ review → 溯源晋升 → verify-drift 全链打通。digest 的核心价值（会话→事实）首次被证明可用。
+- 成本提示：每次 digest 调用量 = 块数（6000 字/块），14B 单价约为 7B 两倍——如需回落 7B 需同步接受低提取率，或改用更大窗口/更强模型，属主人决策。
+
+### Removed — 包根只留真实入口：八个兼容转发层退役（BREAKING）
+
+`core/unified_memory/` 包根从 13 个 flat 模块减到 5 个**真实入口**（`memory` / `promoter` 门面、`forgetter` / `catchup` 生命周期 CLI）加文档化入口 `sessiondb` 与既存真实现。实际删除的是八个纯转发 shim，其自身 docstring 承诺的「保留一个 minor」（0.10.0）已到期，且冻结契约（`test_module_surface`）从未把它们列为 surface：
+
+| 旧路径 | 真实模块 |
+|---|---|
+| `unified_memory.schema` | `unified_memory.infra.store.schema` |
+| `unified_memory.config` | `unified_memory.infra.config` |
+| `unified_memory.embed` | `unified_memory.infra.providers.embed` |
+| `unified_memory.drift` | `unified_memory.app.maintain.drift` |
+| `unified_memory.health` | `unified_memory.app.maintain.health` |
+| `unified_memory.digest` | `unified_memory.app.ingest.digest` |
+| `unified_memory.index` | `unified_memory.infra.store`（17/18 名字）、`domain.markdown`（cjk_tokens / parse_write_stamp / SUPERSEDED_HEADING_RE）、`domain.policy`（classify_type / salience_for / MEMORY_TYPES / SALIENCE / TYPE_RULES）、`infra.vault`（indexed_files） |
+| `unified_memory.common` | 名字分散于 `domain.envelope` / `domain.markdown` / `domain.policy` / `infra.config` / `infra.lock` / `infra.schedule` / `infra.vault`——以 common.py 自己的导入清单为映射表 |
+
+- `python -m unified_memory.sessiondb` **保留**（docs/SESSIONDB.md 文档化入口，shim 携带 main 分发）；`python -m unified_memory.memory|promoter|forgetter|catchup` 四个 CLI 入口不变。
+- 60+ 文件仅改导入路径，无任何名字换主人；夹具的模块属性重绑（`common.CONFIG_PATH = …`）改写为真实模块属性赋值（裸名改写会静默破坏 scratch 重定向——隔离守卫在迁移中当场拦截了对真实配置的写入）。
+- 净 **−430 行**纯间接层；`bench/` 三个脚本与已发布的 hook 运行时（`integrations/hooks/memory_hook.py`）一并切到真实模块。
+- 附带减法：`review._best_overlap` 与 `drift_verify._best_anchor` 的重复相似度扫描合并为 `domain/conflict.py::best_similarity`（纯最大值扫描，阈值语义留在各调用方），3 例新测试已反证。
+
+### Fixed — 退役模块的陈旧文档引用清零；两个扫查命令进入对外契约
+
+- 10 处文档/注释仍指向 0.10.0 已删除的 flat 模块（README core 表的 `conflict.py`、JSON-CONTRACT 六处实现指针、ARCHITECTURE 的图与正文、src 两处注释），全部改指真实模块路径；正文里「旧公共导入仍保留」的 0.10.0 后失实句一并更正。
+- `scan-conflicts` / `verify-drift` 补入对外契约（§5.5 / §5.6：报告字段、去重与幂等语义、LLM 成本说明、只入队不改 canonical 的保证），并加入 §0 命令表、ARCHITECTURE Interfaces CLI 行与 core/README usage。两个报告形状已与 CLI 实际输出逐字段比对（含缺失源归档进 skipped、候选字段集）。
+
+## [0.11.0] — 2026-11-07
+
+### Added — 已退役 shim 的清理注册（upgrade-cleanup）
+
+- `RETIRED_PATHS` 注册 `flat-core-shims`：0.10.0 BREAKING 删除的五个 B5 re-export shim（`conflict` / `preview` / `stats` / `inbox` / `maintenance`，位于 `core/unified_memory/`）。覆盖式升级（备份 + tarball 覆盖）会把 stale shim 留在安装里；此前的清理机制只认 `home` 下的派生物，够不到包内文件——`CleanupDeps` 增加 `installPath`（调用方 `upgrade-boot` 传入 `INSTALL_ROOT`），退休声明按包内精确路径删除。注册即迁移：下一次运行时升级的 reconcile 扫尾会自动清掉这五个 stale 文件，clean npm 安装与缺失路径静默跳过。此前 RETIRED_PATHS 为空表，本次是该机制的首次真实使用。
+- 新增 3 例测试（五 shim 作为数据被清、无 installPath 时惰性、干净安装静默满足）；已做「paths 返回空即变红」反证。
+
+### Added — 长会话分块提取（P0-3 工作包 3C）
+
+- digest 的提取从「取末尾 6000 字符」改为滑动窗口分块：6000 字符/块、块间 500 字符重叠（`_chunk_transcript`），逐块送同一 LLM、跨块按空白归一化精确文本去重（`_extract_facts_chunked`）。`_transcript_of` 不再截断，返回完整脱敏会话；queue / state 两种来源走同一分块管线。长会话头部不再静默丢失——原「丢头无记录」正是语义漂移的燃料。
+- 任一块失败即整个单元跳过（不写部分结果、不推进游标/队列 done），与单次路径相同的「无静默丢失」保证；skip 消息带「已送审字符/总字符」（信息性措辞，契约是状态本身）。
+- 报告新增 `charsSent` / `charsTotal`（sent 大于 total 的部分 = 窗口间重叠重发，3 块 13000 字会话实测 14000/13000），dry-run 预览行同步显示。
+- 新增 `core/tests/test_digest_chunks.py`（5 例：窗口几何与重叠、短文本单块、头部事实恢复 + 字符精确账、跨块回声去重、失败块整单元跳过）；已做「退回尾部截断即 3 红」反证。digest-queue 既有测试的 skip 消息期望同步更新。
+
+## [0.10.0] — 2026-11-07
+
+### Added — 摘要事实可溯源（P0-3 工作包 3A）
+
+- digest 产物头部写入机器可读的来源注释：`<!-- digest-source: <origin> -->`——archive 源为 vault 内归档相对路径，queue 源为会话转录路径，state 源为 `state.db <日>`；晋升后任一事实可回溯到源会话。注释行永远不会被当成事实行（`fact_lines` 显式跳过 HTML 注释——此前会把这行头当事实晋升，已一并修掉）。
+- review 逐文件读入来源并入待晋升条目（`溯源` 键），待晋升清单以 `｜溯源:<…>` 字段往返（`write_pending_list` / `parse_pending_list` 位置标记解析）。
+- 晋升把来源写成事实行尾的独立括号组 `（溯源：…）`（新 `write_provenance()`）——刻意放在晋升戳**外**：STAMP_RE 的非贪婪 source 组会吞掉戳内新增字段。`strip_suffix` 同时移除该组，去重与索引看到的仍是裸事实（带溯源的事实重新提交仍判 duplicate）。digest 单元改为 `(label, date, transcript, origin)` 四元组。
+- 新增 `core/tests/test_provenance.py`（4 例：戳/溯源解析与剥离往返、产物头写入/不写入、digest→review→清单→apply 全链 + 晋升后再提交判 duplicate）；已做「删掉晋升溯源写入即变红」反证。临时 vault CLI 端到端：头部 → 清单 `｜溯源:` → canonical 行尾 `（溯源：会话归档/2026-11-06.md）`。
+
+### Added — 取代后的旧值携带者扫查入队（P1-3）
+
+- 新 `app/maintain/conflict_scan.py::scan_propagation`：以被取代的旧值为种子，用晋升同款规则（`classify_against`）在全库 active 事实中找「同义复述」嫌疑；排除刚写入的后继行；`old_doc` 作为 `跨文档` 字段；命中按 `used` 事件次数降序（复用 `forget_stats`），被引用最多的排最前。只读 canonical，零写入。
+- 取代的两个收尾点自动扫查入队：`promote()` 账本收尾（`_ledger_supersedence` / `_enqueue_propagation` 抽取；取代配对扩为 (旧, 新id, 新文) 以便排除自身后继）与 `decide._apply_replace` 的 `用新` 收尾（`_ledger_after_replace` / `_enqueue_carriers` 抽取）。队列条目带 `来源: supersede-scan` 与 `疑似旧值复述: <新 claim id>` 标记；`append_conflict` 增加 `extra`（JSON 逐字合并，未知键对两侧读取器与渲染器均惰性）与 `locked` 参数（vault `file_lock` 不可重入，持锁调用方用 `locked=True`——与 `record_advice`/`remove_conflict` 同款）。
+- **只入队不改 canonical**：误报代价是一次人眼，不是一次错误改写。函数预算门抓到三处超 60 行（`_apply_replace` 71 / `promote` 63 / `append_conflict` 66），已抽子函数收口。
+- 新增 `core/tests/test_conflict_scan.py::PropagationTest`（4 例：纯扫查选择与排除、promote 链入队+改写体不被改写、used 排序、decide 用新入队）；已做「禁用两处扫查钩即变红」反证。临时 vault CLI 端到端：改用提交 → 旧值入已取代区 → 改写体仍在 active 且入队一条 supersede-scan。
 
 ### Added — 冲突队列时间戳与老化可见（N1）
 

@@ -13,8 +13,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from unified_memory.infra.store import get_conn
 from test_common import destroy_scratch, make_scratch_vault
-from unified_memory import index
 from unified_memory.infra.providers import embed
 
 
@@ -78,7 +78,7 @@ class ConceptCacheKeyTests(unittest.TestCase):
                 all(abs(a - b) < 1e-5 for a, b in zip(first, second)),
                 "paraphrase must reuse the cached vector",
             )
-            conn = index.get_conn(vault)
+            conn = get_conn(vault)
             try:
                 rows = conn.execute(
                     "SELECT model_id FROM query_cache"

@@ -33,7 +33,9 @@ import unittest
 from unittest import mock
 
 from test_common import destroy_scratch, make_scratch_vault
-from unified_memory import common, forgetter, promoter
+from unified_memory.infra.lock import file_lock
+from unified_memory.infra.vault import canonical_path, read_maybe
+from unified_memory import forgetter, promoter
 from unified_memory.app.maintain import repair as maintenance
 from unified_memory import memory as mem_mod
 from unified_memory.infra import vault as vault_mod
@@ -107,7 +109,7 @@ class TheLockActuallyExcludesTest(unittest.TestCase):
             promoter.promote(self.vault, [{"分类": "prefs", "内容": "并发写入的事实", "来源": "test"}])
             order.append("B-done")
 
-        with common.file_lock(self.vault):
+        with file_lock(self.vault):
             order.append("A-in")
             thread = threading.Thread(target=writer, daemon=True)
             thread.start()
@@ -121,22 +123,11 @@ class TheLockActuallyExcludesTest(unittest.TestCase):
         thread.join(10)
 
         self.assertEqual(order, ["A-in", "B-start", "A-out", "B-done"])
-        self.assertIn("并发写入的事实", common.read_maybe(common.canonical_path(self.vault, "prefs")))
+        self.assertIn("并发写入的事实", read_maybe(canonical_path(self.vault, "prefs")))
 
 
 class NoDeclaredOwnerTest(unittest.TestCase):
     """The removed design must not creep back by reflex."""
-
-    def test_common_has_no_owner_declaration(self):
-        for gone in (
-            "assert_canonical_writable",
-            "canonical_owner",
-            "claim_canonical_owner",
-            "release_canonical_owner",
-            "owner_lock_path",
-            "CanonicalOwnerError",
-        ):
-            self.assertFalse(hasattr(common, gone), f"{gone} is back in common.py")
 
     def test_the_cli_has_no_owner_verb(self):
         # `memory owner --claim hermes` is in somebody's cron or notes; if the

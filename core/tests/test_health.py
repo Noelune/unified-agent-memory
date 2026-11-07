@@ -9,8 +9,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 from test_common import destroy_scratch, make_scratch_vault
-from unified_memory import common, health, index
-
+from unified_memory.infra.store import index_db_for
+from unified_memory.app.maintain import health
+from unified_memory.domain.policy import CONFLICT_FILE, UNCLASSIFIED_FACT_REL
+from unified_memory.infra.vault import canonical_dir, canonical_path, situation_dir
 
 class DoctorTest(unittest.TestCase):
     def setUp(self):
@@ -36,7 +38,7 @@ class DoctorTest(unittest.TestCase):
         the one report they could not get: both the CLI and the health pane
         died on it.
         """
-        from unified_memory.common import CONFLICT_FILE, situation_dir
+        
 
         queue = situation_dir(self.vault) / CONFLICT_FILE
         queue.parent.mkdir(parents=True, exist_ok=True)
@@ -70,7 +72,7 @@ class DoctorTest(unittest.TestCase):
         self.assertFalse(report["embeddings"]["configured"])
 
     def test_sync_conflict_copy_is_an_error(self):
-        ctx = common.canonical_dir(self.vault)
+        ctx = canonical_dir(self.vault)
         (ctx / "prefs 2.md").write_text("# copy\n\n- duplicate truth\n", encoding="utf-8")
         with patch("unified_memory.infra.providers.embed.configured", return_value=False):
             report = health.doctor(self.vault)
@@ -78,7 +80,7 @@ class DoctorTest(unittest.TestCase):
         self.assertIn("sync-conflict-copies", [issue["code"] for issue in report["issues"]])
 
     def test_stale_inbox_is_a_warning(self):
-        inbox = common.canonical_dir(self.vault) / "Agent提交区"
+        inbox = canonical_dir(self.vault) / "Agent提交区"
         stale = inbox / "dsh-20200101-000000-01.md"
         stale.write_text("- old pending fact\n", encoding="utf-8")
         old = time.time() - 10 * 86400
@@ -95,7 +97,7 @@ class DoctorTest(unittest.TestCase):
         finding by one. The file's other reader (the duplicate scan) has
         always required `- `, `• ` or `* `; these two must agree.
         """
-        note = common.canonical_dir(self.vault) / common.UNCLASSIFIED_FACT_REL
+        note = canonical_dir(self.vault) / UNCLASSIFIED_FACT_REL
         note.parent.mkdir(parents=True, exist_ok=True)
         note.write_text(
             "# 未归类事实\n"
@@ -111,7 +113,6 @@ class DoctorTest(unittest.TestCase):
         with patch("unified_memory.infra.providers.embed.configured", return_value=False):
             report = health.doctor(self.vault)
         self.assertEqual(report["canonical"]["unclassifiedLines"], 3)
-
 
 class OrphanIndexReportTest(unittest.TestCase):
     """doctor must not print a command that removes nothing.
@@ -185,7 +186,6 @@ class OrphanIndexReportTest(unittest.TestCase):
         self.assertIn("1 older than", message)
         self.assertIn("1 newer", message)
 
-
 class GcTest(unittest.TestCase):
     def setUp(self):
         self.vault = make_scratch_vault()
@@ -194,7 +194,7 @@ class GcTest(unittest.TestCase):
         destroy_scratch(self.vault)
 
     def _make_db(self, name, doc_path):
-        db = index.index_db_for(self.vault).parent / name
+        db = index_db_for(self.vault).parent / name
         conn = sqlite3.connect(str(db))
         try:
             conn.execute("CREATE TABLE docs (path TEXT PRIMARY KEY, digest TEXT, title TEXT)")
@@ -210,7 +210,7 @@ class GcTest(unittest.TestCase):
     def test_orphan_index_is_removed_and_live_one_is_kept(self):
         missing = Path(tempfile.gettempdir()) / "no-such-vault-xyz" / "note.md"
         orphan = self._make_db("index-deadbeefdeadbeef.db", missing)
-        live = self._make_db("index-feedfacefeedface.db", common.canonical_path(self.vault, "prefs"))
+        live = self._make_db("index-feedfacefeedface.db", canonical_path(self.vault, "prefs"))
         report = health.gc(
             self.vault, apply=True, older_than_days=0, vacuum=False
         )
@@ -218,8 +218,7 @@ class GcTest(unittest.TestCase):
         self.assertIn(orphan.name, removed)
         self.assertFalse(orphan.exists())
         self.assertTrue(live.exists(), "a DB whose vault still exists must be kept")
-        self.assertTrue(index.index_db_for(self.vault).exists())
-
+        self.assertTrue(index_db_for(self.vault).exists())
 
 if __name__ == "__main__":
     unittest.main()

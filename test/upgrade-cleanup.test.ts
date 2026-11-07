@@ -161,3 +161,41 @@ describe('planCleanup / runCleanup', () => {
     expect(result.failed).toHaveLength(0)
   })
 })
+
+describe('RETIRED_PATHS — the 0.10.0 flat shims', () => {
+  it('retires the five B5 shims as data, wherever installPath names them', () => {
+    // The overlay-copy upgrade path (backup + tarball over) leaves stale
+    // shims behind. The sweep is what removes them — one data row each, the
+    // migration the breaking release promised.
+    const install = join(home, 'install-root')
+    const retired = ['conflict', 'preview', 'stats', 'inbox', 'maintenance',
+                     'schema', 'config', 'embed', 'drift', 'health', 'digest', 'index', 'common']
+    for (const name of retired) {
+      plant(join(install, 'core', 'unified_memory', `${name}.py`), 50)
+    }
+    plant(join(install, 'core', 'unified_memory', 'memory.py'), 50) // a live shim — untouched
+    const planned = planCleanup(deps({ installPath: install }))
+    const shimTargets = planned.filter((t) => t.rule === 'flat-core-shims')
+    expect(shimTargets).toHaveLength(retired.length)
+    expect(planned.some((t) => t.path.includes('memory.py'))).toBe(false)
+    const result = runCleanup(deps({ installPath: install }))
+    expect(result.removed).toHaveLength(retired.length)
+    for (const name of retired) {
+      expect(existsSync(join(install, 'core', 'unified_memory', `${name}.py`))).toBe(false)
+    }
+    expect(existsSync(join(install, 'core', 'unified_memory', 'memory.py'))).toBe(true)
+    // Idempotent: the second sweep plans nothing.
+    expect(planCleanup(deps({ installPath: install }))).toEqual([])
+  })
+
+  it('without an installPath the retirement is simply inert', () => {
+    plant(join(home, 'install-root', 'core', 'unified_memory', 'conflict.py'), 50)
+    expect(planCleanup(deps({}))).toEqual([])
+  })
+
+  it('an already-deleted shim satisfies the retirement silently', () => {
+    // A clean npm install never had the shims: the retirement must not fail
+    // or log noise for the happy path.
+    expect(planCleanup(deps({ installPath: join(home, 'never-existed') }))).toEqual([])
+  })
+})

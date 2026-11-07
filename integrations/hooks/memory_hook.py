@@ -189,7 +189,7 @@ def _render_recall(vault: Path, query: str, max_chars: int, timeout_ms: int) -> 
     tag — an unterminated envelope would leak the following content into the
     data section.
     """
-    from unified_memory import index as index_mod
+    from unified_memory.infra.store import update_index
     from unified_memory.domain.envelope import (
         BANNER_SHARED_DB,
         CLOSE,
@@ -199,7 +199,7 @@ def _render_recall(vault: Path, query: str, max_chars: int, timeout_ms: int) -> 
     )
     from unified_memory.domain.markdown import encode_untrusted, redact
 
-    index_mod.update_index(vault)  # self-healing: fresh notes are searchable
+    update_index(vault)  # self-healing: fresh notes are searchable
     rows = _lexical_rows(vault, query, timeout_ms)
     if not rows:
         return ""

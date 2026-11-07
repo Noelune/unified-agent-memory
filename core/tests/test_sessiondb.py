@@ -23,6 +23,7 @@ import time
 import unittest
 from pathlib import Path
 
+from unified_memory.infra.store import get_conn
 from test_common import destroy_scratch, make_scratch_vault
 from unified_memory.infra import sessiondb
 
@@ -286,9 +287,9 @@ class DigestStateSourceTest(unittest.TestCase):
 
     def test_state_source_uses_its_own_cursor(self):
         """Switching sources must never consume or replay a date the other one handled."""
-        from unified_memory import digest, index
-
-        conn = index.get_conn(self.vault)
+        from unified_memory.app.ingest import digest
+        
+        conn = get_conn(self.vault)
         try:
             conn.execute(
                 "INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)",

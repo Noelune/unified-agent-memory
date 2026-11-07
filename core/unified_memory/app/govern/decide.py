@@ -22,8 +22,9 @@ from ...infra.lock import file_lock
 from ...infra.store import get_conn, record_audit
 from ...infra.store.ledger import new_claim_id, record_supersedence, refresh_doc
 from ...infra.vault import atomic_write, canonical_dir, read_maybe, situation_dir
+from ..maintain.conflict_scan import PROPAGATION_SOURCE, scan_propagation
 from .promote import _resolve_target, archive_sources
-from .queue import read_conflicts, record_adjudication, remove_conflict
+from .queue import append_conflict, read_conflicts, record_adjudication, remove_conflict
 from .review import _adjudicated_facts
 
 
@@ -141,22 +142,54 @@ def _apply_replace(vault: Path, entry: dict, choice: str, why: str) -> dict:
         _record_decision_audit(vault, entry, choice, why)
         # Batch D: the ledger projection follows the write — the new claim's
         # row, and (for 用新) the closed window + supersedes link + event.
-        conn = get_conn(vault)
-        try:
-            refresh_doc(conn, vault, target)
-            if old_claim_id or fresh_claim_id:
-                record_supersedence(
-                    conn, old_claim_id, fresh_claim_id,
-                    actor="adjudicator",
-                    decided_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
-                )
-            conn.commit()
-        finally:
-            conn.close()
+        _ledger_after_replace(vault, target, old_claim_id, fresh_claim_id)
+        # P1-3 propagation sweep (read-only scan → queue-only write): a 用新
+        # ruling retires the old value, but any OTHER active fact still saying
+        # the same thing keeps dragging the retired value into retrieval. The
+        # whole block above holds the vault file_lock, so the enqueue runs
+        # with locked=True (the queue's file_lock is not reentrant).
+        _enqueue_carriers(vault, old, new, old_claim_id, fresh_claim_id, target, choice)
     return {
         "ok": True, "reason": None, "choice": choice, "applied": True,
         "target": str(target.relative_to(vault)) if target.is_relative_to(vault) else str(target),
     }
+
+
+def _ledger_after_replace(vault: Path, target: Path, old_claim_id: str, fresh_claim_id: str) -> None:
+    """The ledger projection follows the write (batch D extraction): the new
+    claim's row and — when a window closed — the supersedes link + event."""
+    conn = get_conn(vault)
+    try:
+        refresh_doc(conn, vault, target)
+        if old_claim_id or fresh_claim_id:
+            record_supersedence(
+                conn, old_claim_id, fresh_claim_id,
+                actor="adjudicator",
+                decided_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _enqueue_carriers(
+    vault: Path,
+    old: str,
+    new: str,
+    old_claim_id: str,
+    fresh_claim_id: str,
+    target: Path,
+    choice: str,
+) -> None:
+    """Queue the old value's remaining carriers after a 用新 ruling (P1-3)."""
+    if choice != "用新" or not old:
+        return
+    for hit in scan_propagation(vault, old, exclude=(new,), old_doc=target.name):
+        append_conflict(
+            vault, hit["new"], hit["old"], PROPAGATION_SOURCE,
+            target_file=hit["doc"], cross_doc=hit["crossDoc"],
+            extra={"疑似旧值复述": old_claim_id or fresh_claim_id}, locked=True,
+        )
 
 
 def _record_only(vault: Path, entry: dict, choice: str, why: str) -> dict:

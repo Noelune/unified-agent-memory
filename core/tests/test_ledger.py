@@ -12,7 +12,7 @@ from test_common import destroy_scratch, make_scratch_vault
 from unified_memory.app.govern import decide as decide_mod
 from unified_memory.app.govern import promote as promote_mod
 from unified_memory.app.maintain import backfill as backfill_mod
-from unified_memory.common import canonical_path, read_maybe
+from unified_memory.infra.vault import canonical_path, read_maybe
 from unified_memory.domain.markdown import (
     bare_fact_line,
     claim_id_of,

@@ -54,8 +54,9 @@ from ...infra.vault import atomic_create, atomic_write, canonical_dir, read_mayb
 
 SESSION_DIRS = ("会话归档", "Hermes会话自动归档")
 CHAT_URL = "https://api.siliconflow.cn/v1/chat/completions"
-DEFAULT_CHAT_MODEL = "Qwen/Qwen2.5-7B-Instruct"
-MAX_INPUT_CHARS = 6000      # per-file transcript cap sent to the LLM
+DEFAULT_CHAT_MODEL = "Qwen/Qwen2.5-14B-Instruct"  # 7B missed facts buried in session noise; 8B (reasoning) burns TPM — see CHANGELOG 0.12.0
+MAX_INPUT_CHARS = 6000      # per-chunk cap sent to the LLM (3C: chunked, not tail-truncated)
+CHUNK_OVERLAP = 500         # context shared between neighbouring chunks (3C)
 MAX_FACTS_PER_FILE = 30
 CURSOR_KEY = "digest_cursor"
 STATE_CURSOR_KEY = "digest_cursor_state"
@@ -64,10 +65,12 @@ SOURCES = ("archive", "state", "queue")
 DONE_KEEP = 5000  # batch D4: queue.done line cap (oldest dropped)
 
 SYSTEM_PROMPT = (
-    "你是记忆提炼助手。从下面的 Agent 会话记录中提取值得长期记忆的持久事实，例如："
-    "用户偏好（语言/格式/风格/语气）、技术决策及原因、路径/端口/服务/配置、工程规则与流程、"
-    "项目状态与下一步。忽略临时对话、闲聊、一次性任务细节。"
-    "每行输出一条事实，以“- ”开头；如果没有任何值得记忆的内容，输出“- (无)”。"
+    "你是记忆提炼助手。下面是一段 Agent 会话记录，请逐段仔细阅读，提取所有值得长期记忆的"
+    "持久事实：用户偏好（语言/格式/风格）、技术决策及原因、路径/端口/服务/配置、工程规则、"
+    "项目状态与下一步。"
+    "输出要求：每条一行、以“- ”开头、保留具体数值与路径，即使只有一条也要输出；"
+    "会话里确实没有任何值得记忆的内容时才输出“- (无)”。"
+    "示例：会话说“数据库从 14 迁到 16” → 输出“- 生产数据库从 Postgres 14 迁移到 Postgres 16”。"
     "绝不输出 API key、token、密码、私钥等敏感凭据。"
 )
 
@@ -109,11 +112,12 @@ def _date_of(path: Path) -> str:
     return path.stem[:10]  # YYYY-MM-DD prefix
 
 
-def _transcript_of(path: Path, cap: int = MAX_INPUT_CHARS) -> str:
+def _transcript_of(path: Path) -> str:
+    """The archive's full text, redacted. 3C: no tail truncation here — the
+    extraction stage chunks the whole session instead, so the head of a long
+    session is no longer dropped without a trace."""
     raw = path.read_text(encoding="utf-8", errors="replace")
-    # Redact BEFORE sending anywhere; keep the tail (most recent) when long.
-    clean = redact(raw)
-    return clean[-cap:] if len(clean) > cap else clean
+    return redact(raw)
 
 
 def _parse_facts(text: str) -> list[str]:
@@ -133,19 +137,21 @@ def _parse_facts(text: str) -> list[str]:
     return facts
 
 
-def chat_extract_facts(transcript: str) -> list[str] | None:
-    """Ask the SiliconFlow chat model to distill facts; None on any failure."""
+def chat_completion(messages: list[dict], *, temperature: float, max_tokens: int) -> str | None:
+    """One SiliconFlow chat call; the assistant text, or None on any failure.
+
+    The one HTTP path every LLM feature shares (digest extraction, 3B drift
+    entailment): no key or any transport/shape failure degrades to None and
+    the caller reports it — never raises into the caller's flow.
+    """
     key = embed.get_api_key()
     if not key:
         return None
     payload = {
         "model": DEFAULT_CHAT_MODEL,
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": transcript},
-        ],
-        "temperature": 0.2,
-        "max_tokens": 1200,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
     }
     req = urllib.request.Request(
         CHAT_URL,
@@ -162,19 +168,83 @@ def chat_extract_facts(transcript: str) -> list[str] | None:
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError, json.JSONDecodeError):
         return None
     try:
-        content = data["choices"][0]["message"]["content"]
+        return data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError):
+        return None
+
+
+def _chunk_transcript(
+    text: str, cap: int = MAX_INPUT_CHARS, overlap: int = CHUNK_OVERLAP
+) -> list[str]:
+    """Sliding windows of <= cap chars sharing `overlap` chars between
+    neighbours (3C), so a fact straddling a boundary is visible from both
+    sides. A single chunk when the text already fits."""
+    if len(text) <= cap:
+        return [text]
+    step = cap - overlap
+    chunks: list[str] = []
+    start = 0
+    while start < len(text):
+        chunks.append(text[start : start + cap])
+        if start + cap >= len(text):
+            break
+        start += step
+    return chunks
+
+
+def _extract_facts_chunked(transcript: str) -> tuple[list[str] | None, int, int]:
+    """Per-chunk extraction with cross-chunk dedup (3C).
+
+    Returns (facts, chars_sent, chars_total). ``facts`` is None when ANY chunk
+    failed: a partial extraction must neither be written nor advance the
+    cursor — the same no-silent-loss guarantee the single-shot path had. The
+    per-file fact cap applies to the aggregate.
+    """
+    total = len(transcript)
+    seen: set[str] = set()
+    facts: list[str] = []
+    sent = 0
+    for chunk in _chunk_transcript(transcript):
+        extracted = chat_extract_facts(chunk)
+        if extracted is None:
+            return None, sent, total
+        sent += len(chunk)
+        for fact in extracted:
+            key = " ".join(fact.split())
+            if key not in seen:
+                seen.add(key)
+                facts.append(fact)
+    return facts[:MAX_FACTS_PER_FILE], sent, total
+
+
+def chat_extract_facts(transcript: str) -> list[str] | None:
+    """Ask the SiliconFlow chat model to distill facts; None on any failure."""
+    content = chat_completion(
+        [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": transcript},
+        ],
+        temperature=0.2,
+        max_tokens=1200,
+    )
+    if content is None:
         return None
     return _parse_facts(content)
 
 
-def _write_digest_facts(vault: Path, facts: list[str]) -> int:
+def _write_digest_facts(vault: Path, facts: list[str], origin: str = "") -> int:
     if not facts:
         return 0
     inbox = canonical_dir(vault) / "Agent提交区"
     inbox.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
     body = "\n".join(f"- {f}" for f in facts) + "\n"
+    if origin:
+        # 3A provenance (P0-3): the machine-readable source line review reads
+        # back so a digest fact can be traced to its session archive after
+        # promotion. A comment never parses as a fact line (fact_lines skips
+        # it), so this cannot leak a fact into the pending list by itself.
+        body = f"<!-- digest-source: {origin} -->\n" + body
     for seq in range(1, 100):
         candidate = inbox / f"digest-{stamp}-{seq:02d}.md"
         if atomic_create(candidate, body):
@@ -189,14 +259,15 @@ def _cursor(vault: Path, key: str = CURSOR_KEY) -> str:
     return get_meta(vault, key)
 
 
-def _queue_units() -> tuple[list[tuple[str, str, str]], dict[str, str]]:
+def _queue_units() -> tuple[list[tuple[str, str, str, str]], dict[str, str]]:
     """Hook-queue entries -> digest work units plus their paths (done-marking).
 
     The queue is written by the hook runtime's session-end (E1) and drained
     here. Idempotency lives in queue.done (one path per line): already
     processed paths are skipped; bad lines and missing transcripts are skipped
     too (the drain never crashes on a bad entry). The transcript itself goes
-    through the platform adapter, which redacts every line at its exit.
+    through the platform adapter, which redacts every line at its exit. The
+    fourth field is the provenance origin (3A): the transcript path, verbatim.
     """
     queue = hookstate.queue_path()
     if not queue.is_file():
@@ -209,7 +280,7 @@ def _queue_units() -> tuple[list[tuple[str, str, str]], dict[str, str]]:
             for ln in done_file.read_text(encoding="utf-8", errors="replace").splitlines()
             if ln.strip()
         }
-    units: list[tuple[str, str, str]] = []
+    units: list[tuple[str, str, str, str]] = []
     paths: dict[str, str] = {}
     for raw in queue.read_text(encoding="utf-8", errors="replace").splitlines():
         line = raw.strip()
@@ -231,7 +302,7 @@ def _queue_units() -> tuple[list[tuple[str, str, str]], dict[str, str]]:
         label = f"claude-code {transcript_file.name}"
         if label in paths:
             label = f"{label} #{len(units) + 1}"
-        units.append((label, ts[:10], claude_code_transcript(transcript_file)))
+        units.append((label, ts[:10], claude_code_transcript(transcript_file), path))
         paths[label] = path
     return units, paths
 
@@ -254,27 +325,30 @@ def _mark_queue_done(path: str) -> None:
     atomic_write(done_file, "\n".join(lines) + "\n")
 
 
-def _units(vault: Path, source: str, cursor: str) -> list[tuple[str, str, str]]:
-    """Collect ``(label, date, transcript)`` work items newer than ``cursor``.
+def _units(vault: Path, source: str, cursor: str) -> list[tuple[str, str, str, str]]:
+    """Collect ``(label, date, transcript, origin)`` work items newer than the
+    cursor.
 
-    Both sources are projected onto the same triple, which is why digest never
-    has to know where a transcript came from. Archive files are read lazily so
-    a no-op run does not touch 82 files; the state source already filters by
-    date inside SQL.
+    Both sources are projected onto the same quadruple, which is why digest
+    never has to know where a transcript came from — except for provenance
+    (3A), where the origin IS the answer: the archive path relative to the
+    vault, or the state.db day. Archive files are read lazily so a no-op run
+    does not touch 82 files; the state source already filters by date inside
+    SQL.
     """
     if source == "state":
         return [
-            (f"state.db {day}", day, transcript)
+            (f"state.db {day}", day, transcript, f"state.db {day}")
             for day, transcript in sessiondb.dated_transcripts(since=cursor)
         ]
     return [
-        (p.name, _date_of(p), _transcript_of(p))
+        (p.name, _date_of(p), _transcript_of(p), str(p.relative_to(vault)))
         for p in _archive_files(vault)
         if _date_of(p) > cursor
     ]
 
 
-def _pending_units(vault: Path, source: str, cursor_key: str) -> tuple[list[tuple[str, str, str]], dict | None, dict[str, str]]:
+def _pending_units(vault: Path, source: str, cursor_key: str) -> tuple[list[tuple[str, str, str, str]], dict | None, dict[str, str]]:
     """Collect the work units for one digest source.
 
     Returns (pending, degraded-report-or-None, queue-paths): an unreadable
@@ -307,7 +381,7 @@ def digest(vault: Path, dry_run: bool = False, limit: int = 0, source: str = "ar
         pending = pending[:limit]
     report = {
         "files": avail_files, "pending": len(pending), "written": 0, "facts": 0,
-        "skipped": [], "source": source,
+        "skipped": [], "source": source, "charsSent": 0, "charsTotal": 0,
     }
     if degraded is not None:
         return degraded
@@ -316,13 +390,17 @@ def digest(vault: Path, dry_run: bool = False, limit: int = 0, source: str = "ar
     if not embed.configured():
         report["skipped"].append("no SiliconFlow API key (digest requires it)")
         return report
-    for label, date, transcript in pending:
-        facts = chat_extract_facts(transcript)
+    for label, date, transcript, origin in pending:
+        facts, sent, total = _extract_facts_chunked(transcript)
+        report["charsSent"] += sent
+        report["charsTotal"] += total
         if facts is None:
-            report["skipped"].append(label)
+            # 3C: a failed chunk means an incomplete extraction — the unit is
+            # skipped whole (no partial write, cursor untouched).
+            report["skipped"].append(f"{label} (chunk extraction failed, {sent}/{total} chars sent)")
             continue
         if not dry_run:
-            written = _write_digest_facts(vault, facts)
+            written = _write_digest_facts(vault, facts, origin=origin)
             if facts and not written:
                 # The inbox could not allocate a file. Do NOT advance the
                 # cursor / mark the queue entry done: the old code did, so the
@@ -336,7 +414,7 @@ def digest(vault: Path, dry_run: bool = False, limit: int = 0, source: str = "ar
             report["facts"] += len(facts)
             # Preview lines go to stderr so programmatic callers (e.g. the
             # Hermes dream promoter) get pure JSON on stdout.
-            print(f"[dry-run] {label}: {len(facts)} fact(s)", file=sys.stderr)
+            print(f"[dry-run] {label}: {len(facts)} fact(s), {sent}/{total} chars sent", file=sys.stderr)
             for f in facts[:6]:
                 print(f"    - {f[:70]}", file=sys.stderr)
         # Advance the cursor / mark the queue entry done only on a real run

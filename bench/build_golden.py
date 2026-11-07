@@ -21,7 +21,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "core"))
 
-from unified_memory import index  # noqa: E402
+from unified_memory.domain.markdown import doc_lines  # noqa: E402
+from unified_memory.infra.store import index_db_for  # noqa: E402
+from unified_memory.infra.vault import indexed_files  # noqa: E402
 
 _STOP = {
     "the", "and", "for", "with", "that", "this", "from", "have", "must",
@@ -61,9 +63,9 @@ def build(vault: Path) -> list[dict]:
     items: list[dict] = []
     per_doc: dict[str, int] = {}
     seen_queries: set[str] = set()
-    for path in index.indexed_files(vault):
+    for path in indexed_files(vault):
         text = path.read_text(encoding="utf-8", errors="replace")
-        for status, bare, _raw in index._doc_lines(text):
+        for status, bare, _raw in doc_lines(text):
             if status != "active" or len(items) >= _MAX_TOTAL:
                 continue
             if per_doc.get(path.name, 0) >= _MAX_PER_DOC:

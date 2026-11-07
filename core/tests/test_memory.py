@@ -14,14 +14,9 @@ from unittest.mock import patch
 from test_common import destroy_scratch, make_scratch_vault
 from unified_memory import memory as mem_mod
 from unified_memory import promoter
-from unified_memory.common import (
-    VAULT_ENV,
-    atomic_create,
-    canonical_dir,
-    canonical_path,
-    resolve_vault,
-)
-
+from unified_memory.domain.policy import VAULT_ENV
+from unified_memory.infra.config import resolve_vault
+from unified_memory.infra.vault import atomic_create, canonical_dir, canonical_path
 
 class MemoryCoreTest(unittest.TestCase):
     def setUp(self):
@@ -199,11 +194,10 @@ class MemoryCoreTest(unittest.TestCase):
             mem_mod.cmd_search(type("A", (), {"query": "x", "limit": 8, "remote": True})())
         self.assertIn("remote index is not configured", str(cm.exception))
 
-
 class DriftSubcommandTest(unittest.TestCase):
     """`memory drift` is the CLI front door; it must not raise tracebacks.
 
-    `python -m unified_memory.drift` has always translated a missing
+    `python -m unified_memory.memory drift` has always translated a missing
     driftrc.yaml and a PyYAML-less interpreter into one actionable line. The
     subcommand did not, so on an installed package (where driftrc.yaml was not
     even shipped) `memory drift`, `--template` and `--strict` all died with a
@@ -217,7 +211,7 @@ class DriftSubcommandTest(unittest.TestCase):
 
     def test_missing_driftrc_becomes_a_systemexit_with_advice(self):
         with patch(
-            "unified_memory.drift.DriftDetector.run",
+            "unified_memory.app.maintain.drift.DriftDetector.run",
             side_effect=FileNotFoundError("driftrc.yaml not found at /nowhere/driftrc.yaml"),
         ):
             with self.assertRaises(SystemExit) as cm:
@@ -229,7 +223,7 @@ class DriftSubcommandTest(unittest.TestCase):
 
     def test_missing_pyyaml_gets_its_own_message(self):
         with patch(
-            "unified_memory.drift.DriftDetector.run",
+            "unified_memory.app.maintain.drift.DriftDetector.run",
             side_effect=ModuleNotFoundError("No module named 'yaml'", name="yaml"),
         ):
             with self.assertRaises(SystemExit) as cm:
@@ -247,7 +241,6 @@ class DriftSubcommandTest(unittest.TestCase):
         files = json.loads(pkg.read_text(encoding="utf-8"))["files"]
         self.assertIn("driftrc.yaml", files)
         self.assertTrue((pkg.parent / "driftrc.yaml").is_file())
-
 
 class CliRefusalExitTest(unittest.TestCase):
     """A refused ruling must be visible in the exit status, not only on stderr.
@@ -299,7 +292,6 @@ class CliRefusalExitTest(unittest.TestCase):
             self.assertEqual(payload["command"], command)
             self.assertFalse(payload["ok"], argv)
             self.assertTrue(payload["data"]["reason"], argv)
-
 
 class VaultMissingCliTest(unittest.TestCase):
     """One uninitialized vault, one clean answer — for every verb.
@@ -353,7 +345,6 @@ class VaultMissingCliTest(unittest.TestCase):
         self.assertEqual(
             [issue["code"] for issue in payload["data"]["issues"]], ["vault-missing"]
         )
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -13,7 +13,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from test_common import destroy_scratch, make_scratch_vault
 from unified_memory import memory
-
+from unified_memory.domain.policy import ADJUDICATED_FILE, CONFLICT_FILE
+from unified_memory.infra.vault import read_maybe, situation_dir
 
 class StatusJsonTest(unittest.TestCase):
     def setUp(self):
@@ -39,7 +40,6 @@ class StatusJsonTest(unittest.TestCase):
         out = buf.getvalue()
         self.assertFalse(out.lstrip().startswith("{"))
         self.assertIn("vault:", out)
-
 
 class SearchJsonTest(unittest.TestCase):
     def setUp(self):
@@ -74,7 +74,6 @@ class SearchJsonTest(unittest.TestCase):
         with contextlib.redirect_stdout(buf):
             memory.main(["search", "记忆"])
         self.assertIn("<memory-data>", buf.getvalue())
-
 
 class AdviseCliTest(unittest.TestCase):
     """`advise` is the agent's half of the conflict queue, over the CLI.
@@ -157,13 +156,13 @@ class AdviseCliTest(unittest.TestCase):
         ])
 
         self.assertIs(payload["ok"], True)
-        from unified_memory.common import ADJUDICATED_FILE, read_maybe, situation_dir
+        
 
         log = read_maybe(situation_dir(self.vault) / ADJUDICATED_FILE)
         self.assertIn("理由：9090 是当前值，8080 已停用。", log)
 
     def _queue_text(self) -> str:
-        from unified_memory.common import CONFLICT_FILE, read_maybe, situation_dir
+        
 
         return read_maybe(situation_dir(self.vault) / CONFLICT_FILE)
 
@@ -206,7 +205,6 @@ class AdviseCliTest(unittest.TestCase):
         from unified_memory.app.govern.queue import find_conflict
 
         self.assertEqual(find_conflict(self.vault, self.key)["解释"], "第一行。 第二行。")
-
 
 if __name__ == "__main__":
     unittest.main()

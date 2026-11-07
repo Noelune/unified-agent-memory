@@ -6,11 +6,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from unified_memory import forgetter, index
-from unified_memory.common import canonical_path, forget_dir, read_maybe
+from unified_memory import forgetter
+from unified_memory.infra.store import active_memories, record_access, update_index
 
 from test_common import destroy_scratch, index_db_name_for, make_scratch_vault
-
+from unified_memory.infra.vault import canonical_path, forget_dir, read_maybe
 
 class ForgetterScoreTest(unittest.TestCase):
     def test_score_keeps_high_importance_facts_indefinitely(self):
@@ -40,7 +40,7 @@ class ForgetterScoreTest(unittest.TestCase):
                 + "- 服务器地址备忘（写入 2020-01-01｜来源：Agent提交区/codex-20200101-003-01.md）\n",
                 encoding="utf-8",
             )
-            index.update_index(vault)
+            update_index(vault)
             candidates = forgetter.demote(vault, dry_run=True)
             text = "\n".join(candidates)
             self.assertIn("临时会议纪要备忘", text)
@@ -50,7 +50,6 @@ class ForgetterScoreTest(unittest.TestCase):
             self.assertNotIn("服务器地址备忘", text)
         finally:
             destroy_scratch(vault)
-
 
 class ForgetterSafetyTest(unittest.TestCase):
     def setUp(self):
@@ -67,19 +66,18 @@ class ForgetterSafetyTest(unittest.TestCase):
         self._append(
             "- 旧配色是蓝色（写入 2020-01-01｜来源：[[Agent提交区/x-1.md]]｜有效至 2020-02-01）\n"
         )
-        index.update_index(self.vault)
+        update_index(self.vault)
         self.assertNotIn("旧配色是蓝色", "\n".join(forgetter.demote(self.vault, dry_run=True)))
 
     def test_recent_access_rescues_an_old_transient_fact(self):
         self._append("- 临时会议纪要备忘（写入 2020-01-01｜来源：Agent提交区/x-1.md）\n")
-        index.update_index(self.vault)
-        target = next(m for m in index.active_memories(self.vault) if m["line"] == "临时会议纪要备忘")
+        update_index(self.vault)
+        target = next(m for m in active_memories(self.vault) if m["line"] == "临时会议纪要备忘")
         # Before any read receipt the old transient fact is a candidate…
         self.assertIn("临时会议纪要备忘", "\n".join(forgetter.demote(self.vault, dry_run=True)))
         # …after a read receipt it is not: reinforcement resets the decay clock.
-        index.record_access(self.vault, [target["id"]])
+        record_access(self.vault, [target["id"]])
         self.assertNotIn("临时会议纪要备忘", "\n".join(forgetter.demote(self.vault, dry_run=True)))
-
 
 class ForgetterScheduleTest(unittest.TestCase):
     def setUp(self):
@@ -136,7 +134,6 @@ class ForgetterScheduleTest(unittest.TestCase):
         self.assertIn(stale.rstrip(), read_maybe(forget_dir(self.vault) / ui.name))
         self.assertIn("demoted 1 line(s)", read_maybe(self.vault / "forget_weekly.log"))
 
-
 class ProtectedTopicsTest(unittest.TestCase):
     """Batch C2: the explicit PROTECTED_TOPICS whitelist, not the old net."""
 
@@ -186,7 +183,6 @@ class ProtectedTopicsTest(unittest.TestCase):
         reachable = 1 - len(protected) / len(corpus)
         self.assertEqual(protected, ["生产服务器地址是 203.0.113.10", "同步端口为 9443"])
         self.assertGreaterEqual(reachable, 0.6, f"protected: {protected}")
-
 
 if __name__ == "__main__":
     unittest.main()

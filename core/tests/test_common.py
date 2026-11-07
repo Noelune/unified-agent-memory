@@ -6,7 +6,7 @@ touched by any test in this suite:
 
   * importing this module (which every core test file does, directly or via
     unittest discovery) arms a process-wide guard that pins memory.INDEX_DB,
-    common.CONFIG_PATH and the UNIFIED_MEMORY_* env overrides into one
+    infra_config.CONFIG_PATH and the UNIFIED_MEMORY_* env overrides into one
     session-scoped temp dir;
   * that guard is deliberately NEVER lifted. Tests share one process, so
     un-arming it in a single tearDown would re-open the real home for every
@@ -14,7 +14,7 @@ touched by any test in this suite:
 
 The guard is what makes the isolation import-order independent: a test class
 that only rebinds memory.INDEX_DB (see test_stats._ScratchIndexTest) still
-inherits a non-real CONFIG_PATH and env, instead of falling back to the user's
+inherits a non-real infra_config.CONFIG_PATH and env, instead of falling back to the user's
 real ~/.unified-memory.yaml through resolve_vault().
 """
 import atexit
@@ -31,10 +31,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from unified_memory import memory as mem_mod
-from unified_memory import common
-from unified_memory import schema
+from unified_memory.infra.store import schema
 from unified_memory.infra import config as infra_config
 from unified_memory.infra import journal as infra_journal
+from unified_memory.domain.markdown import is_versioned, parse_stamp, redact, source_agent, strip_suffix
+from unified_memory.domain.policy import is_conflict_copy
+from unified_memory.infra.console import ensure_utf8_console
 
 
 def index_db_name_for(vault: Path) -> str:
@@ -73,8 +75,8 @@ _GUARD_JOURNAL = _GUARD_ROOT / "journal"
 # Fingerprint of the user's real config, taken before any test runs.
 #
 # This exists because the guard above is not sufficient on its own. It pins
-# ``common.CONFIG_PATH``, but a module that copies that value at *import* time
-# (``from .common import CONFIG_PATH``) keeps the real home path and writes
+# ``infra_config.CONFIG_PATH``, but a module that copies that value at *import* time
+# (``from .common import infra_config.CONFIG_PATH``) keeps the real home path and writes
 # there regardless of what the guard rebinds afterwards. That is not
 # hypothetical: it happened on 2026-10-19, when ``config.py`` froze the path on
 # import and 117 successive test runs repointed the developer's real
@@ -101,7 +103,7 @@ _REAL_CONFIG_PRINT = _fingerprint(_REAL_CONFIG)
 
 def _arm_guard() -> None:
     """Pin every real-home escape hatch into the guard dir. Idempotent."""
-    common.CONFIG_PATH = _GUARD_CONFIG
+    infra_config.CONFIG_PATH = _GUARD_CONFIG
     mem_mod.CONFIG_PATH = _GUARD_CONFIG
     infra_config.CONFIG_PATH = _GUARD_CONFIG
     mem_mod.INDEX_DB = _GUARD_INDEX_DB
@@ -124,12 +126,12 @@ def assert_guard_intact() -> None:
     """Fail loudly if anything re-pointed a redirect at the real home."""
     if (
         _is_real_home_path(mem_mod.INDEX_DB)
-        or _is_real_home_path(common.CONFIG_PATH)
+        or _is_real_home_path(infra_config.CONFIG_PATH)
         or _is_real_home_path(infra_journal._base_dir())
     ):
         raise AssertionError(
             f"test isolation guard was defeated: INDEX_DB={mem_mod.INDEX_DB} "
-            f"CONFIG_PATH={common.CONFIG_PATH} JOURNAL={infra_journal._base_dir()}"
+            f"CONFIG_PATH={infra_config.CONFIG_PATH} JOURNAL={infra_journal._base_dir()}"
         )
     assert_real_config_untouched()
 
@@ -138,7 +140,7 @@ def assert_real_config_untouched() -> None:
     """Fail if a test wrote the developer's real ~/.unified-memory.yaml.
 
     Catches the import-time-cache class of leak that the path redirects cannot:
-    a module holding its own copy of CONFIG_PATH writes the real file even while
+    a module holding its own copy of infra_config.CONFIG_PATH writes the real file even while
     every redirect looks correct.
     """
     now = _fingerprint(_REAL_CONFIG)
@@ -146,7 +148,7 @@ def assert_real_config_untouched() -> None:
         raise AssertionError(
             f"a test wrote the real config file {_REAL_CONFIG} "
             f"(before={_REAL_CONFIG_PRINT}, now={now}). "
-            "Some module cached CONFIG_PATH at import time instead of resolving "
+            "Some module cached infra_config.CONFIG_PATH at import time instead of resolving "
             "it per call — see config.default_path()."
         )
 
@@ -156,9 +158,9 @@ def make_scratch_vault() -> Path:
     root = Path(tempfile.mkdtemp(prefix="um-test-"))
     vault = root / "vault"
     # Redirect config + index away from the real home directory.
-    common.CONFIG_PATH = root / "config.yaml"
-    mem_mod.CONFIG_PATH = common.CONFIG_PATH
-    infra_config.CONFIG_PATH = common.CONFIG_PATH
+    CONFIG_PATH = root / "config.yaml"
+    mem_mod.CONFIG_PATH = infra_config.CONFIG_PATH
+    infra_config.CONFIG_PATH = infra_config.CONFIG_PATH
     mem_mod.INDEX_DB = root / "index.db"
     os.environ["UNIFIED_MEMORY_VAULT"] = str(vault)
     # The parent-process rebind above cannot reach a child process: a spawned
@@ -206,7 +208,7 @@ class ScratchIsolationGuardTest(unittest.TestCase):
             )
 
     def test_config_path_is_never_the_real_home_config(self):
-        self.assertNotEqual(Path(common.CONFIG_PATH), self.REAL_CFG)
+        self.assertNotEqual(Path(infra_config.CONFIG_PATH), self.REAL_CFG)
         self.assertNotEqual(Path(mem_mod.CONFIG_PATH), self.REAL_CFG)
         # The factory must not silently switch the redirect back on teardown:
         # a later test in the same process would then write the real config.
@@ -268,19 +270,19 @@ class ScratchIsolationGuardTest(unittest.TestCase):
     def test_a_module_that_caches_config_path_cannot_write_the_real_home(self):
         """The regression this suite was rewritten for on 2026-10-19.
 
-        Redirecting `common.CONFIG_PATH` is not enough if a module copied the
+        Redirecting `infra_config.CONFIG_PATH` is not enough if a module copied the
         value at import time: it keeps the real path and writes there while
         every redirect looks correct. `config.default_path()` resolves per call,
         and this pins that behaviour plus the guard that notices a relapse.
         """
-        from unified_memory import config
+        from unified_memory.infra import config
         from unified_memory.infra import config as infra_config
 
         # A rebind after import must be honoured by the next call.
         redirected = _GUARD_ROOT / "rebound.yaml"
-        saved = common.CONFIG_PATH
+        saved = infra_config.CONFIG_PATH
         saved_infra = infra_config.CONFIG_PATH
-        common.CONFIG_PATH = redirected
+        CONFIG_PATH = redirected
         infra_config.CONFIG_PATH = redirected
         try:
             self.assertEqual(config.default_path(), redirected)
@@ -288,7 +290,7 @@ class ScratchIsolationGuardTest(unittest.TestCase):
             self.assertTrue(redirected.exists())
             self.assertIn("vault: /tmp/redirected", redirected.read_text(encoding="utf-8"))
         finally:
-            common.CONFIG_PATH = saved
+            CONFIG_PATH = saved
             infra_config.CONFIG_PATH = saved_infra
         # And the guard can actually SEE a change. Prove it against a synthetic
         # file rather than against the developer's real config: on a clean
@@ -319,21 +321,21 @@ class StampParsingTest(unittest.TestCase):
 
     def test_repo_dialect(self):
         line = "- fact（写入 2026-08-16｜来源：Agent提交区/dsh-20260816-001-01.md）"
-        date, source, valid_until = common.parse_stamp(line)
+        date, source, valid_until = parse_stamp(line)
         self.assertEqual(date, "2026-08-16")
         self.assertEqual(source, "Agent提交区/dsh-20260816-001-01.md")
         self.assertIsNone(valid_until)
-        self.assertEqual(common.source_agent(source), "dsh")
+        self.assertEqual(source_agent(source), "dsh")
 
     def test_hermes_dialect_with_event(self):
         line = (
             "- fact（写入 2026-09-23｜来源：[[Hermes会话自动归档/2026-09-23]]，"
             "事件 `3d2f428c`）"
         )
-        date, source, valid_until = common.parse_stamp(line)
+        date, source, valid_until = parse_stamp(line)
         self.assertEqual(date, "2026-09-23")
         self.assertEqual(source, "Hermes会话自动归档/2026-09-23")
-        self.assertEqual(common.source_agent(source), "hermes")
+        self.assertEqual(source_agent(source), "hermes")
         self.assertIsNone(valid_until)
 
     def test_valid_until_and_usage_suffix_are_stripped(self):
@@ -341,39 +343,39 @@ class StampParsingTest(unittest.TestCase):
             "- old value（写入 2026-01-01｜来源：[[Agent提交区/x-1.md]]"
             "｜使用 3 次·最近 2026-02-01｜有效至 2026-02-01）"
         )
-        date, _source, valid_until = common.parse_stamp(line)
+        date, _source, valid_until = parse_stamp(line)
         self.assertEqual(date, "2026-01-01")
         self.assertEqual(valid_until, "2026-02-01")
-        self.assertTrue(common.is_versioned(line))
-        self.assertEqual(common.strip_suffix(line), "- old value")
+        self.assertTrue(is_versioned(line))
+        self.assertEqual(strip_suffix(line), "- old value")
 
     def test_legacy_english_stamp(self):
         line = "- fact (written 2026-01-01｜source:Agent提交区/x.md)"
         self.assertEqual(
-            common.parse_stamp(line),
+            parse_stamp(line),
             ("2026-01-01", "Agent提交区/x.md", None),
         )
-        self.assertEqual(common.strip_suffix(line), "- fact")
+        self.assertEqual(strip_suffix(line), "- fact")
 
     def test_sync_conflict_copies_are_detected_but_dates_are_not(self):
-        self.assertTrue(common.is_conflict_copy("我的偏好摘要 2.md"))
-        self.assertTrue(common.is_conflict_copy("note-副本.md"))
-        self.assertTrue(common.is_conflict_copy("note (conflicted copy).md"))
-        self.assertFalse(common.is_conflict_copy("2026-10-18.md"))
-        self.assertFalse(common.is_conflict_copy("我的偏好摘要.md"))
+        self.assertTrue(is_conflict_copy("我的偏好摘要 2.md"))
+        self.assertTrue(is_conflict_copy("note-副本.md"))
+        self.assertTrue(is_conflict_copy("note (conflicted copy).md"))
+        self.assertFalse(is_conflict_copy("2026-10-18.md"))
+        self.assertFalse(is_conflict_copy("我的偏好摘要.md"))
 
 
 class RedactTest(unittest.TestCase):
     def test_redacts_short_credential_values(self):
         # Short values (>= 4 chars) after a key must still be redacted so a
         # session archive can't leak even a short test key.
-        self.assertIn("<REDACTED>", common.redact("api_key: abc123"))
-        self.assertIn("<REDACTED>", common.redact("auth_token: abcd"))
-        self.assertIn("<REDACTED>", common.redact("password: pass"))
+        self.assertIn("<REDACTED>", redact("api_key: abc123"))
+        self.assertIn("<REDACTED>", redact("auth_token: abcd"))
+        self.assertIn("<REDACTED>", redact("password: pass"))
 
     def test_redact_does_not_erase_plain_text(self):
-        self.assertEqual(common.redact("the server runs on 127.0.0.1:8080"), "the server runs on 127.0.0.1:8080")
-        self.assertNotIn("<REDACTED>", common.redact("api is a common word"))
+        self.assertEqual(redact("the server runs on 127.0.0.1:8080"), "the server runs on 127.0.0.1:8080")
+        self.assertNotIn("<REDACTED>", redact("api is a common word"))
 
 
 class ConsoleEncodingTest(unittest.TestCase):
@@ -387,24 +389,24 @@ class ConsoleEncodingTest(unittest.TestCase):
     def test_ensure_utf8_console_switches_a_cp1252_stream(self):
         raw = io.BytesIO()
         stream = io.TextIOWrapper(raw, encoding="cp1252")
-        common.ensure_utf8_console(stream)
+        ensure_utf8_console(stream)
         self.assertEqual(stream.encoding, "utf-8")
 
     def test_ensure_utf8_console_is_idempotent_and_tolerates_plain_streams(self):
         raw = io.BytesIO()
         stream = io.TextIOWrapper(raw, encoding="cp1252")
-        common.ensure_utf8_console(stream)
-        common.ensure_utf8_console(stream)  # second call must not raise
+        ensure_utf8_console(stream)
+        ensure_utf8_console(stream)  # second call must not raise
         self.assertEqual(stream.encoding, "utf-8")
         # A stream without reconfigure (e.g. a test double) is left alone.
-        common.ensure_utf8_console(io.StringIO())
+        ensure_utf8_console(io.StringIO())
 
     def test_cjk_output_survives_a_cp1252_console(self):
         vault = make_scratch_vault()
         try:
             raw = io.BytesIO()
             stream = io.TextIOWrapper(raw, encoding="cp1252")
-            common.ensure_utf8_console(stream)
+            ensure_utf8_console(stream)
             with redirect_stdout(stream):
                 mem_mod.cmd_submit(
                     type("A", (), {"agent": "dsh", "fact": "- the vault keeps CJK in 记忆遗忘区"})()

@@ -39,6 +39,7 @@ import {
   CONFLICT_LEAD,
   CONFLICT_NOW_LABEL,
   CONFLICT_RULES_NOTE,
+  conflictSourceHint,
   CONSOLE_TABS,
   TAB_LABEL,
   compactCount,
@@ -484,6 +485,19 @@ describe('the pane asks one question', () => {
     const body = inboxBody()
     expect(body).toMatch(/CONFLICT_CHOICES/)
     expect(body).toMatch(/rule\(it\.key, c\.value\)/)
+  })
+
+  it('names the question a scan source queued, not the machine', () => {
+    // P1-3 (supersede sweep) and 3B (drift verify) enqueue suspects a HUMAN
+    // must judge; the meta line only says 来自 supersede-scan, which names
+    // the machine, not the question. Each known source gets a sentence that
+    // says what to check; an unknown source gets NO invented words — the
+    // 来自 … line is the honest fallback there.
+    expect(conflictSourceHint('supersede-scan')).toContain('旧值')
+    expect(conflictSourceHint('drift-verify')).toContain('源会话')
+    expect(conflictSourceHint('dsh-20260101-000000-01.md')).toBe('')
+    expect(conflictSourceHint(undefined)).toBe('')
+    expect(inboxBody()).toMatch(/conflictSourceHint\(it\.source\)/)
   })
 
   it('explains why the conflicts have their own block', () => {

@@ -14,11 +14,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 from test_common import destroy_scratch, make_scratch_vault
-from unified_memory.common import canonical_dir, read_maybe
+
 from unified_memory.infra.transcripts.claude_code import claude_code_transcript
 from unified_memory.infra import hookstate
 from unified_memory.app.ingest import digest as digest_mod
-
+from unified_memory.infra.vault import canonical_dir, read_maybe
 
 class TranscriptAdapterTest(unittest.TestCase):
     def setUp(self):
@@ -67,7 +67,6 @@ class TranscriptAdapterTest(unittest.TestCase):
         text = claude_code_transcript(path)
         self.assertNotIn("qwertyuiop123", text)
         self.assertIn("api_key=<REDACTED>", text)
-
 
 class DigestQueueTest(unittest.TestCase):
     def setUp(self):
@@ -168,7 +167,12 @@ class DigestQueueTest(unittest.TestCase):
             return_value=None,
         ):
             report = digest_mod.digest(self.vault, source="queue")
-        self.assertEqual(report["skipped"], [f"claude-code {transcript.name}"])
+        # 3C names the failure and how far it got: the message is informational
+        # (the contract is the STATE — entry unmarked, cursor untouched), so the
+        # wording may carry more detail than the old bare label.
+        self.assertEqual(len(report["skipped"]), 1)
+        self.assertIn(f"claude-code {transcript.name}", report["skipped"][0])
+        self.assertIn("chunk extraction failed", report["skipped"][0])
         self.assertFalse(hookstate.done_path().exists())
         # A later successful run can still process it.
         with patch("unified_memory.infra.providers.embed.configured", return_value=True), patch(

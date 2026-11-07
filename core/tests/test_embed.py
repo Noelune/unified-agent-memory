@@ -9,8 +9,8 @@ import os
 import unittest
 from pathlib import Path
 
+from unified_memory.infra.store import get_conn
 from test_common import destroy_scratch, make_scratch_vault
-from unified_memory import index
 from unified_memory.infra.providers import embed
 
 
@@ -52,7 +52,7 @@ class EmbedTest(unittest.TestCase):
     def test_embed_missing_skips_already_embedded(self):
         vault = make_scratch_vault()
         try:
-            conn = index.get_conn(vault)
+            conn = get_conn(vault)
             try:
                 conn.execute(
                     "INSERT INTO memories (id, doc, line, type, importance, status, version, source_agent, project, created_at, updated_at, access_count, metadata_json) "

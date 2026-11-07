@@ -17,12 +17,14 @@ from ...domain.conflict import classify_against, subject_of
 from ...domain.facts import active_fact_lines
 from ...domain.policy import CANONICAL_DOCS
 from ...infra.store import lexical_search
+from ...infra.store.claims import forget_stats
 from ...infra.vault import canonical_path, read_maybe
 from ..govern.queue import append_conflict, read_conflicts
 
 MAX_GROUP_PAIRS = 200
 RECALL_LIMIT = 20
 SCAN_SOURCE = "conflict-scan"
+PROPAGATION_SOURCE = "supersede-scan"
 
 # One item is (document file name, active fact text).
 Item = tuple[str, str]
@@ -108,6 +110,51 @@ def _headless_hits(vault: Path, headless: list[Item]) -> tuple[list[dict], int]:
             if _contradicts((doc, fact), (other_doc, other)):
                 hits.append(_hit((doc, fact), (other_doc, other)))
     return hits, pairs
+
+
+def scan_propagation(
+    vault: Path,
+    old_bare: str,
+    *,
+    exclude: tuple[str, ...] = (),
+    old_doc: str = "",
+) -> list[dict]:
+    """Active facts that still carry the superseded value's meaning (P1-3).
+
+    Supersession closes one claim's window; it never asks who ELSE still
+    believes the old value — a paraphrase promoted earlier keeps participating
+    in retrieval under the old meaning (taskbook: experience-following
+    propagates stored errors). The sweep turns the superseded line into the
+    seed and applies the very same rule the promoter applies between two
+    stored facts: ``classify_against`` reads a suspect as "conflict" — same
+    subject (when both sides have one), similar, different wording.
+
+    ``exclude`` names the just-written replacement so the sweep does not flag
+    its own successor. Hits are sorted by ``used``-event count DESCENDING so
+    enqueueing in order puts the most-cited lines at the top of the queue;
+    ``old_doc`` (the doc the superseded line lived in) becomes the 跨文档
+    field when the candidate sits in another note. Read-only: nothing here
+    writes the vault or the queue.
+    """
+    if not old_bare:
+        return []
+    suspects: list[dict] = []
+    for doc, line in _active_items(vault):
+        if line == old_bare or line in exclude:
+            continue
+        status, _hit = classify_against(line, [old_bare])
+        if status != "conflict":
+            continue
+        stats = forget_stats(vault, doc, line)
+        suspects.append({
+            "new": line,
+            "old": old_bare,
+            "doc": doc,
+            "crossDoc": old_doc if old_doc and old_doc != doc else "",
+            "used": stats[1] if stats else 0,
+        })
+    suspects.sort(key=lambda hit: (-hit["used"], hit["doc"], hit["new"]))
+    return suspects
 
 
 def scan_conflicts(vault: Path, *, dry_run: bool = True) -> dict:

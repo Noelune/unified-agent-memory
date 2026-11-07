@@ -11,6 +11,10 @@ Usage:
     ... | python integrations/hermes/archive_session.py [--vault <path>] --title "T"
 """
 from __future__ import annotations
+from unified_memory.domain.markdown import redact
+from unified_memory.infra.config import resolve_vault
+from unified_memory.infra.lock import file_lock
+from unified_memory.infra.vault import atomic_write, ensure_vault, session_dir
 
 import argparse
 import datetime as dt
@@ -19,13 +23,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "core"))
 
-from unified_memory.common import atomic_write, ensure_vault, file_lock, redact, resolve_vault, session_dir  # noqa: E402
-
+# noqa: E402
 
 def header_text(value: str) -> str:
     """Keep metadata in one redacted Markdown header line."""
     return redact(value).replace("\r", " ").replace("\n", " ").replace("#", "\\#").strip()
-
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="archive_session")
@@ -57,7 +59,6 @@ def main(argv: list[str] | None = None) -> int:
         atomic_write(target, existing + "\n".join(body))
     print(f"archived {len(lines)} line(s) -> {target}")
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())
