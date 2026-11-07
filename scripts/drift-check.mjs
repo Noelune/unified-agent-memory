@@ -5,7 +5,7 @@
  * Verifies that the plugin's code-level definitions (tools, config, exports)
  * match what's expected by the drift configuration and vault template.
  *
- * This is the JS counterpart of `python -m unified_memory.drift`.
+ * This is the JS counterpart of `python -m unified_memory.memory drift`.
  * It's lighter and captures JS-specific drifts like:
  *   - Missing tool exports
  *   - Config key mismatches
@@ -81,10 +81,13 @@ if (existsSync(utilsPath)) {
   // silently dropping it would send every runtime back to a single `dsh-*`.
   const expectedKeys = ['vaultPath', 'pythonPath', 'corePath', 'remoteEnabled', 'agentName', 'agentNameSource']
   for (const key of expectedKeys) {
-    if (utilsContent.includes(key)) {
-      ok(`Config key '${key}' found in src/utils.ts`)
+    // Key POSITION, not substring: a read-side reference or a comment
+    // mentioning the name would satisfy includes() while the write side
+    // (the PluginConfig literal) moved on or renamed the entry.
+    if (new RegExp(String.raw`^\s*(?:const\s+)?${key}\b\s*[:=,]`, 'm').test(utilsContent)) {
+      ok(`Config key '${key}' declared in src/utils.ts`)
     } else {
-      error(`Config key '${key}' NOT found in src/utils.ts`)
+      error(`Config key '${key}' NOT declared as an object key in src/utils.ts`)
     }
   }
 

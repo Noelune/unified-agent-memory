@@ -54,9 +54,48 @@ const reports = (() => {
   }
 })()
 const files = reports.flatMap((report) => report.files ?? []).map((file) => file.path)
+// The 0.9.1 failure mode was MISSING entries, not forbidden ones: the files
+// whitelist shipped a stale tree and the tarball silently lost the whole
+// layered core - this audit reported the broken artifact as ok. The gate
+// therefore also asserts the artifacts every runtime path needs.
+const REQUIRED = [
+  'core/unified_memory/memory.py',
+  'core/unified_memory/promoter.py',
+  'core/unified_memory/forgetter.py',
+  'core/unified_memory/catchup.py',
+  'core/unified_memory/sessiondb.py',
+  'core/unified_memory/__init__.py',
+  'core/unified_memory/app/maintain/health.py',
+  'core/unified_memory/app/ingest/digest.py',
+  'core/unified_memory/app/retrieve/pipeline.py',
+  'core/unified_memory/infra/store/schema.py',
+  'core/unified_memory/infra/sessiondb.py',
+  'core/unified_memory/surface/cli.py',
+  'core/unified_memory/domain/conflict.py',
+  'core/tests/test_common.py',
+  'lib/index.js',
+  'lib/types/index.d.ts',
+  'dsh.plugin.json',
+  'vault-template/50-Agent-Context/上下文索引.md',
+  'integrations/hooks/memory_hook.py',
+  'integrations/claude/CLAUDE.md',
+  'setup/deploy.py',
+  'setup/setup.py',
+  'docs/JSON-CONTRACT.md',
+]
+
 const violations = files.filter((file) => !isTemplatePlaceholder(file) && forbidden.test(file))
 if (violations.length > 0) {
-  console.error(`forbidden npm package entries:\n${violations.join('\n')}`)
+  console.error(`forbidden npm package entries:`)
+  for (const v of violations) console.error(`  ${v}`)
   process.exit(1)
 }
-console.log(`npm package audit ok: ${files.length} entries`)
+
+const present = new Set(files)
+const missing = REQUIRED.filter((entry) => !present.has(entry))
+if (missing.length > 0) {
+  console.error(`required npm package entries missing:`)
+  for (const entry of missing) console.error(`  ${entry}`)
+  process.exit(1)
+}
+console.log(`npm package audit ok: ${files.length} entries (${REQUIRED.length} required verified)`)
