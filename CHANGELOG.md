@@ -2,7 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
-## [Unreleased] — 下一个版本 0.12.0（含 breaking change）
+## [0.12.0] — 2026-11-08
+
+### Added — 每日漂移复核上节奏（catchup drift job）
+
+- `catchup` 在 promote/forget 之后每日执行一次 `verify-drift`（3B）：溯源事实对源会话复核，候选入裁决队列供人工裁决。**默认启用**（参与层哲学），成本有界：`DRIFT_DAILY_LIMIT = 10` 条/天（LLM 花销天花板），戳控于 `调度状态.json` 的 `last_drift`。
+- 传输失败（LLM 不可达）**不消耗当日**：`_entail` 返回 (verdict, transport_failed)，报告增 `llmErrors`——「模型判不了」与「模型不可达」被调度器区分，后者下次 catchup 重试；无 key 时相似度预筛仍零成本运行。
+- catchup --json 增 `drift` 键（checked / prefiltered / llmChecked / llmErrors / unsupported / enqueued）。`_run_drift_job` / `_enqueue_candidates` 抽取满足预算门。
+- 新增 CatchupDriftTest（4 例：首验盖戳 / 同日跳过 / 传输失败重试 / 限额封顶），反证一次。
 
 ### Fixed — digest 提取在随附模型+提示词组合下完全失效（P1，真模型验证）
 
