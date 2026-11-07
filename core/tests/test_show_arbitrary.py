@@ -6,8 +6,7 @@ from contextlib import redirect_stdout
 
 from test_common import destroy_scratch, make_scratch_vault
 from unified_memory import memory as mem_mod
-from unified_memory.common import canonical_dir
-
+from unified_memory.infra.vault import canonical_dir
 
 class ShowArbitraryTest(unittest.TestCase):
     def setUp(self):
@@ -57,7 +56,6 @@ class ShowArbitraryTest(unittest.TestCase):
     def test_show_rejects_unknown_note(self):
         with self.assertRaises(SystemExit):
             mem_mod.cmd_show(Namespace(doc="nope.md"))
-
 
 if __name__ == "__main__":
     unittest.main()

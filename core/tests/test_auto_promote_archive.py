@@ -13,9 +13,9 @@ from pathlib import Path
 
 from test_common import destroy_scratch, make_scratch_vault
 from unified_memory import promoter
-from unified_memory.common import canonical_dir, canonical_path
-from unified_memory.app.govern.queue import read_conflicts
 
+from unified_memory.app.govern.queue import read_conflicts
+from unified_memory.infra.vault import canonical_dir, canonical_path
 
 class AutoPromoteArchiveTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -77,7 +77,6 @@ class AutoPromoteArchiveTests(unittest.TestCase):
         self.assertEqual(result["pending"], [])
         promoter.auto_promote(self.vault, verbose=False)
         self.assertFalse(submission.exists())
-
 
 if __name__ == "__main__":
     unittest.main()

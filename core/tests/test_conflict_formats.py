@@ -21,13 +21,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from test_common import destroy_scratch, make_scratch_vault
 from unified_memory import promoter
-from unified_memory.common import (
-    ADJUDICATED_FILE,
-    CONFLICT_FILE,
-    canonical_dir,
-    read_maybe,
-    situation_dir,
-)
+from unified_memory.domain.policy import ADJUDICATED_FILE, CONFLICT_FILE
+from unified_memory.infra.vault import canonical_dir, read_maybe, situation_dir
 from unified_memory.domain.conflict import (
     ADVICE_CHOICE,
     ADVICE_WHY,

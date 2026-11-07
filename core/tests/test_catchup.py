@@ -10,12 +10,12 @@ from unittest.mock import patch
 from unified_memory.infra.store import update_index
 from test_common import destroy_scratch, make_scratch_vault
 from unified_memory import catchup, forgetter, promoter
-from unified_memory.common import canonical_dir, canonical_path, read_maybe, read_schedule_state
+from unified_memory.infra.schedule import read_schedule_state
+from unified_memory.infra.vault import canonical_dir, canonical_path, read_maybe
 
 WEDNESDAY = dt.datetime(2026, 10, 28, 12, 0)  # after both anchors this week
 MONDAY_EARLY = dt.datetime(2026, 10, 26, 2, 0)  # Monday before 04:00
 MONDAY_LATE = dt.datetime(2026, 10, 26, 5, 0)  # Monday after 04:00
-
 
 class WeeklyAnchorTest(unittest.TestCase):
     def test_before_monday_04_the_anchor_is_last_week(self):
@@ -26,7 +26,6 @@ class WeeklyAnchorTest(unittest.TestCase):
 
     def test_midweek_anchor_is_that_weeks_monday(self):
         self.assertEqual(catchup.weekly_anchor(WEDNESDAY), dt.date(2026, 10, 26))
-
 
 class DueTest(unittest.TestCase):
     def setUp(self):
@@ -64,7 +63,6 @@ class DueTest(unittest.TestCase):
         catchup.run(self.vault, now=dt.datetime(2026, 10, 23, 12, 0))
         report = catchup.due(self.vault, now=MONDAY_EARLY)
         self.assertFalse(report["forget"])
-
 
 class RunTest(unittest.TestCase):
     def setUp(self):
@@ -108,7 +106,6 @@ class RunTest(unittest.TestCase):
         self.assertIn("staging server runs on 127.0.0.1:8080", read_maybe(canonical_path(self.vault, "env")))
         self.assertEqual(read_schedule_state(self.vault)["last_promote"], "2026-10-28")
 
-
 class ForgetterStampTest(unittest.TestCase):
     def setUp(self):
         self.vault = make_scratch_vault()
@@ -130,7 +127,6 @@ class ForgetterStampTest(unittest.TestCase):
     def test_demote_dry_run_does_not_stamp(self):
         forgetter.demote(self.vault, dry_run=True)
         self.assertNotIn("last_forget", read_schedule_state(self.vault))
-
 
 class ForgetterPosixCronTest(unittest.TestCase):
     def setUp(self):
@@ -163,7 +159,6 @@ class ForgetterPosixCronTest(unittest.TestCase):
         self.assertIn("PYTHONPATH=", crontab)
         self.assertEqual(crontab.count("unified_memory.forgetter"), 1, "second register must not duplicate")
         self.assertEqual(calls[-1][0], "crontab")
-
 
 if __name__ == "__main__":
     unittest.main()

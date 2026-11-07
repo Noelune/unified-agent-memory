@@ -19,12 +19,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_common import destroy_scratch, make_scratch_vault
 
 from unified_memory import promoter
-from unified_memory.common import canonical_dir, canonical_path, read_maybe
+
 from unified_memory.app.govern.queue import read_conflicts
+from unified_memory.domain.policy import PENDING_FILE
+from unified_memory.infra.vault import canonical_dir, canonical_path, read_maybe, situation_dir
 
 A = "dsh-20260814-120000-01.md"
 B = "dsh-20260814-120001-01.md"
-
 
 class AcceptTest(unittest.TestCase):
     def setUp(self):
@@ -110,8 +111,8 @@ class AcceptTest(unittest.TestCase):
     def test_accept_does_not_touch_the_pending_list_snapshot(self):
         # `--apply` consumes 待晋升.md; the per-row action must not invalidate a
         # list the user may be reading in the terminal at the same time.
-        from unified_memory.common import situation_dir
-        from unified_memory.common import PENDING_FILE
+        
+        
 
         pending = situation_dir(self.vault) / PENDING_FILE
         pending.write_text("# 待晋升\n\n- something from an earlier review\n", encoding="utf-8")
@@ -119,7 +120,6 @@ class AcceptTest(unittest.TestCase):
         self.write_inbox(A, ["prefers dark theme in the UI"])
         self.assertTrue(promoter.accept(self.vault, A)["ok"])
         self.assertEqual(read_maybe(pending), before)
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,11 +2,11 @@
 """Tests for the memory database layer (unified_memory.index)."""
 import unittest
 
-from unified_memory import common
 from unified_memory.infra.store import active_memories, fts_search, get_conn, index_db_for, lexical_search, record_access, update_index
 from unified_memory.infra.store.search_index import _doc_match
 from test_common import destroy_scratch, make_scratch_vault
-
+from unified_memory.domain.policy import ADJUDICATED_FILE, PENDING_FILE
+from unified_memory.infra.vault import canonical_dir, canonical_path, situation_dir
 
 class IndexTest(unittest.TestCase):
     def setUp(self):
@@ -16,7 +16,7 @@ class IndexTest(unittest.TestCase):
         destroy_scratch(self.vault)
 
     def _append(self, doc_id, text):
-        path = common.canonical_path(self.vault, doc_id)
+        path = canonical_path(self.vault, doc_id)
         path.write_text(path.read_text(encoding="utf-8") + text, encoding="utf-8")
 
     def test_update_index_builds_memories_with_types_and_importance(self):
@@ -45,7 +45,7 @@ class IndexTest(unittest.TestCase):
         self.assertEqual(row["status"], "superseded")
 
     def test_stale_docs_are_removed(self):
-        prefs = common.canonical_path(self.vault, "prefs")
+        prefs = canonical_path(self.vault, "prefs")
         prefs.write_text("# Preferences\n\n- stable-token-abc\n", encoding="utf-8")
         update_index(self.vault)
         with get_conn(self.vault) as conn:
@@ -146,7 +146,7 @@ class IndexTest(unittest.TestCase):
         self.assertEqual(vectors, 1, "an edit must not force a paid re-embed of unchanged lines")
 
     def test_sync_conflict_copy_is_not_indexed(self):
-        ctx = common.canonical_dir(self.vault)
+        ctx = canonical_dir(self.vault)
         (ctx / "prefs 2.md").write_text(
             "# conflict copy\n\n- unique-conflict-copy-token\n", encoding="utf-8"
         )
@@ -176,7 +176,6 @@ class IndexTest(unittest.TestCase):
         self.assertNotEqual(first_db, second_db)
         self.assertEqual(first_db.name, f"index-{hashlib_hex(self.vault)[:16]}.db")
 
-
 class UnclassifiedNoteTest(unittest.TestCase):
     """`情境信息/未归类事实.md` is a fact note, not workflow state.
 
@@ -192,7 +191,7 @@ class UnclassifiedNoteTest(unittest.TestCase):
         destroy_scratch(self.vault)
 
     def target(self):
-        return common.situation_dir(self.vault) / "未归类事实.md"
+        return situation_dir(self.vault) / "未归类事实.md"
 
     def test_unclassified_note_is_indexed(self):
         self.target().write_text(
@@ -218,17 +217,16 @@ class UnclassifiedNoteTest(unittest.TestCase):
         # 待晋升 / 事实冲突待裁决 / 已裁决 are queues: they duplicate facts that
         # are already indexed, or hold claims that were rejected. Indexing them
         # would put rejected values back into recall.
-        (common.situation_dir(self.vault) / common.PENDING_FILE).write_text(
+        (situation_dir(self.vault) / PENDING_FILE).write_text(
             "# 待晋升\n\n- queued-fact-token\n", encoding="utf-8"
         )
-        (common.situation_dir(self.vault) / common.ADJUDICATED_FILE).write_text(
+        (situation_dir(self.vault) / ADJUDICATED_FILE).write_text(
             "# 事实冲突已裁决\n\n- rejected-fact-token\n", encoding="utf-8"
         )
         update_index(self.vault)
         rows = [m["line"] for m in active_memories(self.vault)]
         self.assertFalse(any("queued-fact-token" in line for line in rows))
         self.assertFalse(any("rejected-fact-token" in line for line in rows))
-
 
 class DocFallbackTest(unittest.TestCase):
     """The whole-document fallback must not hand back retired values.
@@ -245,7 +243,7 @@ class DocFallbackTest(unittest.TestCase):
         destroy_scratch(self.vault)
 
     def _write(self, doc_id, body):
-        path = common.canonical_path(self.vault, doc_id)
+        path = canonical_path(self.vault, doc_id)
         path.write_text(path.read_text(encoding="utf-8") + body, encoding="utf-8")
         return path
 
@@ -279,17 +277,15 @@ class DocFallbackTest(unittest.TestCase):
         # the note with real context instead of an empty snippet.
         path = self._write("env", "\n- pkghost runs on the lab machine\n")
         path.rename(path.with_name("pkghost-notes.md"))
-        common.canonical_path(self.vault, "env").write_text("# env\n", encoding="utf-8")
+        canonical_path(self.vault, "env").write_text("# env\n", encoding="utf-8")
         update_index(self.vault)
         result = fts_search(self.vault, "pkghost", 5)
         self.assertTrue(result["results"])
         self.assertTrue(result["results"][0]["snippet"])
 
-
 def hashlib_hex(vault):
     import hashlib
     return hashlib.sha256(str(vault.resolve()).encode("utf-8")).hexdigest()
-
 
 if __name__ == "__main__":
     unittest.main()

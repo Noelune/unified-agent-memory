@@ -14,11 +14,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 from test_common import destroy_scratch, make_scratch_vault
-from unified_memory.common import canonical_dir, read_maybe
+
 from unified_memory.infra.transcripts.claude_code import claude_code_transcript
 from unified_memory.infra import hookstate
 from unified_memory.app.ingest import digest as digest_mod
-
+from unified_memory.infra.vault import canonical_dir, read_maybe
 
 class TranscriptAdapterTest(unittest.TestCase):
     def setUp(self):
@@ -67,7 +67,6 @@ class TranscriptAdapterTest(unittest.TestCase):
         text = claude_code_transcript(path)
         self.assertNotIn("qwertyuiop123", text)
         self.assertIn("api_key=<REDACTED>", text)
-
 
 class DigestQueueTest(unittest.TestCase):
     def setUp(self):

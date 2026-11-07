@@ -17,19 +17,17 @@ from pathlib import Path
 from unittest.mock import patch
 
 from test_common import destroy_scratch, make_scratch_vault
-from unified_memory.common import canonical_dir
+from unified_memory.infra.vault import canonical_dir
 
 REPO = Path(__file__).resolve().parents[2]
 SNIPPET_PATH = REPO / "integrations" / "claude" / "hooks" / "settings-snippet.json"
 HOOK_SCRIPT = REPO / "integrations" / "hooks" / "memory_hook.py"
-
 
 def _snippet_entries() -> dict:
     data = json.loads(SNIPPET_PATH.read_text(encoding="utf-8"))
     hooks = data["hooks"]
     # The shipped shape is {event: [{hooks: [entry]}]}; tests need the entry.
     return {name: entries[0]["hooks"][0] for name, entries in hooks.items()}
-
 
 class ClaudeHookWiringTest(unittest.TestCase):
     def setUp(self):
@@ -121,7 +119,6 @@ class ClaudeHookWiringTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(proc.stdout, "")
         self.assertFalse((self.state / "queue.jsonl").exists())
-
 
 if __name__ == "__main__":
     unittest.main()

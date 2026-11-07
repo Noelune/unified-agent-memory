@@ -28,8 +28,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "core"))
 
 from unified_memory import memory as mem_mod  # noqa: E402
-from unified_memory.common import redact  # noqa: E402
-
+from unified_memory.domain.markdown import redact
+# noqa: E402
 
 class Handler(BaseHTTPRequestHandler):
     vault: Path = None
@@ -110,7 +110,6 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             self._send_json(500, {"ok": False, "error": "internal server error"})
 
-
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(prog="remote_index_server", description=__doc__)
     ap.add_argument("--vault", default=None)
@@ -133,7 +132,6 @@ def main(argv: list[str] | None = None) -> None:
         pass
     finally:
         server.server_close()
-
 
 if __name__ == "__main__":
     main()

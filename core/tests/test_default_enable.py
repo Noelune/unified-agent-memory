@@ -17,11 +17,11 @@ from unittest.mock import patch
 from test_common import destroy_scratch, make_scratch_vault
 from unified_memory.app.maintain import backfill as backfill_mod
 from unified_memory.app.ingest import digest as digest_mod
-from unified_memory.common import canonical_path, read_maybe
+
 from unified_memory.domain.markdown import claim_id_of
 from unified_memory.infra import hookstate
 from unified_memory.infra.store import get_meta
-
+from unified_memory.infra.vault import canonical_path, read_maybe
 
 class EnsureBackfilledTest(unittest.TestCase):
     def setUp(self):
@@ -52,7 +52,6 @@ class EnsureBackfilledTest(unittest.TestCase):
         self.assertIsNone(backfill_mod.ensure_backfilled(self.vault))
         self.assertEqual(read_maybe(canonical_path(self.vault, "env")), text)
 
-
 class SyncTriggersBackfillTest(unittest.TestCase):
     def setUp(self):
         self.vault = make_scratch_vault()
@@ -78,7 +77,6 @@ class SyncTriggersBackfillTest(unittest.TestCase):
         self.assertTrue(claim_id_of(
             next(ln for ln in text.splitlines() if "同步端口" in ln)
         ))
-
 
 class CatchupDrainsQueueTest(unittest.TestCase):
     def setUp(self):
@@ -119,7 +117,6 @@ class CatchupDrainsQueueTest(unittest.TestCase):
         second = catchup.run(self.vault)
         self.assertEqual(second["backfill"]["status"], "skipped")
         self.assertEqual(second["queue"]["pending"], 0)
-
 
 class ClaudeHookInstallTest(unittest.TestCase):
     def setUp(self):
@@ -193,7 +190,6 @@ class ClaudeHookInstallTest(unittest.TestCase):
         outcome = self._install()
         self.assertIn("skipped", outcome)
         self.assertEqual((self.claude_dir / "settings.json").read_text(encoding="utf-8"), "{not json")
-
 
 if __name__ == "__main__":
     unittest.main()

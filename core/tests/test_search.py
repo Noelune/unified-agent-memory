@@ -5,9 +5,8 @@ import unittest
 from pathlib import Path
 
 from test_common import destroy_scratch, make_scratch_vault
-from unified_memory import common
 from unified_memory.app.retrieve import pipeline as search
-
+from unified_memory.infra.vault import canonical_path
 
 class RrfFuseTest(unittest.TestCase):
     def test_multi_stream_agreement_ranks_higher(self):
@@ -27,7 +26,6 @@ class RrfFuseTest(unittest.TestCase):
         b = [{"id": "in-b"}]
         fused = search.rrf_fuse([a, b], weights=(2.0, 1.0, 1.0))
         self.assertEqual(fused[0][0], "only-in-a")
-
 
 class ConfidenceFloorTest(unittest.TestCase):
     """Batch C1: absolute abstain floor + relative tail floor."""
@@ -59,7 +57,6 @@ class ConfidenceFloorTest(unittest.TestCase):
         self.assertEqual(kept, [])
         self.assertFalse(abstained)
 
-
 class HybridSearchTest(unittest.TestCase):
     def setUp(self):
         self.vault = make_scratch_vault()
@@ -79,7 +76,7 @@ class HybridSearchTest(unittest.TestCase):
         destroy_scratch(self.vault)
 
     def test_hybrid_without_vectors_returns_bm25(self):
-        prefs = common.canonical_path(self.vault, "prefs")
+        prefs = canonical_path(self.vault, "prefs")
         prefs.write_text(prefs.read_text(encoding="utf-8") + "\n- prefers indigo terminal prompts\n", encoding="utf-8")
         result = search.hybrid_search(self.vault, "indigo", limit=5)
         self.assertEqual(result["ok"], True)
@@ -87,7 +84,7 @@ class HybridSearchTest(unittest.TestCase):
         self.assertTrue(any("indigo" in r["line"] for r in result["results"]))
 
     def test_hybrid_reports_high_confidence_for_a_real_hit(self):
-        prefs = common.canonical_path(self.vault, "prefs")
+        prefs = canonical_path(self.vault, "prefs")
         prefs.write_text(prefs.read_text(encoding="utf-8") + "\n- prefers indigo terminal prompts\n", encoding="utf-8")
         result = search.hybrid_search(self.vault, "indigo", limit=5)
         self.assertEqual(result["confidence"], "high")
@@ -105,7 +102,7 @@ class HybridSearchTest(unittest.TestCase):
         self.assertEqual(result["results"], [])
 
     def test_hybrid_uses_bigram_stream_for_chinese(self):
-        prefs = common.canonical_path(self.vault, "prefs")
+        prefs = canonical_path(self.vault, "prefs")
         prefs.write_text(
             prefs.read_text(encoding="utf-8") + "\n- 记忆索引保存在本地 SQLite\n",
             encoding="utf-8",
@@ -136,7 +133,7 @@ class HybridSearchTest(unittest.TestCase):
 
     def test_hybrid_diversifies_per_doc(self):
         # Many facts in one note; hybrid must not flood a single doc.
-        prefs = common.canonical_path(self.vault, "prefs")
+        prefs = canonical_path(self.vault, "prefs")
         lines = "".join(f"\n- fact number {i} about quantum toggles\n" for i in range(10))
         prefs.write_text(prefs.read_text(encoding="utf-8") + lines, encoding="utf-8")
         result = search.hybrid_search(self.vault, "quantum", limit=20)
@@ -158,7 +155,7 @@ class HybridSearchTest(unittest.TestCase):
         self.assertNotIn("secret-here", out)
 
     def test_format_budget_caps_results(self):
-        prefs = common.canonical_path(self.vault, "prefs")
+        prefs = canonical_path(self.vault, "prefs")
         prefs.write_text(
             prefs.read_text(encoding="utf-8")
             + "\n- prefers indigo terminal prompts\n- prefers amber terminal prompts\n",
@@ -212,7 +209,6 @@ class HybridSearchTest(unittest.TestCase):
         self.assertTrue(kept[0]["truncated"])
         self.assertLessEqual(len(kept[0]["line"]), 78)
 
-
 class QueryCacheTest(unittest.TestCase):
     def setUp(self):
         self.vault = make_scratch_vault()
@@ -238,7 +234,6 @@ class QueryCacheTest(unittest.TestCase):
         self.assertEqual(len(calls), 1, "the second call must hit the local cache")
         self.assertEqual(len(first), len(second))
         self.assertAlmostEqual(first[0], second[0], places=5)  # Float32 round-trip
-
 
 if __name__ == "__main__":
     unittest.main()

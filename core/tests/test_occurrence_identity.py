@@ -18,10 +18,9 @@ from unified_memory.infra.store import get_conn, update_index
 from test_common import destroy_scratch, make_scratch_vault
 from unified_memory.infra.store import schema
 from unified_memory.app.retrieve import pipeline as search
-from unified_memory.common import canonical_dir
+from unified_memory.infra.vault import canonical_dir
 
 LINE = "- the staging server runs on 127.0.0.1:8080（写入 2026-01-01｜来源：Agent提交区/x-1.md）\n"
-
 
 def _rows(vault: Path, needle: str = "staging server") -> list[sqlite3.Row]:
     conn = get_conn(vault)
@@ -33,7 +32,6 @@ def _rows(vault: Path, needle: str = "staging server") -> list[sqlite3.Row]:
         ).fetchall()
     finally:
         conn.close()
-
 
 class OccurrenceIdentityTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -106,7 +104,6 @@ class OccurrenceIdentityTests(unittest.TestCase):
             conn.close()
         self.assertEqual(after, before)
 
-
 class OccurrenceMigrationTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -170,7 +167,6 @@ class OccurrenceMigrationTests(unittest.TestCase):
             self.assertEqual(schema._read_version(conn), int(schema.SCHEMA_VERSION))
         finally:
             conn.close()
-
 
 if __name__ == "__main__":
     unittest.main()

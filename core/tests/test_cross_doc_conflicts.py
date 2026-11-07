@@ -13,17 +13,16 @@ from pathlib import Path
 
 from test_common import destroy_scratch, make_scratch_vault
 from unified_memory import promoter
-from unified_memory.common import canonical_dir, canonical_path, situation_dir
+
 from unified_memory.app.govern.queue import read_conflicts
+from unified_memory.infra.vault import canonical_dir, canonical_path, situation_dir
 
 OLD_LINE = "- 同步端口为 8443（写入 2026-01-01｜来源：Agent提交区/old-20260101-01.md）\n"
-
 
 def _submit(vault: Path, name: str, fact: str) -> None:
     inbox = canonical_dir(vault) / "Agent提交区"
     inbox.mkdir(parents=True, exist_ok=True)
     (inbox / name).write_text("- " + fact + "\n", encoding="utf-8")
-
 
 class CrossDocConflictTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -90,7 +89,6 @@ class CrossDocConflictTests(unittest.TestCase):
         self.assertTrue(any(e.get("新") == "同步端口为 9443" for e in entries))
         # Same-note hits carry no 跨文档 field.
         self.assertTrue(all(not e.get("跨文档") for e in entries))
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -13,9 +13,9 @@ from contextlib import redirect_stdout
 from unified_memory import promoter
 from unified_memory.infra.store import audit_rows, audit_verify, get_conn, record_audit
 from test_common import destroy_scratch, make_scratch_vault
-from unified_memory.common import canonical_dir, canonical_path
-from unified_memory.memory import cmd_audit
 
+from unified_memory.memory import cmd_audit
+from unified_memory.infra.vault import canonical_dir, canonical_path
 
 def _audit_args(**overrides) -> Namespace:
     defaults = {
@@ -32,7 +32,6 @@ def _audit_args(**overrides) -> Namespace:
     values["verify"] = values.pop("recompute")
     values["json"] = values.pop("as_json")
     return Namespace(**values)
-
 
 class AuditTrailTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -136,7 +135,6 @@ class AuditTrailTests(unittest.TestCase):
             conn.close()
         ok, _ = audit_verify(self.vault)
         self.assertTrue(ok)
-
 
 if __name__ == "__main__":
     unittest.main()

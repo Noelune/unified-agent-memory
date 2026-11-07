@@ -14,6 +14,10 @@ redacted; if the vault is missing it prints nothing to stdout and exits 0
 (a hook must never crash the turn).
 """
 from __future__ import annotations
+from unified_memory.domain.markdown import redact, strip_suffix
+from unified_memory.domain.policy import CANONICAL_DOCS
+from unified_memory.infra.config import resolve_vault
+from unified_memory.infra.vault import canonical_dir, ensure_vault
 
 import argparse
 import sys
@@ -21,19 +25,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "core"))
 
-from unified_memory.common import (  # noqa: E402
-    CANONICAL_DOCS,
-    canonical_dir,
-    ensure_vault,
-    redact,
-    resolve_vault,
-    strip_suffix,
-)
-
 # Profile notes first: these are the stable, high-reuse facts. The index note
 # is the map and always goes first when it has content.
 NOTE_ORDER = ("index", "prefs", "env", "rules", "tools", "ui", "coord")
-
 
 def _fact_lines(text: str) -> list[str]:
     """Durable fact lines only, with promotion stamps stripped.
@@ -52,7 +46,6 @@ def _fact_lines(text: str) -> list[str]:
             out.append(bare)
     return out
 
-
 def _prose_lines(text: str, max_lines: int) -> list[str]:
     """Fallback for a note that carries its content as prose/table rows."""
     out: list[str] = []
@@ -64,7 +57,6 @@ def _prose_lines(text: str, max_lines: int) -> list[str]:
         if len(out) >= max_lines:
             break
     return out
-
 
 def build_pack(
     vault: Path,
@@ -138,7 +130,6 @@ def build_pack(
     lines.append("</memory-context>")
     return "\n".join(lines)
 
-
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="inject_context")
     ap.add_argument("--vault", default=None)
@@ -154,7 +145,6 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     print(build_pack(vault, notes=args.notes, max_lines=args.max_lines, max_chars=args.max_chars))
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

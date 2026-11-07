@@ -23,7 +23,7 @@ from unittest import mock
 from test_common import assert_guard_intact
 from unified_memory.infra import config
 from unified_memory.infra import config as infra_config  # B1: the real home of the writer
-
+from unified_memory.infra.config import parse_config
 
 class ConfigWriterTest(unittest.TestCase):
     def setUp(self):
@@ -133,7 +133,7 @@ class ConfigWriterTest(unittest.TestCase):
             t.join()
 
         self.assertEqual(errors, [])
-        from unified_memory.common import parse_config
+        
 
         parsed = parse_config(self.path)
         self.assertEqual(parsed.get("vault"), "C:\\v")
@@ -180,7 +180,6 @@ class ConfigWriterTest(unittest.TestCase):
                 pass
         self.assertGreaterEqual(attempts["n"], 2, "the failed creation must be retried")
         self.assertFalse(lock.exists(), "the lock is released when the block exits")
-
 
 if __name__ == "__main__":
     unittest.main()

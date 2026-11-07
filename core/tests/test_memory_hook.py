@@ -18,7 +18,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from test_common import destroy_scratch, make_scratch_vault
-from unified_memory.common import canonical_dir
+from unified_memory.infra.vault import canonical_dir
 
 HOOK_PATH = Path(__file__).resolve().parents[2] / "integrations" / "hooks" / "memory_hook.py"
 
@@ -27,7 +27,6 @@ mh = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mh)
 
 REPO = HOOK_PATH.parents[2]
-
 
 class HookEnv(unittest.TestCase):
     """Scratch vault + scratch hook-state dir; the real home is never touched."""
@@ -66,7 +65,6 @@ class HookEnv(unittest.TestCase):
         body = path.read_text(encoding="utf-8") if path.exists() else f"# {path.stem}\n"
         path.write_text(body + "".join(f"- {f}\n" for f in facts), encoding="utf-8")
 
-
 class SessionStartTest(HookEnv):
     def test_claude_code_shape_prints_the_resident_pack(self):
         # Official SessionStart payload keys (session_id/source are the ones we
@@ -96,7 +94,6 @@ class SessionStartTest(HookEnv):
         with patch.dict(os.environ, {"UNIFIED_MEMORY_VAULT": str(Path(self.state) / "no-such-vault")}):
             text = mh.handle("session-start", {}, "")
         self.assertEqual(text, "")
-
 
 class PromptSubmitTest(HookEnv):
     def test_claude_code_shape_recalls_and_attaches_discipline_once(self):
@@ -200,7 +197,6 @@ class PromptSubmitTest(HookEnv):
             text = mh.handle("prompt-submit", payload, json.dumps(payload))
         self.assertEqual(text, "")
 
-
 class SessionEndTest(HookEnv):
     def test_queue_append_with_existing_transcript(self):
         transcript = self.state / "t.jsonl"
@@ -227,7 +223,6 @@ class SessionEndTest(HookEnv):
         text = mh.handle("session-end", {"session_id": "x", "transcript_path": "/no/such/file.jsonl"}, "")
         self.assertEqual(text, "")
         self.assertFalse((self.state / "queue.jsonl").exists())
-
 
 class HookMainTest(HookEnv):
     def test_main_reads_stdin_and_prints(self):
@@ -261,7 +256,6 @@ class HookMainTest(HookEnv):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn("<memory-context>", completed.stdout)
         self.assertIn("同步端口为 9443", completed.stdout)
-
 
 if __name__ == "__main__":
     unittest.main()

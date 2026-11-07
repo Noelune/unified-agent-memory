@@ -17,9 +17,9 @@ from test_common import destroy_scratch, make_scratch_vault
 from unified_memory import forgetter
 from unified_memory.infra.store import get_conn, record_access, resolve_short_ids, update_index, used_count
 from unified_memory.app.retrieve import pipeline as search
-from unified_memory.common import canonical_path
-from unified_memory.memory import cmd_cite
 
+from unified_memory.memory import cmd_cite
+from unified_memory.infra.vault import canonical_path
 
 class AccessEventTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -81,7 +81,6 @@ class AccessEventTests(unittest.TestCase):
         self.assertEqual(resolve_short_ids(self.vault, ["zzzzzzzzzz"]), [])
         self.assertEqual(resolve_short_ids(self.vault, ["'; DROP"]), [])
 
-
 class CitationCliTests(unittest.TestCase):
     def setUp(self) -> None:
         self.vault = make_scratch_vault()
@@ -107,7 +106,6 @@ class CitationCliTests(unittest.TestCase):
             cmd_cite(Namespace(ids=mid[:10], json=True))
         self.assertIn('"matched": 1', buffer.getvalue())
         self.assertEqual(used_count(self.vault, mid), 1)
-
 
 class ReinforcementTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -155,7 +153,6 @@ class ReinforcementTests(unittest.TestCase):
         cited_score = forgetter.memory_score(0.85, 20, 400)
         self.assertGreater(cited_score, bare_score)
         self.assertGreater(cited_score, forgetter.FORGET_THRESHOLD)
-
 
 if __name__ == "__main__":
     unittest.main()

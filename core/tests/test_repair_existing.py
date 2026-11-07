@@ -4,8 +4,7 @@ from pathlib import Path
 
 from test_common import destroy_scratch, make_scratch_vault
 from unified_memory import promoter
-from unified_memory.common import canonical_path, read_maybe
-
+from unified_memory.infra.vault import canonical_path, read_maybe
 
 class RepairExistingTest(unittest.TestCase):
     def setUp(self):
@@ -44,7 +43,6 @@ class RepairExistingTest(unittest.TestCase):
         self.seed("env", ["the docs mirror lives at https://example.com/docs"])
         promoter.repair_existing(self.vault, dry_run=False)
         self.assertIn("https://example.com/docs", read_maybe(canonical_path(self.vault, "env")))
-
 
 if __name__ == "__main__":
     unittest.main()

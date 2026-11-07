@@ -9,7 +9,6 @@ from unittest import mock
 
 from test_common import destroy_scratch, make_scratch_vault
 
-from unified_memory import common
 from unified_memory.app.maintain.backfill import run_backfill
 from unified_memory.app.maintain.drift import DriftDetector
 from unified_memory.app.maintain.health import doctor
@@ -24,7 +23,8 @@ from unified_memory.domain.markdown import (
 from unified_memory.infra.store.ledger import refresh_ledger
 from unified_memory.infra.store.schema import get_conn
 from unified_memory.infra.vault import indexed_files, unindexed_notes
-
+from unified_memory.infra.config import CONFIG_PATH
+from unified_memory.infra.vault import canonical_dir
 
 class RuleLineTest(unittest.TestCase):
     def setUp(self):
@@ -34,7 +34,7 @@ class RuleLineTest(unittest.TestCase):
         destroy_scratch(self.vault)
 
     def _note_path(self):
-        return common.canonical_dir(self.vault) / "我的偏好摘要.md"
+        return canonical_dir(self.vault) / "我的偏好摘要.md"
 
     def test_backfill_never_touches_rules(self):
         run_backfill(self.vault)  # clear the template's own un-id'ed lines first
@@ -77,7 +77,6 @@ class RuleLineTest(unittest.TestCase):
 
     def test_fact_lines_skips_rule_separators(self):
         self.assertEqual(fact_lines("# h\n---\n- A\n---\n- B\n"), ["A", "B"])
-
 
 class RedactAuditTest(unittest.TestCase):
     def test_pem_block_redacted(self):
@@ -122,19 +121,17 @@ class RedactAuditTest(unittest.TestCase):
         self.assertIsNone(CREDENTIAL_LINE_RE.search("密码是必须的"))
         self.assertIsNone(CREDENTIAL_LINE_RE.search("token 是一个概念"))
 
-
 class DriftVaultResolutionTest(unittest.TestCase):
     def test_drift_reads_config_when_env_missing(self):
         vault = make_scratch_vault()
         try:
             os.environ.pop("UNIFIED_MEMORY_VAULT", None)
-            common.CONFIG_PATH.write_text("vault: " + str(vault) + "\n", encoding="utf-8")
+            CONFIG_PATH.write_text("vault: " + str(vault) + "\n", encoding="utf-8")
             detector = DriftDetector(repo_root=Path(__file__).resolve().parents[2])
             self.assertIsNotNone(detector._resolve_vault())
         finally:
             os.environ["UNIFIED_MEMORY_VAULT"] = str(vault)
             destroy_scratch(vault)
-
 
 class IndexBlindSpotTest(unittest.TestCase):
     def setUp(self):
@@ -178,7 +175,6 @@ class IndexBlindSpotTest(unittest.TestCase):
         self.assertEqual(len(issues), 1)
         self.assertEqual(issues[0]["severity"], "warn")
 
-
 class CliConsistencyTest(unittest.TestCase):
     def test_health_is_doctor_alias(self):
         from unified_memory.surface import cli
@@ -204,11 +200,9 @@ class CliConsistencyTest(unittest.TestCase):
         self.assertIn("summary: 2 entries", out)
         self.assertIn("byAgent: codex=1, hermes=1", out)
 
-
 def query_commands_mod():
     from unified_memory.app.query import commands
     return commands
-
 
 if __name__ == "__main__":
     unittest.main()

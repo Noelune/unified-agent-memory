@@ -20,7 +20,7 @@ The consequences were worse than a wrong number:
     merge then finds no registry at the path it owns and recreates the table
     with only this runtime's row, dropping every other runtime's registrations.
 
-One constant (`common.NON_SUBMISSION_FILES`) now answers for all of them, and
+One constant (`NON_SUBMISSION_FILES`) now answers for all of them, and
 each test below asserts one of those readers so a new reader that forgets it
 fails here rather than in the panel.
 """
@@ -44,12 +44,12 @@ from unified_memory import memory, promoter
 from unified_memory.app.maintain import health
 from unified_memory.app.ingest import inbox
 from unified_memory.app.query import preview, stats
-from unified_memory.common import NON_SUBMISSION_FILES, canonical_dir
+from unified_memory.domain.policy import NON_SUBMISSION_FILES
+from unified_memory.infra.vault import canonical_dir
 
 REGISTRY = "前缀登记.md"
 README = "README.md"
 SUBMISSION = "dsh-20260814-120000-01.md"
-
 
 class NonSubmissionFilesTest(unittest.TestCase):
     def setUp(self):
@@ -141,7 +141,6 @@ class NonSubmissionFilesTest(unittest.TestCase):
         self.assertTrue((self.inbox / README).is_file())
         self.assertFalse((self.inbox / SUBMISSION).exists())
         self.assertTrue((self.inbox / "已处理" / SUBMISSION).is_file())
-
 
 if __name__ == "__main__":
     unittest.main()

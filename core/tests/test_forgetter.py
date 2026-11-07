@@ -8,10 +8,9 @@ from unittest.mock import patch
 
 from unified_memory import forgetter
 from unified_memory.infra.store import active_memories, record_access, update_index
-from unified_memory.common import canonical_path, forget_dir, read_maybe
 
 from test_common import destroy_scratch, index_db_name_for, make_scratch_vault
-
+from unified_memory.infra.vault import canonical_path, forget_dir, read_maybe
 
 class ForgetterScoreTest(unittest.TestCase):
     def test_score_keeps_high_importance_facts_indefinitely(self):
@@ -52,7 +51,6 @@ class ForgetterScoreTest(unittest.TestCase):
         finally:
             destroy_scratch(vault)
 
-
 class ForgetterSafetyTest(unittest.TestCase):
     def setUp(self):
         self.vault = make_scratch_vault()
@@ -80,7 +78,6 @@ class ForgetterSafetyTest(unittest.TestCase):
         # …after a read receipt it is not: reinforcement resets the decay clock.
         record_access(self.vault, [target["id"]])
         self.assertNotIn("临时会议纪要备忘", "\n".join(forgetter.demote(self.vault, dry_run=True)))
-
 
 class ForgetterScheduleTest(unittest.TestCase):
     def setUp(self):
@@ -137,7 +134,6 @@ class ForgetterScheduleTest(unittest.TestCase):
         self.assertIn(stale.rstrip(), read_maybe(forget_dir(self.vault) / ui.name))
         self.assertIn("demoted 1 line(s)", read_maybe(self.vault / "forget_weekly.log"))
 
-
 class ProtectedTopicsTest(unittest.TestCase):
     """Batch C2: the explicit PROTECTED_TOPICS whitelist, not the old net."""
 
@@ -187,7 +183,6 @@ class ProtectedTopicsTest(unittest.TestCase):
         reachable = 1 - len(protected) / len(corpus)
         self.assertEqual(protected, ["生产服务器地址是 203.0.113.10", "同步端口为 9443"])
         self.assertGreaterEqual(reachable, 0.6, f"protected: {protected}")
-
 
 if __name__ == "__main__":
     unittest.main()

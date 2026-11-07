@@ -34,10 +34,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "core"))
 
 from unified_memory.app.ingest import digest as digest_mod  # noqa: E402
 from unified_memory import forgetter, promoter  # noqa: E402
-from unified_memory.common import CONFIG_PATH, resolve_vault  # noqa: E402
+from unified_memory.infra.config import CONFIG_PATH, resolve_vault
+# noqa: E402
 
 DEFAULT_DIGEST_LIMIT = 10  # max archive files distilled per daily run
-
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="daily_cron")
@@ -72,7 +72,6 @@ def main(argv: list[str] | None = None) -> int:
         forgetter.demote(vault, dry_run=False)
     print("done.")
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

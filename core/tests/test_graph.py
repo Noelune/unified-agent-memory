@@ -7,11 +7,10 @@ any query, including nonsense, which fed RRF a near-uniform vote spread.
 """
 import unittest
 
-from unified_memory import common
 from unified_memory.infra.store import get_conn, update_index
 from test_common import destroy_scratch, make_scratch_vault
 from unified_memory.app.retrieve import graph
-
+from unified_memory.infra.vault import canonical_path
 
 class GraphTest(unittest.TestCase):
     def setUp(self):
@@ -27,7 +26,7 @@ class GraphTest(unittest.TestCase):
         self.assertIn("ssh", toks)   # ascii lowercased
 
     def test_expand_finds_direct_hits(self):
-        env = common.canonical_path(self.vault, "env")
+        env = canonical_path(self.vault, "env")
         env.write_text(
             env.read_text(encoding="utf-8")
             + "\n- HK 服务器用于编译调试\n- HK 服务器 SSH 端口为 22\n- 显示器黑屏排查步骤\n",
@@ -38,7 +37,7 @@ class GraphTest(unittest.TestCase):
         self.assertTrue(any("编译调试" in r["line"] for r in results))
 
     def test_expand_one_hop_finds_related(self):
-        env = common.canonical_path(self.vault, "env")
+        env = canonical_path(self.vault, "env")
         env.write_text(
             env.read_text(encoding="utf-8")
             + "\n- HK 服务器用于编译调试\n- HK 服务器 SSH 端口为 22\n",
@@ -54,7 +53,7 @@ class GraphTest(unittest.TestCase):
     def test_nonsense_query_returns_empty(self):
         # The batch-A regression guard: a query sharing NO concept with the
         # corpus must return nothing, not a full pool of weak candidates.
-        env = common.canonical_path(self.vault, "env")
+        env = canonical_path(self.vault, "env")
         env.write_text(
             env.read_text(encoding="utf-8")
             + "\n- HK 服务器用于编译调试\n- 显示器黑屏排查步骤\n",
@@ -64,7 +63,7 @@ class GraphTest(unittest.TestCase):
         self.assertEqual(graph.expand_search(self.vault, "量子色动力学", limit=10), [])
 
     def test_pool_is_capped_near_direct_hits(self) -> None:
-        env = common.canonical_path(self.vault, "env")
+        env = canonical_path(self.vault, "env")
         env.write_text(
             env.read_text(encoding="utf-8")
             + "\n- HK 服务器用于编译调试\n"
@@ -77,7 +76,7 @@ class GraphTest(unittest.TestCase):
         self.assertLessEqual(len(results), 3)
 
     def test_low_relevance_tail_is_cut(self) -> None:
-        env = common.canonical_path(self.vault, "env")
+        env = canonical_path(self.vault, "env")
         env.write_text(
             env.read_text(encoding="utf-8")
             + "\n- 编译调试专用服务器配置完毕\n"      # direct hit (3 query tokens)
@@ -95,7 +94,7 @@ class GraphTest(unittest.TestCase):
         self.assertTrue(results[0]["line"].startswith("编译调试"))
 
     def test_graph_stats_counts_in_memory(self) -> None:
-        env = common.canonical_path(self.vault, "env")
+        env = canonical_path(self.vault, "env")
         env.write_text(
             env.read_text(encoding="utf-8")
             + "\n- HK 服务器用于编译调试\n- HK 服务器 SSH 端口为 22\n",
@@ -119,7 +118,6 @@ class GraphTest(unittest.TestCase):
             conn.close()
         self.assertNotIn("graph_nodes", names)
         self.assertNotIn("graph_edges", names)
-
 
 if __name__ == "__main__":
     unittest.main()

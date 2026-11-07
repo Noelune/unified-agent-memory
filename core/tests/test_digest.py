@@ -13,28 +13,27 @@ from pathlib import Path
 from unittest.mock import patch
 
 from test_common import destroy_scratch, make_scratch_vault
-from unified_memory import common
 from unified_memory.app.ingest import digest
 from unified_memory.infra import config as infra_config
-
+from unified_memory.infra.vault import canonical_dir
 
 class DigestTest(unittest.TestCase):
     def setUp(self):
         self.vault = make_scratch_vault()
-        self.arch = common.canonical_dir(self.vault) / "会话归档"
+        self.arch = canonical_dir(self.vault) / "会话归档"
         self.arch.mkdir(parents=True, exist_ok=True)
         # Redirect config path so digest_enabled reads a scratch config. The
         # original value is restored in tearDown: leaving a deleted temp path
         # here would hand the next test (or a later digest_enabled call) a
         # config that no longer exists.
         # B5.2: cmd_digest resolves infra.config.CONFIG_PATH at call time.
-        self._saved_config = common.CONFIG_PATH
+        self._saved_config = infra_config.CONFIG_PATH
         self._saved_infra_config = infra_config.CONFIG_PATH
-        common.CONFIG_PATH = self.vault.parent / "config.yaml"
-        infra_config.CONFIG_PATH = common.CONFIG_PATH
+        infra_config.CONFIG_PATH = self.vault.parent / "config.yaml"
+        pass  # both aliases now point at one dict entry
 
     def tearDown(self):
-        common.CONFIG_PATH = self._saved_config
+        infra_config.CONFIG_PATH = self._saved_config
         infra_config.CONFIG_PATH = self._saved_infra_config
         destroy_scratch(self.vault)
 
@@ -60,7 +59,7 @@ class DigestTest(unittest.TestCase):
             report = digest.digest(self.vault)
         self.assertEqual(report["pending"], 1)
         self.assertIn("no SiliconFlow API key", report["skipped"][0])
-        inbox = common.canonical_dir(self.vault) / "Agent提交区"
+        inbox = canonical_dir(self.vault) / "Agent提交区"
         self.assertEqual(list(inbox.glob("digest-*.md")), [])
 
     def test_digest_writes_facts_and_advances_cursor(self):
@@ -71,7 +70,7 @@ class DigestTest(unittest.TestCase):
             report = digest.digest(self.vault)
         self.assertEqual(report["written"], 1)
         self.assertEqual(report["facts"], 2)
-        inbox = common.canonical_dir(self.vault) / "Agent提交区"
+        inbox = canonical_dir(self.vault) / "Agent提交区"
         files = list(inbox.glob("digest-*.md"))
         self.assertEqual(len(files), 1)
         self.assertIn("用户喜欢深色主题", files[0].read_text(encoding="utf-8"))
@@ -97,29 +96,28 @@ class DigestTest(unittest.TestCase):
         self.assertEqual(second["pending"], 1)
 
     def test_digest_can_be_disabled_via_config(self):
-        common.CONFIG_PATH.write_text("digest.enabled: false\n", encoding="utf-8")
-        self.assertFalse(digest.digest_enabled(common.CONFIG_PATH))
-        digest._set_enabled(common.CONFIG_PATH, True)
-        self.assertTrue(digest.digest_enabled(common.CONFIG_PATH))
+        infra_config.CONFIG_PATH.write_text("digest.enabled: false\n", encoding="utf-8")
+        self.assertFalse(digest.digest_enabled(infra_config.CONFIG_PATH))
+        digest._set_enabled(infra_config.CONFIG_PATH, True)
+        self.assertTrue(digest.digest_enabled(infra_config.CONFIG_PATH))
 
     def test_cli_on_re_enables_what_off_disabled(self):
         # --off had no counterpart, so the only way back was to hand-edit the
         # config file --off itself had just written.
-        common.CONFIG_PATH.write_text("digest.enabled: true\n", encoding="utf-8")
+        infra_config.CONFIG_PATH.write_text("digest.enabled: true\n", encoding="utf-8")
         with contextlib.redirect_stdout(io.StringIO()) as buf:
             digest.main(["--off", "--vault", str(self.vault)])
         self.assertIn("disabled", buf.getvalue())
-        self.assertFalse(digest.digest_enabled(common.CONFIG_PATH))
+        self.assertFalse(digest.digest_enabled(infra_config.CONFIG_PATH))
 
         with contextlib.redirect_stdout(io.StringIO()) as buf:
             digest.main(["--on", "--vault", str(self.vault)])
         self.assertIn("enabled", buf.getvalue())
-        self.assertTrue(digest.digest_enabled(common.CONFIG_PATH))
+        self.assertTrue(digest.digest_enabled(infra_config.CONFIG_PATH))
 
     def test_cli_rejects_on_and_off_together(self):
         with self.assertRaises(SystemExit):
             digest.main(["--on", "--off", "--vault", str(self.vault)])
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -25,8 +25,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "core"))
 from deploy import main as deploy_main
 from unified_memory import forgetter, memory as mem_mod  # noqa: E402
 from unified_memory import promoter  # noqa: E402
-from unified_memory.common import resolve_vault  # noqa: E402
-
+from unified_memory.infra.config import resolve_vault
+# noqa: E402
 
 def install_claude_hooks(repo_root: Path, claude_dir: Path | None = None, remove: bool = False) -> str:
     """Merge (or remove) the three hook entries into Claude Code's settings.
@@ -117,7 +117,6 @@ def install_claude_hooks(repo_root: Path, claude_dir: Path | None = None, remove
     atomic_write(settings_path, json.dumps(settings, ensure_ascii=False, indent=2) + "\n")
     return f"{'removed' if remove else 'installed'}: {settings_path}"
 
-
 def cmd_agents(args: argparse.Namespace) -> None:
     """Deprecated: global-instruction wiring is now AGENT-DRIVEN.
 
@@ -132,7 +131,6 @@ def cmd_agents(args: argparse.Namespace) -> None:
     print("(dsh / Codex / Claude Code / Hermes or similar) itself.")
     print("For the vault itself use:  setup init / setup selfcheck")
 
-
 def copy_integration_files(vault: Path) -> None:
     """Copy AGENTS.md / CLAUDE.md templates next to the vault for easy pickup."""
     repo = Path(__file__).resolve().parents[1]
@@ -142,7 +140,6 @@ def copy_integration_files(vault: Path) -> None:
             target = vault / name
             shutil.copy2(src, target)
             print(f"wrote {target} (copy it into your agent home if needed)")
-
 
 def cmd_init(args: argparse.Namespace) -> None:
     vault = Path(args.vault)
@@ -163,12 +160,10 @@ def cmd_init(args: argparse.Namespace) -> None:
     print("     registers daily promotion (03:00) + weekly forgetting (Mon 04:00);")
     print("     missed runs are caught up when dsh next comes online.")
 
-
 def cmd_hooks(args: argparse.Namespace) -> None:
     """Install (default) or remove the Claude Code hook wiring."""
     repo_root = Path(__file__).resolve().parents[1]
     print(install_claude_hooks(repo_root, remove=args.remove))
-
 
 def cmd_cron(args: argparse.Namespace) -> None:
     vault = Path(args.vault) if args.vault else resolve_vault()
@@ -177,7 +172,6 @@ def cmd_cron(args: argparse.Namespace) -> None:
     print()
     print("missed-run recovery: the dsh plugin runs overdue jobs at startup;")
     print("anywhere else, run:  python -m unified_memory.catchup")
-
 
 def cmd_selfcheck(args: argparse.Namespace) -> None:
     vault = Path(args.vault) if args.vault else resolve_vault()
@@ -213,7 +207,6 @@ def cmd_selfcheck(args: argparse.Namespace) -> None:
         print(f"  FAIL: {line}")
     print(failures and f"{len(failures)} problem(s) found" or "all checks passed")
     sys.exit(1 if failures else 0)
-
 
 def cmd_deploy(args: argparse.Namespace) -> None:
     argv = [args.deploy_command, "--home", args.home, "--vault", args.vault, "--agent", args.agent]
@@ -253,7 +246,6 @@ def main() -> None:
     p_self.set_defaults(fn=cmd_selfcheck)
     args = parser.parse_args()
     args.fn(args)
-
 
 if __name__ == "__main__":
     main()

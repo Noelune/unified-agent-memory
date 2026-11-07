@@ -11,11 +11,11 @@ import unittest
 from test_common import destroy_scratch, make_scratch_vault
 from unified_memory import promoter
 from unified_memory.app.ingest import digest as digest_mod
-from unified_memory.common import canonical_dir, canonical_path, read_maybe, situation_dir
+
 from unified_memory.domain.markdown import bare_fact_line, parse_stamp, write_provenance, write_stamp
+from unified_memory.infra.vault import canonical_dir, canonical_path, read_maybe, situation_dir
 
 ORIGIN = "会话归档/2026-11-05.md"
-
 
 class ProvenanceTest(unittest.TestCase):
     def setUp(self):
@@ -81,7 +81,6 @@ class ProvenanceTest(unittest.TestCase):
         again = promoter.review(self.vault, verbose=False)
         self.assertEqual(again["duplicates"], 1)
         self.assertEqual(again["pending"], [])
-
 
 if __name__ == "__main__":
     unittest.main()

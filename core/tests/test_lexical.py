@@ -14,8 +14,7 @@ import unittest
 from unified_memory.infra.store import get_conn, lexical_search, update_index
 from test_common import destroy_scratch, make_scratch_vault
 from unified_memory.app.retrieve import pipeline as search
-from unified_memory.common import canonical_path
-
+from unified_memory.infra.vault import canonical_path
 
 class LexicalSearchTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -100,7 +99,6 @@ class LexicalSearchTests(unittest.TestCase):
         self.assertNotIn("fts_mem_tri", names)
         self.assertNotIn("fts_mem_bigram", names)
         self.assertIn("fts_lex", names)
-
 
 if __name__ == "__main__":
     unittest.main()

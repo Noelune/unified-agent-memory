@@ -5,10 +5,11 @@ from pathlib import Path
 
 from test_common import destroy_scratch, make_scratch_vault
 from unified_memory import memory as mem_mod, promoter
-from unified_memory.common import canonical_dir, canonical_path, read_maybe, situation_dir
+
 from unified_memory.app.govern.queue import append_conflict, read_conflicts, remove_conflict
 from unified_memory.domain.conflict import similarity
-
+from unified_memory.infra.lock import file_lock
+from unified_memory.infra.vault import canonical_dir, canonical_path, read_maybe, situation_dir
 
 class PromoterTest(unittest.TestCase):
     def setUp(self):
@@ -161,7 +162,7 @@ class PromoterTest(unittest.TestCase):
         self.assertIn("来源：Agent提交区/dsh-20260814-120000-01.md", read_maybe(rules_doc))
 
     def test_file_lock_is_exclusive(self):
-        from unified_memory.common import file_lock
+        
         with file_lock(self.vault):
             with self.assertRaises(TimeoutError):
                 with file_lock(self.vault, timeout_s=0.3, poll_s=0.05):
@@ -251,7 +252,6 @@ class PromoterTest(unittest.TestCase):
         self.write_inbox("claude-20260814-120000-01.md", ["用户偏好简体中文回复"])
         result = promoter.review(self.vault, verbose=False)
         self.assertEqual(result["pending"][0]["doc"], "prefs")
-
 
 class HistorySectionTest(unittest.TestCase):
     """A note's 已取代 section is history, not truth.
@@ -378,7 +378,6 @@ class HistorySectionTest(unittest.TestCase):
         self.assertIn("active line", facts)
         self.assertNotIn("retired line", facts)
 
-
 class SettledSourceArchiveTest(unittest.TestCase):
     """A ruled-on submission must leave the inbox — but only when it is spent.
 
@@ -441,7 +440,6 @@ class SettledSourceArchiveTest(unittest.TestCase):
         staying = self.inbox() / "dsh-20260814-120000-02.md"
         self.assertTrue(staying.exists(), "an undecided fact was archived away")
         self.assertIn("release branch is called stable", read_maybe(staying))
-
 
 if __name__ == "__main__":
     unittest.main()

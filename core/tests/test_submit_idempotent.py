@@ -14,17 +14,16 @@ import unittest
 from argparse import Namespace
 
 from test_common import destroy_scratch, make_scratch_vault
-from unified_memory import common
 from unified_memory.app.ingest import commands as ingest
 from unified_memory.infra.store import audit_rows, audit_verify
-
+from unified_memory.domain.policy import NON_SUBMISSION_FILES
+from unified_memory.infra.vault import canonical_dir
 
 def _submit(agent: str, fact: str) -> str:
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         ingest.cmd_submit(Namespace(agent=agent, fact=fact))
     return buf.getvalue()
-
 
 class SubmitIdempotentTest(unittest.TestCase):
     def setUp(self):
@@ -34,13 +33,13 @@ class SubmitIdempotentTest(unittest.TestCase):
         destroy_scratch(self.vault)
 
     def _submissions(self) -> list:
-        inbox = common.canonical_dir(self.vault) / "Agent提交区"
+        inbox = canonical_dir(self.vault) / "Agent提交区"
         return sorted(
             p.name
             for layer in (inbox, inbox / "已处理")
             if layer.is_dir()
             for p in layer.glob("*.md")
-            if p.name not in common.NON_SUBMISSION_FILES
+            if p.name not in NON_SUBMISSION_FILES
         )
 
     def test_resubmitting_the_same_fact_writes_no_second_file(self):
@@ -75,7 +74,6 @@ class SubmitIdempotentTest(unittest.TestCase):
         second = _submit("dsh", "部署脚本是 D:/scripts/deploy.py")
         self.assertIn("submitted 1 fact line(s)", second)
         self.assertEqual(len(self._submissions()), 2)
-
 
 if __name__ == "__main__":
     unittest.main()
