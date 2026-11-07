@@ -45,6 +45,20 @@ def similarity(a: str, b: str) -> float:
 CONFLICT_SIM_THRESHOLD = 0.5
 
 
+def best_similarity(text: str, lines) -> tuple[float, str]:
+    """(best Jaccard score, that line) for ``text`` against candidate lines.
+
+    The one scan two callers shared by copy-paste: review's topic-overlap
+    fallback and the drift check's source anchor. No filtering here — the
+    caller decides thresholds (and what counts as a candidate line)."""
+    best_sim, best_line = 0.0, ""
+    for line in lines:
+        s = similarity(text, line)
+        if s > best_sim:
+            best_sim, best_line = s, line
+    return best_sim, best_line
+
+
 # A subject is the stable head of a fact — what it is ABOUT. Three common ways a
 # fact states its subject:
 #   `备份目录：C:/x`            colon (but not `C:` — see the lookahead)

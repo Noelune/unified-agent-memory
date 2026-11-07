@@ -2,7 +2,27 @@
 
 All notable changes to this project are documented in this file.
 
-## [Unreleased]
+## [Unreleased] — 下一个版本 0.12.0（含 breaking change）
+
+### Removed — 包根只留真实入口：八个兼容转发层退役（BREAKING）
+
+`core/unified_memory/` 包根从 13 个 flat 模块减到 5 个**真实入口**（`memory` / `promoter` 门面、`forgetter` / `catchup` 生命周期 CLI）加文档化入口 `sessiondb` 与既存真实现。实际删除的是八个纯转发 shim，其自身 docstring 承诺的「保留一个 minor」（0.10.0）已到期，且冻结契约（`test_module_surface`）从未把它们列为 surface：
+
+| 旧路径 | 真实模块 |
+|---|---|
+| `unified_memory.schema` | `unified_memory.infra.store.schema` |
+| `unified_memory.config` | `unified_memory.infra.config` |
+| `unified_memory.embed` | `unified_memory.infra.providers.embed` |
+| `unified_memory.drift` | `unified_memory.app.maintain.drift` |
+| `unified_memory.health` | `unified_memory.app.maintain.health` |
+| `unified_memory.digest` | `unified_memory.app.ingest.digest` |
+| `unified_memory.index` | `unified_memory.infra.store`（17/18 名字）、`domain.markdown`（cjk_tokens / parse_write_stamp / SUPERSEDED_HEADING_RE）、`domain.policy`（classify_type / salience_for / MEMORY_TYPES / SALIENCE / TYPE_RULES）、`infra.vault`（indexed_files） |
+| `unified_memory.common` | 名字分散于 `domain.envelope` / `domain.markdown` / `domain.policy` / `infra.config` / `infra.lock` / `infra.schedule` / `infra.vault`——以 common.py 自己的导入清单为映射表 |
+
+- `python -m unified_memory.sessiondb` **保留**（docs/SESSIONDB.md 文档化入口，shim 携带 main 分发）；`python -m unified_memory.memory|promoter|forgetter|catchup` 四个 CLI 入口不变。
+- 60+ 文件仅改导入路径，无任何名字换主人；夹具的模块属性重绑（`common.CONFIG_PATH = …`）改写为真实模块属性赋值（裸名改写会静默破坏 scratch 重定向——隔离守卫在迁移中当场拦截了对真实配置的写入）。
+- 净 **−430 行**纯间接层；`bench/` 三个脚本与已发布的 hook 运行时（`integrations/hooks/memory_hook.py`）一并切到真实模块。
+- 附带减法：`review._best_overlap` 与 `drift_verify._best_anchor` 的重复相似度扫描合并为 `domain/conflict.py::best_similarity`（纯最大值扫描，阈值语义留在各调用方），3 例新测试已反证。
 
 ### Fixed — 退役模块的陈旧文档引用清零；两个扫查命令进入对外契约
 

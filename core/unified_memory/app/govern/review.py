@@ -16,7 +16,7 @@ import re
 import time
 from pathlib import Path
 
-from ...domain.conflict import classify_against, similarity
+from ...domain.conflict import best_similarity, classify_against, similarity
 from ...domain.facts import SUPERSESSION_RE, active_fact_lines
 from ...domain.markdown import bare_fact_line, fact_lines, redact
 from ...domain.policy import (
@@ -101,13 +101,8 @@ def _cross_doc_hit(vault: Path, fact: str, target: Path) -> tuple[str, str] | No
 
 def _best_overlap(fact: str, existing: list[str], min_sim: float) -> str | None:
     """Return the existing line with the highest similarity ≥ min_sim (or None)."""
-    best_line: str | None = None
-    best_sim = 0.0
-    for line in existing:
-        s = similarity(fact, line)
-        if s > best_sim:
-            best_sim, best_line = s, line
-    return best_line if best_sim >= min_sim else None
+    sim, line = best_similarity(fact, existing)
+    return line if sim >= min_sim else None
 
 
 def _digest_source(text: str) -> str:

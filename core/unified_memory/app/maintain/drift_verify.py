@@ -33,7 +33,7 @@ import time
 from pathlib import Path
 
 from ...domain.markdown import PROVENANCE_RE, doc_lines, redact
-from ...domain.conflict import similarity
+from ...domain.conflict import best_similarity
 from ...domain.policy import CANONICAL_DOCS, UNCLASSIFIED_FACT_REL
 from ...infra.vault import canonical_dir, canonical_path, read_maybe
 from ..govern.queue import append_conflict, read_conflicts
@@ -82,16 +82,12 @@ def _provenance_facts(vault: Path) -> list[dict]:
 
 
 def _best_anchor(fact: str, source: str) -> tuple[float, str]:
-    """(best line similarity, that line) — the anchor the fact should match."""
-    best_sim, best_line = 0.0, ""
-    for raw in source.splitlines():
-        line = raw.strip()
-        if len(line) < 4:
-            continue
-        s = similarity(fact, line)
-        if s > best_sim:
-            best_sim, best_line = s, line
-    return best_sim, best_line
+    """(best line similarity, that line) — the anchor the fact should match.
+
+    Candidate lines are stripped and at least 4 chars: headings and
+    one-character chatter lines are noise, not anchors."""
+    lines = (ln.strip() for ln in source.splitlines() if len(ln.strip()) >= 4)
+    return best_similarity(fact, lines)
 
 
 def _entail(fact: str, source: str) -> str:
