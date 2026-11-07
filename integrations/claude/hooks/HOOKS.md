@@ -21,7 +21,7 @@ python setup/setup.py hooks --remove # 摘除我们的三条钩子（不动你�
 
 ### 手动接入（等价方式）
 
-1. **确认前置**：`python`（≥3.11）在 PATH 上；知道本仓库的安装路径（下称
+1. **确认前置**：`python`（≥3.11）在 PATH 上（macOS/Linux 为 python3，Windows 为 python/py；setup 安装时自动选对）；知道本仓库的安装路径（下称
    `<REPO>`）。
 2. **粘片段**：打开 `integrations/claude/hooks/settings-snippet.json`，把
    其中的 `${CLAUDE_PROJECT_DIR}` 全部替换为 `<REPO>` 的绝对路径，然后把整个

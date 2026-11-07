@@ -1,12 +1,12 @@
 {
-  "_about": "unified-agent-memory hooks for Claude Code — paste the \"hooks\" object into ~/.claude/settings.json. Replace ${CLAUDE_PROJECT_DIR} with this repository's absolute install path first (see integrations/claude/hooks/HOOKS.md for the full wiring guide). Delete this _about key after pasting; it is documentation, not configuration.",
+  "_about": "unified-agent-memory hooks for Claude Code — paste the \"hooks\" object into ~/.claude/settings.json. Replace ${CLAUDE_PROJECT_DIR} with this repository's absolute install path first (see integrations/claude/hooks/HOOKS.md for the full wiring guide). Delete this _about key after pasting; it is documentation, not configuration. Interpreter is python3 on macOS/Linux and python on Windows; the setup installer picks the right one automatically, so only change python3 to python if you paste this by hand on Windows.",
   "hooks": {
     "SessionStart": [
       {
         "hooks": [
           {
             "type": "exec",
-            "command": "python",
+            "command": "python3",
             "args": [
               "${CLAUDE_PROJECT_DIR}/integrations/hooks/memory_hook.py",
               "session-start"
@@ -20,7 +20,7 @@
         "hooks": [
           {
             "type": "exec",
-            "command": "python",
+            "command": "python3",
             "args": [
               "${CLAUDE_PROJECT_DIR}/integrations/hooks/memory_hook.py",
               "prompt-submit"
@@ -35,7 +35,7 @@
         "hooks": [
           {
             "type": "exec",
-            "command": "python",
+            "command": "python3",
             "args": [
               "${CLAUDE_PROJECT_DIR}/integrations/hooks/memory_hook.py",
               "session-end"

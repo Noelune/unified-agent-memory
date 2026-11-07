@@ -5,10 +5,14 @@ Reads integrations/claude/hooks/settings-snippet.json and executes its hook
 command lines VERBATIM (after substituting ${CLAUDE_PROJECT_DIR} with the repo
 root) for all three events — the commands the documentation ships are exactly
 the commands these tests run, so the docs cannot drift from the script.
+The interpreter name itself is resolved per OS (python3 on POSIX,
+python on Windows) because no single name exists on both: a clean
+Debian install has only python3, a Windows install only python/py.
 Scratch vault + temporary hook-state dir; the real home is never touched.
 """
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -22,6 +26,23 @@ from unified_memory.infra.vault import canonical_dir
 REPO = Path(__file__).resolve().parents[2]
 SNIPPET_PATH = REPO / "integrations" / "claude" / "hooks" / "settings-snippet.json"
 HOOK_SCRIPT = REPO / "integrations" / "hooks" / "memory_hook.py"
+
+
+
+_HOOK_PYTHON_NAMES = ("python3", "python") if os.name != "nt" else ("python", "python3")
+
+
+def _resolve_hook_python():
+    # Prefer python3 (POSIX), fall back to python (Windows). On Windows the
+    # python3 name usually resolves to the Microsoft Store alias — a reparse
+    # point that dies with exit 9009 under a non-interactive spawn — so it
+    # never leads the order there, and an alias hit is skipped outright.
+    for name in _HOOK_PYTHON_NAMES:
+        found = shutil.which(name)
+        if found and ".windowsapps" not in found.lower():
+            return name
+    return os.path.basename(sys.executable)
+
 
 def _snippet_entries() -> dict:
     data = json.loads(SNIPPET_PATH.read_text(encoding="utf-8"))
@@ -55,13 +76,13 @@ class ClaudeHookWiringTest(unittest.TestCase):
     def _run_event(self, event: str, payload: dict) -> subprocess.CompletedProcess:
         entry = _snippet_entries()[event]
         self.assertEqual(entry.get("type"), "exec", event)
-        self.assertEqual(entry.get("command"), "python", event)
+        self.assertIn(entry.get("command"), _HOOK_PYTHON_NAMES, event)
         args = entry["args"]
         self.assertEqual(len(args), 2, event)
         self.assertEqual(args[1], "prompt-submit" if event == "UserPromptSubmit" else
                          "session-end" if event == "SessionEnd" else "session-start", event)
         self.assertIn("${CLAUDE_PROJECT_DIR}", args[0], event)
-        cmd = [entry["command"], args[0].replace("${CLAUDE_PROJECT_DIR}", str(REPO)), args[1]]
+        cmd = [_resolve_hook_python(), args[0].replace("${CLAUDE_PROJECT_DIR}", str(REPO)), args[1]]
         env = os.environ.copy()
         return subprocess.run(
             cmd,
