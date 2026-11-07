@@ -28,6 +28,17 @@ from unified_memory import promoter  # noqa: E402
 from unified_memory.common import resolve_vault  # noqa: E402
 
 
+def _resolve_hook_python():
+    # Interpreter name for the hook command on this OS: prefer python3
+    # (Debian/Ubuntu/macOS), fall back to python (Windows, where python3
+    # does not exist). The hook script fixes up sys.path itself, so any
+    # Python >= 3.11 works.
+    for name in ("python3", "python"):
+        if shutil.which(name):
+            return name
+    return Path(sys.executable).name
+
+
 def install_claude_hooks(repo_root: Path, claude_dir: Path | None = None, remove: bool = False) -> str:
     """Merge (or remove) the three hook entries into Claude Code's settings.
 
@@ -98,6 +109,10 @@ def install_claude_hooks(repo_root: Path, claude_dir: Path | None = None, remove
 
         for event, groups in snippet["hooks"].items():
             ours = _subst(groups)
+            _cmd = _resolve_hook_python()
+            for _group in ours:
+                for _entry in _group.get("hooks", []):
+                    _entry["command"] = _cmd
             existing = hooks.get(event)
             if not isinstance(existing, list):
                 hooks[event] = ours

@@ -105,7 +105,8 @@
 ```bash
 # 1. 克隆仓库并安装 Core
 git clone https://github.com/Noelune/unified-agent-memory.git && cd unified-agent-memory
-python3 -m venv .venv && source .venv/bin/activate  # Windows: .venv\Scripts\activate
+python3 -m venv .venv && source .venv/bin/activate  # macOS / Linux
+# Windows: py -m venv .venv && .venv\Scripts\activate  (PowerShell: .\.venv\Scripts\Activate.ps1)
 pip install -e ./core
 
 # 2. 初始化 Vault 模版结构
