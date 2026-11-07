@@ -113,7 +113,7 @@ def _digest_source(text: str) -> str:
     survives promotion on the fact line itself.
     """
     for raw in text.splitlines():
-        line = raw.strip()
+        line = raw.strip().lstrip("﻿")
         if line.startswith("<!-- digest-source: ") and line.endswith(" -->"):
             return line[len("<!-- digest-source: "):-len(" -->")].strip()
         if line and not line.startswith("<!--"):

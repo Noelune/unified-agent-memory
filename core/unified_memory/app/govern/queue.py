@@ -244,7 +244,7 @@ def read_conflicts(vault: Path) -> list[dict]:
         block = None
 
     for raw in read_maybe(path).splitlines():
-        line = raw.strip()
+        line = raw.strip().lstrip("﻿")
 
         if line.startswith("- [ ] 冲突"):
             flush()

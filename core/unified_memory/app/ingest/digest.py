@@ -54,7 +54,7 @@ from ...infra.vault import atomic_create, atomic_write, canonical_dir, read_mayb
 
 SESSION_DIRS = ("会话归档", "Hermes会话自动归档")
 CHAT_URL = "https://api.siliconflow.cn/v1/chat/completions"
-DEFAULT_CHAT_MODEL = "Qwen/Qwen2.5-7B-Instruct"
+DEFAULT_CHAT_MODEL = "Qwen/Qwen2.5-14B-Instruct"  # 7B missed facts buried in session noise; 8B (reasoning) burns TPM — see CHANGELOG 0.12.0
 MAX_INPUT_CHARS = 6000      # per-chunk cap sent to the LLM (3C: chunked, not tail-truncated)
 CHUNK_OVERLAP = 500         # context shared between neighbouring chunks (3C)
 MAX_FACTS_PER_FILE = 30
@@ -65,10 +65,12 @@ SOURCES = ("archive", "state", "queue")
 DONE_KEEP = 5000  # batch D4: queue.done line cap (oldest dropped)
 
 SYSTEM_PROMPT = (
-    "你是记忆提炼助手。从下面的 Agent 会话记录中提取值得长期记忆的持久事实，例如："
-    "用户偏好（语言/格式/风格/语气）、技术决策及原因、路径/端口/服务/配置、工程规则与流程、"
-    "项目状态与下一步。忽略临时对话、闲聊、一次性任务细节。"
-    "每行输出一条事实，以“- ”开头；如果没有任何值得记忆的内容，输出“- (无)”。"
+    "你是记忆提炼助手。下面是一段 Agent 会话记录，请逐段仔细阅读，提取所有值得长期记忆的"
+    "持久事实：用户偏好（语言/格式/风格）、技术决策及原因、路径/端口/服务/配置、工程规则、"
+    "项目状态与下一步。"
+    "输出要求：每条一行、以“- ”开头、保留具体数值与路径，即使只有一条也要输出；"
+    "会话里确实没有任何值得记忆的内容时才输出“- (无)”。"
+    "示例：会话说“数据库从 14 迁到 16” → 输出“- 生产数据库从 Postgres 14 迁移到 Postgres 16”。"
     "绝不输出 API key、token、密码、私钥等敏感凭据。"
 )
 

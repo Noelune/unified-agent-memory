@@ -235,6 +235,16 @@ def strip_suffix(line: str) -> str:
     return out
 
 
+# A UTF-8 BOM survives read_text(encoding="utf-8") as a leading ﻿ on the
+# FIRST line only (Windows editors write it). Without stripping, a BOM'd
+# heading becomes a fact candidate and the first fact's bullet stops matching.
+_BOM = "﻿"
+
+
+def _no_bom(line: str) -> str:
+    return line.lstrip(_BOM) if line.startswith(_BOM) else line
+
+
 def fact_lines(text: str) -> list[str]:
     """Parse a submission file into fact lines (skips headers/comments/blank).
 
@@ -244,7 +254,7 @@ def fact_lines(text: str) -> list[str]:
     """
     lines = []
     for raw in text.splitlines():
-        line = raw.strip()
+        line = _no_bom(raw.strip())
         if not line or line.startswith("#") or line.startswith("<!--"):
             continue
         if line.startswith(("- ", "• ", "* ")):
@@ -262,7 +272,7 @@ def bare_fact_line(line: str) -> str:
     for it keeps backfill from appending block ids to horizontal rules and the
     ledger from storing them as claims.
     """
-    t = line.strip()
+    t = _no_bom(line.strip())
     if t.startswith(("- ", "• ", "* ")):
         t = t[2:]
     t = strip_suffix(t).strip()
@@ -354,7 +364,7 @@ def doc_lines(text: str) -> list[tuple[str, str, str]]:
     out: list[tuple[str, str, str]] = []
     heading = ""
     for raw in text.splitlines():
-        stripped = raw.strip()
+        stripped = _no_bom(raw.strip())
         if stripped.startswith("#"):
             heading = stripped
             continue
