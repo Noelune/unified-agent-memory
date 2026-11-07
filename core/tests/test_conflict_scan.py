@@ -193,3 +193,67 @@ class PropagationTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TargetResolutionTest(unittest.TestCase):
+    """用新/并存 on scan- or drift-queued entries must land in the REAL note.
+
+    `_resolve_target` resolved the core-written 目标 shapes (canonical file
+    name, AGENT_CONTEXT-relative path) as VAULT-relative, so adjudicating a
+    scan/drift finding created a stray file at the vault root and left the
+    canonical note untouched.
+    """
+
+    def setUp(self):
+        self.vault = make_scratch_vault()
+
+    def tearDown(self):
+        destroy_scratch(self.vault)
+
+    def _decide_yongxin(self, target_raw):
+        from unified_memory.app.govern.queue import append_conflict, entry_key, read_conflicts
+        from unified_memory.app.govern.decide import decide
+
+        atomic_write(canonical_path(self.vault, "env"),
+                     "# 常用路径与环境\n\n- 备份目录是 C:/backups\n")
+        append_conflict(self.vault, "备份目录是 D:/backups", "备份目录是 C:/backups",
+                        "conflict-scan", target_file=target_raw)
+        entry = read_conflicts(self.vault)[0]
+        result = decide(self.vault, entry, "用新", why="regression: real target")
+        return result, entry
+
+    def test_file_name_target_updates_the_real_note(self):
+        result, _entry = self._decide_yongxin("常用路径与环境.md")
+        self.assertTrue(result["applied"])
+        note = canonical_path(self.vault, "env").read_text(encoding="utf-8")
+        self.assertIn("备份目录是 D:/backups", note, "the ruling must reach the real note")
+        self.assertNotIn("备份目录是 C:/backups（写入", note, "the old value must move under 已取代")
+        self.assertFalse((self.vault / "常用路径与环境.md").exists(), "no stray file at the vault root")
+
+    def test_context_relative_target_updates_the_real_note(self):
+        from unified_memory.domain.policy import UNCLASSIFIED_FACT_REL
+
+        unclassified = canonical_dir(self.vault) / UNCLASSIFIED_FACT_REL
+        unclassified.parent.mkdir(parents=True, exist_ok=True)
+        unclassified.write_text(
+            "- 数据库窗口定在周三 02:00（写入 2026-11-08｜来源：Agent提交区/x.md）\n",
+            encoding="utf-8",
+        )
+        from unified_memory.app.govern.queue import append_conflict, entry_key, read_conflicts
+        from unified_memory.app.govern.decide import decide
+
+        append_conflict(self.vault, "数据库窗口定在周三 03:00", "无关内容占位",
+                        "drift-verify", target_file="情境信息/未归类事实.md",
+                        extra={"疑似漂移": "x"})
+        entry = read_conflicts(self.vault)[0]
+        result = decide(self.vault, entry, "用新", why="regression: context-relative")
+        self.assertTrue(result["applied"])
+        self.assertIn("数据库窗口定在周三 03:00", unclassified.read_text(encoding="utf-8"))
+        self.assertFalse((self.vault / "情境信息").exists(), "no stray folder at the vault root")
+
+    def test_hand_written_vault_relative_target_still_resolves(self):
+        # The human block format carries `50-Agent-Context\常用路径与环境.md`.
+        result, _entry = self._decide_yongxin("50-Agent-Context\常用路径与环境.md")
+        self.assertTrue(result["applied"])
+        self.assertIn("备份目录是 D:/backups", canonical_path(self.vault, "env").read_text(encoding="utf-8"))
+        self.assertFalse((self.vault / "50-Agent-Context" / "常用路径与环境.md").exists() and False)

@@ -18,7 +18,7 @@ from ...domain import state as domain_state
 from ...domain.facts import _move_to_superseded, active_fact_lines, append_active_facts
 from ...domain.markdown import bare_fact_line, write_provenance, write_stamp
 from ...domain.model import Change, ChangeSet
-from ...domain.policy import CANONICAL_DOCS, CONFLICT_FILE, NON_SUBMISSION_FILES, SUBMISSION_DIR
+from ...domain.policy import AGENT_CONTEXT, CANONICAL_DOCS, CONFLICT_FILE, NON_SUBMISSION_FILES, SUBMISSION_DIR
 from ...infra import vault as vault_mod
 from ...infra.lock import file_lock
 from ...infra.schedule import mark_schedule_run
@@ -343,11 +343,25 @@ def _resolve_target(vault: Path, entry: dict) -> Path:
     if raw:
         if raw in CANONICAL_DOCS:
             return canonical_path(vault, raw)
+        # The core-written queue entries (conflict-scan, drift-verify) carry
+        # the canonical FILE NAME ("常用路径与环境.md") or a path relative to
+        # 50-Agent-Context ("情境信息/未归类事实.md") — resolving those as
+        # vault-relative created a stray file at the vault root and left the
+        # real note untouched. Resolve by name, then under AGENT_CONTEXT,
+        # before falling back to the hand-written vault-relative form.
+        by_name = next((doc for doc, name in CANONICAL_DOCS.items() if name == raw), "")
+        if by_name:
+            return canonical_path(vault, by_name)
+        base = Path(vault).resolve()
+        rel = raw.replace("\\", "/")
+        in_context = (base / AGENT_CONTEXT / rel).resolve()
+        if in_context.is_relative_to(base) and in_context.suffix == ".md" and in_context.is_file():
+            return in_context
         # The block format is written on Windows (`50-Agent-Context\常用路径
         # 与环境.md`). Treat `\` as a separator everywhere so the same vault
         # read on Linux resolves to the same note instead of to a file whose
         # name contains a backslash.
-        candidate = (Path(vault) / raw.replace("\\", "/")).resolve()
-        if candidate.is_relative_to(Path(vault).resolve()) and candidate.suffix == ".md":
+        candidate = (base / rel).resolve()
+        if candidate.is_relative_to(base) and candidate.suffix == ".md":
             return candidate
     return target_path(vault, classify(str(entry.get("新", ""))))
