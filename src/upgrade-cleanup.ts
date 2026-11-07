@@ -102,7 +102,14 @@ export const RETIRED_PATHS: RetiredArtifact[] = [
       'from modules this build still ships — harmless but dead.',
     paths: (d) =>
       d.installPath
-        ? ['conflict', 'preview', 'stats', 'inbox', 'maintenance'].map((name) =>
+        ? [
+            // 0.10.0 retired the five B5 re-export shims...
+            'conflict', 'preview', 'stats', 'inbox', 'maintenance',
+            // 0.12.0 retired the eight batch-B one-minor shims (schema/
+            // config/embed/drift/health/digest/index/common) — same shape,
+            // same expiry, and the flat-core-shims key covers them all.
+            'schema', 'config', 'embed', 'drift', 'health', 'digest', 'index', 'common',
+          ].map((name) =>
             join(d.installPath as string, 'core', 'unified_memory', `${name}.py`),
           )
         : [],
