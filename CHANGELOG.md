@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed — 干净 Debian/Ubuntu 安装的两处真实问题（PR #6，已合并）
+
+- **Claude 钩子在 Debian 上全挂**：settings-snippet.json 的钩子命令硬编码 `python`——干净 Debian 13 只有 `python3`，三条钩子全部无法运行（`test_claude_hook_wiring` 4 例 FileNotFoundError）。现 snippet 用 `python3`（Windows 注记保留 `python`），setup 安装器按 OS 自动选对；测试的解析器在 Windows 上还跳过 Microsoft Store 的 `python3` 别名（reparse 点在非交互 spawn 下退 9009——合并后在 Windows 实测抓到并修复）。
+- **README quick start 撞 PEP 668**：`pip install -e ./core` 被 externally-managed 环境拒绝；quick start 先建 venv（Windows 路径注记），并把 `memory search` 挪到晋升之后（此前搜不到未晋升事实）。
+- **注意**：0.12.0 的 npm 产物先于此合并发布，本批修复随 0.13.0 带入。
+
 ### Fixed — upgrade-cleanup 补注册 0.12.0 退役的八个 shim
 
 0.12.0 的 BREAKING 退役删了八个 flat shim（schema/config/embed/drift/health/digest/index/common），但 RETIRED_PATHS 只注册了 0.10.0 的五个——覆盖式升级会把八个 stale 文件留在安装里。flat-core-shims 条目扩至 13 个路径（清理测试同步植 13 验 13）。生产证据：0.10.0 五个 shim 已在真实运行时被 reconcile 扫尾自动清除（dsh 重启触发）。
