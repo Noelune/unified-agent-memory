@@ -13,7 +13,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from test_common import destroy_scratch, make_scratch_vault
-from unified_memory import digest, common
+from unified_memory import common
+from unified_memory.app.ingest import digest
 from unified_memory.infra import config as infra_config
 
 

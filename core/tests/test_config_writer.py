@@ -21,7 +21,7 @@ from unittest import mock
 # Imported for its side effect: it puts core/ on sys.path and pins CONFIG_PATH
 # into a temp dir, so nothing here can reach the user's real ~/.unified-memory.yaml.
 from test_common import assert_guard_intact
-from unified_memory import config
+from unified_memory.infra import config
 from unified_memory.infra import config as infra_config  # B1: the real home of the writer
 
 

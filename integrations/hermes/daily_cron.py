@@ -32,7 +32,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "core"))
 
-from unified_memory import digest as digest_mod  # noqa: E402
+from unified_memory.app.ingest import digest as digest_mod  # noqa: E402
 from unified_memory import forgetter, promoter  # noqa: E402
 from unified_memory.common import CONFIG_PATH, resolve_vault  # noqa: E402
 

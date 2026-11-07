@@ -32,7 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from unified_memory import memory as mem_mod
 from unified_memory import common
-from unified_memory import schema
+from unified_memory.infra.store import schema
 from unified_memory.infra import config as infra_config
 from unified_memory.infra import journal as infra_journal
 
@@ -273,7 +273,7 @@ class ScratchIsolationGuardTest(unittest.TestCase):
         every redirect looks correct. `config.default_path()` resolves per call,
         and this pins that behaviour plus the guard that notices a relapse.
         """
-        from unified_memory import config
+        from unified_memory.infra import config
         from unified_memory.infra import config as infra_config
 
         # A rebind after import must be honoured by the next call.

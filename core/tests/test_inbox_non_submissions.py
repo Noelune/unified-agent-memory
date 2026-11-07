@@ -40,7 +40,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from test_common import destroy_scratch, make_scratch_vault
 
-from unified_memory import health, memory, promoter
+from unified_memory import memory, promoter
+from unified_memory.app.maintain import health
 from unified_memory.app.ingest import inbox
 from unified_memory.app.query import preview, stats
 from unified_memory.common import NON_SUBMISSION_FILES, canonical_dir

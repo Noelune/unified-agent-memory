@@ -9,7 +9,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from test_common import destroy_scratch, make_scratch_vault
-from unified_memory import common, health, index
+from unified_memory import common, index
+from unified_memory.app.maintain import health
 
 
 class DoctorTest(unittest.TestCase):

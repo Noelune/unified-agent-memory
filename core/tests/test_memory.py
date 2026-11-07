@@ -203,7 +203,7 @@ class MemoryCoreTest(unittest.TestCase):
 class DriftSubcommandTest(unittest.TestCase):
     """`memory drift` is the CLI front door; it must not raise tracebacks.
 
-    `python -m unified_memory.drift` has always translated a missing
+    `python -m unified_memory.memory drift` has always translated a missing
     driftrc.yaml and a PyYAML-less interpreter into one actionable line. The
     subcommand did not, so on an installed package (where driftrc.yaml was not
     even shipped) `memory drift`, `--template` and `--strict` all died with a
@@ -217,7 +217,7 @@ class DriftSubcommandTest(unittest.TestCase):
 
     def test_missing_driftrc_becomes_a_systemexit_with_advice(self):
         with patch(
-            "unified_memory.drift.DriftDetector.run",
+            "unified_memory.app.maintain.drift.DriftDetector.run",
             side_effect=FileNotFoundError("driftrc.yaml not found at /nowhere/driftrc.yaml"),
         ):
             with self.assertRaises(SystemExit) as cm:
@@ -229,7 +229,7 @@ class DriftSubcommandTest(unittest.TestCase):
 
     def test_missing_pyyaml_gets_its_own_message(self):
         with patch(
-            "unified_memory.drift.DriftDetector.run",
+            "unified_memory.app.maintain.drift.DriftDetector.run",
             side_effect=ModuleNotFoundError("No module named 'yaml'", name="yaml"),
         ):
             with self.assertRaises(SystemExit) as cm:
