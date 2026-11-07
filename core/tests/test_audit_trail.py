@@ -10,8 +10,9 @@ import unittest
 from argparse import Namespace
 from contextlib import redirect_stdout
 
+from unified_memory import promoter
+from unified_memory.infra.store import audit_rows, audit_verify, get_conn, record_audit
 from test_common import destroy_scratch, make_scratch_vault
-from unified_memory import index, promoter
 from unified_memory.common import canonical_dir, canonical_path
 from unified_memory.memory import cmd_audit
 
@@ -41,7 +42,7 @@ class AuditTrailTests(unittest.TestCase):
         destroy_scratch(self.vault)
 
     def _count(self) -> int:
-        conn = index.get_conn(self.vault)
+        conn = get_conn(self.vault)
         try:
             return conn.execute("SELECT COUNT(*) AS c FROM audit").fetchone()["c"]
         finally:
@@ -53,7 +54,7 @@ class AuditTrailTests(unittest.TestCase):
         cmd_submit(Namespace(fact="a fact worth keeping", agent="tester"))
         cmd_submit(Namespace(fact="another fact worth keeping", agent="tester"))
         self.assertGreaterEqual(self._count(), 2)
-        rows = index.audit_rows(self.vault)
+        rows = audit_rows(self.vault)
         self.assertTrue(any(r["action"] == "submit" for r in rows))
 
     def test_promote_and_decide_leave_chained_rows(self) -> None:
@@ -76,11 +77,11 @@ class AuditTrailTests(unittest.TestCase):
 
         entry = read_conflicts(self.vault)[0]
         promoter.decide(self.vault, entry, "用新")
-        rows = index.audit_rows(self.vault)
+        rows = audit_rows(self.vault)
         actions = [r["action"] for r in rows]
         self.assertIn("promote", actions)
         self.assertTrue(any(a.startswith("decide:") for a in actions))
-        ok, broken = index.audit_verify(self.vault)
+        ok, broken = audit_verify(self.vault)
         self.assertTrue(ok, broken)
 
     def test_forget_leaves_a_row(self) -> None:
@@ -92,28 +93,28 @@ class AuditTrailTests(unittest.TestCase):
             encoding="utf-8",
         )
         forgetter.demote(self.vault, dry_run=False)
-        rows = index.audit_rows(self.vault)
+        rows = audit_rows(self.vault)
         self.assertTrue(any(r["action"] == "demote" for r in rows))
-        ok, broken = index.audit_verify(self.vault)
+        ok, broken = audit_verify(self.vault)
         self.assertTrue(ok, broken)
 
     def test_tampering_breaks_verify(self) -> None:
-        index.record_audit(self.vault, "a", "op1", "t1", "one")
-        index.record_audit(self.vault, "a", "op2", "t2", "two")
-        ok, _ = index.audit_verify(self.vault)
+        record_audit(self.vault, "a", "op1", "t1", "one")
+        record_audit(self.vault, "a", "op2", "t2", "two")
+        ok, _ = audit_verify(self.vault)
         self.assertTrue(ok)
-        conn = index.get_conn(self.vault)
+        conn = get_conn(self.vault)
         try:
             conn.execute("UPDATE audit SET detail = 'forged' WHERE action = 'op1'")
             conn.commit()
         finally:
             conn.close()
-        ok, broken = index.audit_verify(self.vault)
+        ok, broken = audit_verify(self.vault)
         self.assertFalse(ok)
         self.assertIn("chain", broken)
 
     def test_cli_lists_and_verifies(self) -> None:
-        index.record_audit(self.vault, "tester", "submit", "f.md", "hello")
+        record_audit(self.vault, "tester", "submit", "f.md", "hello")
         buffer = io.StringIO()
         with redirect_stdout(buffer):
             cmd_audit(_audit_args(agent="tester"))
@@ -126,14 +127,14 @@ class AuditTrailTests(unittest.TestCase):
     def test_pre_chain_rows_do_not_break_verify(self) -> None:
         # A database written before the chain carries NULL hashes; verification
         # treats those as unlinked history, not tampering.
-        index.record_audit(self.vault, "a", "op1", "t1", "one")
-        conn = index.get_conn(self.vault)
+        record_audit(self.vault, "a", "op1", "t1", "one")
+        conn = get_conn(self.vault)
         try:
             conn.execute("UPDATE audit SET prev_hash = NULL, entry_hash = NULL")
             conn.commit()
         finally:
             conn.close()
-        ok, _ = index.audit_verify(self.vault)
+        ok, _ = audit_verify(self.vault)
         self.assertTrue(ok)
 
 

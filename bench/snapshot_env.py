@@ -22,7 +22,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "core"))
 
-from unified_memory import index  # noqa: E402
+from unified_memory.infra.store import get_conn, index_db_for, update_index  # noqa: E402
+from unified_memory.infra.vault import indexed_files  # noqa: E402
 
 
 def main() -> int:
@@ -50,10 +51,10 @@ def main() -> int:
     memory_mod.UNIFIED_MEMORY_VAULT = tmp
 
     t0 = time.perf_counter()
-    result = index.update_index(tmp)
+    result = update_index(tmp)
     build_ms = 1000 * (time.perf_counter() - t0)
 
-    conn = index.get_conn(tmp)
+    conn = get_conn(tmp)
     try:
         counts = {
             "memories": conn.execute("SELECT COUNT(*) c FROM memories").fetchone()["c"],
@@ -75,9 +76,9 @@ def main() -> int:
     payload = {
         "captured_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "head": None,
-        "vault_notes": len(list(index.indexed_files(tmp))),
+        "vault_notes": len(list(indexed_files(tmp))),
         "active_fact_lines": counts["memories"],
-        "db_bytes": index.index_db_for(tmp).stat().st_size,
+        "db_bytes": index_db_for(tmp).stat().st_size,
         "cold_index_build_ms": round(build_ms, 1),
         "changed_docs_on_build": result["changed_docs"],
         "tables": tables,

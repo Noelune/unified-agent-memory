@@ -9,8 +9,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from unified_memory.infra.store import get_conn, index_db_for
 from test_common import _GUARD_INDEX_DB, assert_guard_intact  # arms the isolation guard
-from unified_memory import index as index_mod
 from unified_memory import memory as mem_mod
 from unified_memory.app.query import stats as stats_mod
 from unified_memory.app.query.preview import INBOX_REL as INBOX_REL_FOR_TEST
@@ -34,7 +34,7 @@ class _ScratchIndexTest(unittest.TestCase):
         mem_mod.INDEX_DB = Path(self.tmp.name) / self.scratch_dir / "index.db"
         self.vault = Path(self.tmp.name) / "vault"
         # get_conn() creates the schema on open, so it doubles as "ensure".
-        conn = index_mod.get_conn(self.vault)
+        conn = get_conn(self.vault)
         rows = [
             ("m1", "a.md", "l1", "2026-01-01T10:00:00"),
             ("m2", "a.md", "l2", "2026-01-01T11:00:00"),
@@ -77,7 +77,7 @@ class DailyCountsTest(_ScratchIndexTest):
 
     def test_empty_index_returns_empty_list(self):
         empty = Path(self.tmp.name) / "empty"
-        index_mod.get_conn(empty).close()  # create nothing but an empty index
+        get_conn(empty).close()  # create nothing but an empty index
         self.assertEqual(stats_mod.daily_counts(empty), [])
 
 
@@ -86,7 +86,7 @@ class AccessCountsTest(_ScratchIndexTest):
 
     def setUp(self):
         super().setUp()
-        conn = index_mod.get_conn(self.vault)
+        conn = get_conn(self.vault)
         for mid, at in [
             ("m1", "2026-02-01T08:00:00"),
             ("m1", "2026-02-01T09:00:00"),
@@ -106,7 +106,7 @@ class AccessCountsTest(_ScratchIndexTest):
 
     def test_no_accesses_returns_empty(self):
         empty = Path(self.tmp.name) / "empty"
-        index_mod.get_conn(empty).close()  # create nothing but an empty index
+        get_conn(empty).close()  # create nothing but an empty index
         self.assertEqual(stats_mod.access_counts(empty), [])
 
 
@@ -122,7 +122,7 @@ class BreakdownTest(_ScratchIndexTest):
 
     def setUp(self):
         super().setUp()
-        conn = index_mod.get_conn(self.vault)
+        conn = get_conn(self.vault)
         # The base class seeds m1/m2/m3 as a shared fixture; this class needs its
         # own breakdown rows, so drop those instead of colliding on the id PK.
         conn.execute("DELETE FROM memories")
@@ -186,7 +186,7 @@ class BreakdownTest(_ScratchIndexTest):
     def test_superseded_row_is_excluded_even_as_the_only_other_row(self):
         # Same invariant, minimal shape: delete the active rows and the
         # superseded one must still be invisible to every breakdown.
-        conn = index_mod.get_conn(self.vault)
+        conn = get_conn(self.vault)
         conn.execute(
             "DELETE FROM memories WHERE id != ?", (self.SUPERSEDED_ID,)
         )
@@ -200,7 +200,7 @@ class BreakdownTest(_ScratchIndexTest):
         # redact() is a secret scrubber, not a content stripper (see
         # common.SECRET_PATTERNS): a credential-shaped line in vault content
         # must come back scrubbed, since memory text is untrusted data.
-        conn = index_mod.get_conn(self.vault)
+        conn = get_conn(self.vault)
         conn.execute(
             "UPDATE memories SET line = ? WHERE id = ?",
             ("api_key=abcdef123456", "m3"),
@@ -228,7 +228,7 @@ class BuildTest(_ScratchIndexTest):
         # The base fixture seeds 3 memories, so "no data" needs a vault of its
         # own; None (not "") is the contract callers branch on.
         empty = Path(self.tmp.name) / "empty"
-        index_mod.get_conn(empty).close()
+        get_conn(empty).close()
         got = stats_mod.build(empty)
         self.assertIsNone(got["span"]["start"])
         self.assertIsNone(got["span"]["end"])
@@ -263,7 +263,7 @@ class BuildTest(_ScratchIndexTest):
         # the total even though it contributes no day. This is what separates
         # "sum of type_counts" from "sum of daily" (a silently surviving
         # mutation).
-        conn = index_mod.get_conn(self.vault)
+        conn = get_conn(self.vault)
         conn.execute(
             "INSERT INTO memories (id, doc, line, type, importance, status,"
             " created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
@@ -277,7 +277,7 @@ class BuildTest(_ScratchIndexTest):
         self.assertEqual(got["totals"]["memories"], 4)
 
     def test_totals_count_vectors_and_inbox(self):
-        conn = index_mod.get_conn(self.vault)
+        conn = get_conn(self.vault)
         conn.execute(
             "INSERT INTO embeddings (memory_id, dim, vector)"
             " VALUES (?,?,?)", ("m1", 3, b"xyz")
@@ -301,12 +301,12 @@ class BuildTest(_ScratchIndexTest):
         # _scalar a connection that skipped the schema step, which is what a
         # damaged/older index looks like to the query.
         sql = "SELECT COUNT(*) AS n FROM embeddings"
-        conn = index_mod.get_conn(self.vault)
+        conn = get_conn(self.vault)
         conn.execute("DROP TABLE embeddings")
         conn.commit()
         conn.close()
 
-        raw = sqlite3.connect(str(index_mod.index_db_for(self.vault)))
+        raw = sqlite3.connect(str(index_db_for(self.vault)))
         raw.row_factory = sqlite3.Row
         # B2: _scalar's statements live in infra.store.stats_queries (they
         # moved there from claims in B5.5c), so the injection point ("a
@@ -329,7 +329,7 @@ class BuildTest(_ScratchIndexTest):
         # identity would fail for every reader in this module and tell us
         # nothing about whether a write happened.
         def snapshot(vault):
-            conn = index_mod.get_conn(vault)
+            conn = get_conn(vault)
             try:
                 return {
                     t: conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]

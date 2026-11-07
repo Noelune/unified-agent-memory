@@ -7,8 +7,9 @@ any query, including nonsense, which fed RRF a near-uniform vote spread.
 """
 import unittest
 
+from unified_memory import common
+from unified_memory.infra.store import get_conn, update_index
 from test_common import destroy_scratch, make_scratch_vault
-from unified_memory import index, common
 from unified_memory.app.retrieve import graph
 
 
@@ -32,7 +33,7 @@ class GraphTest(unittest.TestCase):
             + "\n- HK 服务器用于编译调试\n- HK 服务器 SSH 端口为 22\n- 显示器黑屏排查步骤\n",
             encoding="utf-8",
         )
-        index.update_index(self.vault)
+        update_index(self.vault)
         results = graph.expand_search(self.vault, "编译", limit=5)
         self.assertTrue(any("编译调试" in r["line"] for r in results))
 
@@ -43,7 +44,7 @@ class GraphTest(unittest.TestCase):
             + "\n- HK 服务器用于编译调试\n- HK 服务器 SSH 端口为 22\n",
             encoding="utf-8",
         )
-        index.update_index(self.vault)
+        update_index(self.vault)
         # "编译" directly hits the first fact; the second shares the HK/服务器
         # concept and should appear via one-hop expansion.
         results = graph.expand_search(self.vault, "编译", limit=5)
@@ -59,7 +60,7 @@ class GraphTest(unittest.TestCase):
             + "\n- HK 服务器用于编译调试\n- 显示器黑屏排查步骤\n",
             encoding="utf-8",
         )
-        index.update_index(self.vault)
+        update_index(self.vault)
         self.assertEqual(graph.expand_search(self.vault, "量子色动力学", limit=10), [])
 
     def test_pool_is_capped_near_direct_hits(self) -> None:
@@ -70,7 +71,7 @@ class GraphTest(unittest.TestCase):
             + "".join(f"- 备忘条目编号 {i} 与主题无关\n" for i in range(30)),
             encoding="utf-8",
         )
-        index.update_index(self.vault)
+        update_index(self.vault)
         results = graph.expand_search(self.vault, "编译调试", limit=20)
         # 1 direct hit -> ceil(2.5) candidates at most, not the whole pool.
         self.assertLessEqual(len(results), 3)
@@ -84,7 +85,7 @@ class GraphTest(unittest.TestCase):
             + "- 配置变更需要记录日志\n",             # one-hop via 配置 (degree 3)
             encoding="utf-8",
         )
-        index.update_index(self.vault)
+        update_index(self.vault)
         results = graph.expand_search(self.vault, "编译调试", limit=10)
         # Direct hit ranks first; the one-hop neighbours share one concept
         # with document frequency 3, so their normalised bonus (6/3 = 2)
@@ -100,13 +101,13 @@ class GraphTest(unittest.TestCase):
             + "\n- HK 服务器用于编译调试\n- HK 服务器 SSH 端口为 22\n",
             encoding="utf-8",
         )
-        index.update_index(self.vault)
+        update_index(self.vault)
         stats = graph.graph_stats(self.vault)
         self.assertGreater(stats["nodes"], 0)
         self.assertGreater(stats["edges"], 0)
 
     def test_graph_tables_are_gone(self) -> None:
-        conn = index.get_conn(self.vault)
+        conn = get_conn(self.vault)
         try:
             names = {
                 r["name"]

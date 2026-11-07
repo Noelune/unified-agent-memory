@@ -14,7 +14,8 @@ from argparse import Namespace
 from contextlib import redirect_stdout
 
 from test_common import destroy_scratch, make_scratch_vault
-from unified_memory import forgetter, index
+from unified_memory import forgetter
+from unified_memory.infra.store import get_conn, record_access, resolve_short_ids, update_index, used_count
 from unified_memory.app.retrieve import pipeline as search
 from unified_memory.common import canonical_path
 from unified_memory.memory import cmd_cite
@@ -34,8 +35,8 @@ class AccessEventTests(unittest.TestCase):
             + "\n- prefers indigo terminal prompts\n",
             encoding="utf-8",
         )
-        index.update_index(self.vault)
-        conn = index.get_conn(self.vault)
+        update_index(self.vault)
+        conn = get_conn(self.vault)
         try:
             return conn.execute("SELECT id FROM memories LIMIT 1").fetchone()["id"]
         finally:
@@ -43,28 +44,28 @@ class AccessEventTests(unittest.TestCase):
 
     def test_default_event_is_retrieved(self) -> None:
         mid = self._one_memory()
-        index.record_access(self.vault, [mid])
-        conn = index.get_conn(self.vault)
+        record_access(self.vault, [mid])
+        conn = get_conn(self.vault)
         try:
             events = [r["event"] for r in conn.execute(
                 "SELECT event AS event FROM access_log").fetchall()]
         finally:
             conn.close()
         self.assertEqual(events, ["retrieved"])
-        self.assertEqual(index.used_count(self.vault, mid), 0)
+        self.assertEqual(used_count(self.vault, mid), 0)
 
     def test_used_events_are_counted(self) -> None:
         mid = self._one_memory()
-        index.record_access(self.vault, [mid])          # retrieved
-        index.record_access(self.vault, [mid], event="used")
-        index.record_access(self.vault, [mid], event="used")
-        self.assertEqual(index.used_count(self.vault, mid), 2)
+        record_access(self.vault, [mid])          # retrieved
+        record_access(self.vault, [mid], event="used")
+        record_access(self.vault, [mid], event="used")
+        self.assertEqual(used_count(self.vault, mid), 2)
 
     def test_render_hybrid_prints_short_ids(self) -> None:
         self._one_memory()
         result = search.hybrid_search(self.vault, "indigo", limit=3)
         self.assertGreater(result["count"], 0)
-        conn = index.get_conn(self.vault)
+        conn = get_conn(self.vault)
         try:
             short = conn.execute(
                 "SELECT id FROM memories WHERE line LIKE '%indigo%' LIMIT 1"
@@ -76,9 +77,9 @@ class AccessEventTests(unittest.TestCase):
 
     def test_resolve_short_ids_expands_and_rejects(self) -> None:
         mid = self._one_memory()
-        self.assertEqual(index.resolve_short_ids(self.vault, [mid[:10]]), [mid])
-        self.assertEqual(index.resolve_short_ids(self.vault, ["zzzzzzzzzz"]), [])
-        self.assertEqual(index.resolve_short_ids(self.vault, ["'; DROP"]), [])
+        self.assertEqual(resolve_short_ids(self.vault, [mid[:10]]), [mid])
+        self.assertEqual(resolve_short_ids(self.vault, ["zzzzzzzzzz"]), [])
+        self.assertEqual(resolve_short_ids(self.vault, ["'; DROP"]), [])
 
 
 class CitationCliTests(unittest.TestCase):
@@ -95,8 +96,8 @@ class CitationCliTests(unittest.TestCase):
             + "\n- prefers indigo terminal prompts\n",
             encoding="utf-8",
         )
-        index.update_index(self.vault)
-        conn = index.get_conn(self.vault)
+        update_index(self.vault)
+        conn = get_conn(self.vault)
         try:
             mid = conn.execute("SELECT id FROM memories LIMIT 1").fetchone()["id"]
         finally:
@@ -105,7 +106,7 @@ class CitationCliTests(unittest.TestCase):
         with redirect_stdout(buffer):
             cmd_cite(Namespace(ids=mid[:10], json=True))
         self.assertIn('"matched": 1', buffer.getvalue())
-        self.assertEqual(index.used_count(self.vault, mid), 1)
+        self.assertEqual(used_count(self.vault, mid), 1)
 
 
 class ReinforcementTests(unittest.TestCase):
@@ -122,15 +123,15 @@ class ReinforcementTests(unittest.TestCase):
             + "\n- prefers indigo terminal prompts\n",
             encoding="utf-8",
         )
-        index.update_index(self.vault)
-        conn = index.get_conn(self.vault)
+        update_index(self.vault)
+        conn = get_conn(self.vault)
         try:
             row = conn.execute(
                 "SELECT id, doc, line FROM memories LIMIT 1"
             ).fetchone()
         finally:
             conn.close()
-        index.record_access(self.vault, [row["id"]] * 50)  # retrieved 50 times
+        record_access(self.vault, [row["id"]] * 50)  # retrieved 50 times
         stats = forgetter._index_stats(self.vault, row["doc"], row["line"])
         self.assertIsNotNone(stats)
         self.assertEqual(stats[1], 0)  # used count stays zero
@@ -142,8 +143,8 @@ class ReinforcementTests(unittest.TestCase):
             + "\n- prefers indigo terminal prompts\n",
             encoding="utf-8",
         )
-        index.update_index(self.vault)
-        conn = index.get_conn(self.vault)
+        update_index(self.vault)
+        conn = get_conn(self.vault)
         try:
             row = conn.execute(
                 "SELECT id, doc, line FROM memories LIMIT 1"

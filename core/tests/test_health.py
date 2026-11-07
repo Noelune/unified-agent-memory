@@ -9,7 +9,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from test_common import destroy_scratch, make_scratch_vault
-from unified_memory import common, index
+from unified_memory import common
+from unified_memory.infra.store import index_db_for
 from unified_memory.app.maintain import health
 
 
@@ -195,7 +196,7 @@ class GcTest(unittest.TestCase):
         destroy_scratch(self.vault)
 
     def _make_db(self, name, doc_path):
-        db = index.index_db_for(self.vault).parent / name
+        db = index_db_for(self.vault).parent / name
         conn = sqlite3.connect(str(db))
         try:
             conn.execute("CREATE TABLE docs (path TEXT PRIMARY KEY, digest TEXT, title TEXT)")
@@ -219,7 +220,7 @@ class GcTest(unittest.TestCase):
         self.assertIn(orphan.name, removed)
         self.assertFalse(orphan.exists())
         self.assertTrue(live.exists(), "a DB whose vault still exists must be kept")
-        self.assertTrue(index.index_db_for(self.vault).exists())
+        self.assertTrue(index_db_for(self.vault).exists())
 
 
 if __name__ == "__main__":

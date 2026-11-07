@@ -4,8 +4,8 @@ import hashlib
 import unittest
 from pathlib import Path
 
+from unified_memory.infra.store import update_index
 from test_common import destroy_scratch, make_scratch_vault
-from unified_memory import index
 from unified_memory.app.govern.queue import read_conflicts
 from unified_memory.app.maintain.conflict_scan import (
     PROPAGATION_SOURCE,
@@ -150,7 +150,7 @@ class PropagationTest(unittest.TestCase):
             "备份目录在 C:/backups",
             "备份目录位于 C:/backups",
         ])
-        index.update_index(self.vault)
+        update_index(self.vault)
         from unified_memory.infra.store import get_conn
         from unified_memory.infra.store import claims as claims_mod
 

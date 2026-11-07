@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from unified_memory.infra.store import update_index
 from test_common import destroy_scratch, make_scratch_vault
 from unified_memory import catchup, forgetter, promoter
 from unified_memory.common import canonical_dir, canonical_path, read_maybe, read_schedule_state
@@ -121,9 +122,8 @@ class ForgetterStampTest(unittest.TestCase):
             read_maybe(ui) + "- 临时会议纪要备忘（写入 2020-01-01｜来源：Agent提交区/x.md）\n",
             encoding="utf-8",
         )
-        from unified_memory import index
-
-        index.update_index(self.vault)
+        
+        update_index(self.vault)
         forgetter.demote(self.vault, dry_run=False)
         self.assertEqual(read_schedule_state(self.vault).get("last_forget"), dt.date.today().isoformat())
 
