@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Fixed — upgrade-cleanup 补注册 0.12.0 退役的八个 shim
+
+0.12.0 的 BREAKING 退役删了八个 flat shim（schema/config/embed/drift/health/digest/index/common），但 RETIRED_PATHS 只注册了 0.10.0 的五个——覆盖式升级会把八个 stale 文件留在安装里。flat-core-shims 条目扩至 13 个路径（清理测试同步植 13 验 13）。生产证据：0.10.0 五个 shim 已在真实运行时被 reconcile 扫尾自动清除（dsh 重启触发）。
+
 ## [0.12.0] — 2026-11-08
 
 ### Added — 每日漂移复核上节奏（catchup drift job）
