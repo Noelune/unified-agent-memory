@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased] — 下一个版本 0.12.0（含 breaking change）
 
+### Fixed — digest 提取在随附模型+提示词组合下完全失效（P1，真模型验证）
+
+- **症状**：digest 对含明确持久事实的会话恒返回「- (无)」——实测「事实 + 5 组日常对话（195 字符）」即可淹没提取，9000 字真实形状会话提取为零条。每次 digest 消耗游标却零产出。此缺陷从未被测试抓到：单测 mock 掉了 LLM，端到端用的是手写产物。
+- **根因**：SYSTEM_PROMPT 把「没有则输出 (无)」的出口放在指令中心且无示例，Qwen2.5-7B 被噪声锚定；换 14B/32B/Qwen3-8B 同提示词同输入即可全提取——是模型能力边界，不是管线缺陷。
+- **修复**：①SYSTEM_PROMPT 重写（逐段检查、保留具体数值与路径、即使只有一条也要输出、few-shot 示例），短对话与噪声场景实测改善；②`DEFAULT_CHAT_MODEL` 升至 `Qwen/Qwen2.5-14B-Instruct`（同提示词同噪声下 7B 全漏、14B/32B/Qwen3-8B 全提取；8B 为推理模型，思考 token 2-5 倍消耗会打满 TPM——实测 429，故选非推理 14B，约为 7B 的 2 倍 token 成本）。
+- **真模型端到端**：9047 字会话 → 2 块（9547/9047）→ 3 条事实入收件箱（含 3A 溯源头）→ review → 溯源晋升 → verify-drift 全链打通。digest 的核心价值（会话→事实）首次被证明可用。
+- 成本提示：每次 digest 调用量 = 块数（6000 字/块），14B 单价约为 7B 两倍——如需回落 7B 需同步接受低提取率，或改用更大窗口/更强模型，属主人决策。
+
 ### Removed — 包根只留真实入口：八个兼容转发层退役（BREAKING）
 
 `core/unified_memory/` 包根从 13 个 flat 模块减到 5 个**真实入口**（`memory` / `promoter` 门面、`forgetter` / `catchup` 生命周期 CLI）加文档化入口 `sessiondb` 与既存真实现。实际删除的是八个纯转发 shim，其自身 docstring 承诺的「保留一个 minor」（0.10.0）已到期，且冻结契约（`test_module_surface`）从未把它们列为 surface：
