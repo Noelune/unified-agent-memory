@@ -29,13 +29,17 @@ HOOK_SCRIPT = REPO / "integrations" / "hooks" / "memory_hook.py"
 
 
 
-_HOOK_PYTHON_NAMES = ("python3", "python")
+_HOOK_PYTHON_NAMES = ("python3", "python") if os.name != "nt" else ("python", "python3")
 
 
 def _resolve_hook_python():
-    # Prefer python3 (POSIX), fall back to python (Windows).
+    # Prefer python3 (POSIX), fall back to python (Windows). On Windows the
+    # python3 name usually resolves to the Microsoft Store alias — a reparse
+    # point that dies with exit 9009 under a non-interactive spawn — so it
+    # never leads the order there, and an alias hit is skipped outright.
     for name in _HOOK_PYTHON_NAMES:
-        if shutil.which(name):
+        found = shutil.which(name)
+        if found and ".windowsapps" not in found.lower():
             return name
     return os.path.basename(sys.executable)
 
