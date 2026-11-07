@@ -90,8 +90,11 @@ def _best_anchor(fact: str, source: str) -> tuple[float, str]:
     return best_similarity(fact, lines)
 
 
-def _entail(fact: str, source: str) -> str:
-    """The LLM's one-word verdict; a transport failure is 无法判断, never guessed."""
+def _entail(fact: str, source: str) -> tuple[str, bool]:
+    """(verdict, transport_failed). A transport failure is 无法判断, never
+    guessed — the flag lets the scheduler tell "the model could not decide"
+    from "the model was never reachable" (the latter must not consume the
+    day's stamp)."""
     content = chat_completion(
         [
             {"role": "system", "content": VERIFY_SYSTEM_PROMPT},
@@ -102,14 +105,12 @@ def _entail(fact: str, source: str) -> str:
     )
     text = (content or "").strip()
     if "不支持" in text:
-        return "不支持"
+        return "不支持", False
     if "无法判断" in text:
-        return "无法判断"
+        return "无法判断", content is None
     if "支持" in text:
-        return "支持"
-    return "无法判断"
-
-
+        return "支持", False
+    return "无法判断", content is None
 def verify_drift(vault: Path, *, apply: bool = False, limit: int = 0) -> dict:
     """Re-check every provenance-carrying fact against its source archive.
 
@@ -121,13 +122,18 @@ def verify_drift(vault: Path, *, apply: bool = False, limit: int = 0) -> dict:
     if limit > 0:
         facts = facts[:limit]
     report: dict = {
-        "checked": len(facts), "prefiltered": 0, "llmChecked": 0,
+        "checked": len(facts), "prefiltered": 0, "llmChecked": 0, "llmErrors": 0,
         "supported": 0, "unsupported": 0, "undecidable": 0,
         "skipped": [], "candidates": [], "enqueued": 0, "dryRun": not apply,
     }
     candidates: list[dict] = []
     for item in facts:
-        source = read_maybe(vault / item["origin"])
+        # 3A writes vault-relative origins (the archive lives under
+        # 50-Agent-Context/); a hand-edited provenance may drop the prefix, so
+        # fall back to the context-relative location before giving up.
+        source = read_maybe(vault / item["origin"]) or read_maybe(
+            canonical_dir(vault) / item["origin"]
+        )
         if not source.strip():
             report["skipped"].append(f"{item['fact'][:40]} (source missing: {item['origin']})")
             continue
@@ -138,7 +144,9 @@ def verify_drift(vault: Path, *, apply: bool = False, limit: int = 0) -> dict:
             verdict = "不支持"
         else:
             report["llmChecked"] += 1
-            verdict = _entail(item["fact"], source)
+            verdict, transport_failed = _entail(item["fact"], source)
+            if transport_failed:
+                report["llmErrors"] += 1
         if verdict == "支持":
             report["supported"] += 1
             continue
@@ -150,17 +158,23 @@ def verify_drift(vault: Path, *, apply: bool = False, limit: int = 0) -> dict:
             report["undecidable"] += 1
     report["candidates"] = candidates
     if apply:
-        before = len(read_conflicts(vault))
-        for entry in candidates:
-            append_conflict(
-                vault, entry["fact"], entry["anchor"] or entry["origin"], DRIFT_SOURCE,
-                target_file=entry["doc"],
-                extra={
-                    "疑似漂移": "原文不含等价内容",
-                    "证据": (entry["anchor"] or entry["origin"])[:160],
-                    "溯源": entry["origin"],
-                },
-            )
-        report["enqueued"] = len(read_conflicts(vault)) - before
+        report["enqueued"] = _enqueue_candidates(vault, candidates)
     report["elapsedMs"] = int((time.monotonic() - started) * 1000)
     return report
+
+
+def _enqueue_candidates(vault: Path, candidates: list[dict]) -> int:
+    """Enqueue the unsupported candidates; return the REAL queue growth
+    (signature dedup keeps re-runs idempotent)."""
+    before = len(read_conflicts(vault))
+    for entry in candidates:
+        append_conflict(
+            vault, entry["fact"], entry["anchor"] or entry["origin"], DRIFT_SOURCE,
+            target_file=entry["doc"],
+            extra={
+                "疑似漂移": "原文不含等价内容",
+                "证据": (entry["anchor"] or entry["origin"])[:160],
+                "溯源": entry["origin"],
+            },
+        )
+    return len(read_conflicts(vault)) - before

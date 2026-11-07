@@ -162,3 +162,90 @@ class ForgetterPosixCronTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CatchupDriftTest(unittest.TestCase):
+    """The daily drift job: stamp-gated, bounded, retry-on-transport."""
+
+    def setUp(self):
+        self.vault = make_scratch_vault()
+
+    def tearDown(self):
+        destroy_scratch(self.vault)
+
+    def _seed(self, count=1, anchored=False):
+        from unified_memory.domain.policy import UNCLASSIFIED_FACT_REL
+        from unified_memory.infra.vault import canonical_dir
+
+        unclassified = canonical_dir(self.vault) / UNCLASSIFIED_FACT_REL
+        unclassified.parent.mkdir(parents=True, exist_ok=True)
+        unclassified.write_text(
+            "".join(
+                f"- 孤儿事实 {i}（写入 2026-11-08｜来源：Agent提交区/x.md）"
+                "（溯源：50-Agent-Context/会话归档/2099-01-01.md）\n"
+                for i in range(count)
+            ),
+            encoding="utf-8",
+        )
+        archive = canonical_dir(self.vault) / "会话归档" / "2099-01-01.md"
+        archive.parent.mkdir(parents=True, exist_ok=True)
+        # The archive ECHOES the facts (equal text) so every one passes the
+        # similarity pre-filter and reaches the patched LLM.
+        archive.write_text(
+            "".join(f"- 孤儿事实 {i}" + "\n" for i in range(count)),
+            encoding="utf-8",
+        )
+
+    def test_first_run_verifies_and_stamps_the_day(self):
+        self._seed(count=1)
+        with patch(
+            "unified_memory.app.maintain.drift_verify.chat_completion",
+            return_value="支持",
+        ):
+            report = catchup.run(self.vault, now=dt.datetime(2026, 11, 8, 3, 0))
+        self.assertEqual(report["drift"]["status"], "ran")
+        self.assertEqual(report["drift"]["checked"], 1)
+        self.assertEqual(read_schedule_state(self.vault).get("last_drift"), "2026-11-08")
+
+    def test_same_day_second_run_is_skipped(self):
+        self._seed(count=1)
+        with patch(
+            "unified_memory.app.maintain.drift_verify.chat_completion",
+            return_value="支持",
+        ):
+            catchup.run(self.vault, now=dt.datetime(2026, 11, 8, 3, 0))
+        with patch(
+            "unified_memory.app.maintain.drift_verify.chat_completion",
+            side_effect=AssertionError("must not run twice a day"),
+        ) as llm:
+            report = catchup.run(self.vault, now=dt.datetime(2026, 11, 8, 9, 0))
+        self.assertEqual(report["drift"]["status"], "skipped")
+        llm.assert_not_called()
+
+    def test_transport_failure_does_not_consume_the_day(self):
+        self._seed(count=1)
+        with patch(
+            "unified_memory.app.maintain.drift_verify.chat_completion",
+            return_value=None,
+        ):
+            report = catchup.run(self.vault, now=dt.datetime(2026, 11, 8, 3, 0))
+        self.assertEqual(report["drift"]["status"], "partial")
+        self.assertEqual(report["drift"]["llmErrors"], 1)
+        self.assertNotEqual(read_schedule_state(self.vault).get("last_drift"), "2026-11-08")
+        # The next catchup retries the same day.
+        with patch(
+            "unified_memory.app.maintain.drift_verify.chat_completion",
+            return_value="支持",
+        ):
+            report = catchup.run(self.vault, now=dt.datetime(2026, 11, 8, 4, 0))
+        self.assertEqual(report["drift"]["status"], "ran")
+
+    def test_daily_limit_bounds_the_cost(self):
+        self._seed(count=catchup.DRIFT_DAILY_LIMIT + 5)
+        with patch(
+            "unified_memory.app.maintain.drift_verify.chat_completion",
+            return_value="支持",
+        ) as llm:
+            report = catchup.run(self.vault, now=dt.datetime(2026, 11, 8, 3, 0))
+        self.assertEqual(report["drift"]["checked"], catchup.DRIFT_DAILY_LIMIT)
+        self.assertEqual(llm.call_count, catchup.DRIFT_DAILY_LIMIT)
