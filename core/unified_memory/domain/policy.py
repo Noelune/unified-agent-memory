@@ -6,6 +6,7 @@ paths themselves are built by infra.vault on top of these constants.
 """
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -22,6 +23,59 @@ CANONICAL_DOCS = {
     "ui": "UI审美准则.md",
     "coord": "Codex-Claude-Hermes协作规则.md",
 }
+
+# Directories under 50-Agent-Context/ that hold raw material, archives or queues
+# rather than canonical facts. A directory scan must skip them, or the promoter
+# would treat inbox files and adjudication logs as fact notes.
+_NON_FACT_SUBDIRS = frozenset({
+    "Agent提交区",      # submissions (raw material)
+    "已处理",           # processed submissions
+    "会话归档",         # session archives
+    "Hermes会话自动归档",  # Hermes auto-archives
+    "记忆遗忘区",        # demoted facts (already out of the default path)
+    "知识库周报",        # generated weekly reports
+    "情境信息",          # queue files and adjudication logs, not fact notes
+})
+
+
+def iter_canonical_note_paths(vault_root) -> list:
+    """Every canonical fact note under ``<vault>/50-Agent-Context``, vault-relative.
+
+    CANONICAL_DOCS is a *fixed* map of seven stable ids, which is right for
+    ``memory show <id>`` but wrong as the set of notes that lifecycle and
+    hygiene must cover: any note added later (or a topic volume split out of a
+    large note, e.g. ``50-Agent-Context/工程执行规则/DSH 与插件.md``) is silently
+    invisible to them. On the reference vault that was 15 real notes vs 7 known.
+
+    Returns POSIX-style relative paths so callers can normalise once. Falls back
+    to CANONICAL_DOCS entries so a vault missing the directory still works.
+    """
+    root = Path(vault_root)
+    ctx = root / AGENT_CONTEXT
+    found: list[str] = []
+    seen: set[str] = set()
+
+    if ctx.is_dir():
+        for dirpath, dirnames, filenames in os.walk(ctx):
+            dirnames[:] = [d for d in sorted(dirnames)
+                           if d not in _NON_FACT_SUBDIRS and not d.startswith(".")]
+            for name in sorted(filenames):
+                if not name.endswith(".md"):
+                    continue
+                rel = os.path.relpath(os.path.join(dirpath, name), root)
+                rel = rel.replace(os.sep, "/")
+                if rel not in seen:
+                    seen.add(rel)
+                    found.append(rel)
+
+    for name in CANONICAL_DOCS.values():
+        rel = f"{AGENT_CONTEXT}/{name}"
+        if rel not in seen:
+            seen.add(rel)
+            found.append(rel)
+
+    return found
+
 
 SUBMISSION_DIR = "Agent提交区"
 PROCESSED_DIR = "已处理"

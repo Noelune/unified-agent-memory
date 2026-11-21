@@ -165,6 +165,18 @@ VERSIONED_RE = re.compile(r"｜有效至 \d{4}-\d{2}-\d{2}")
 # prefix marks claim ids so they cannot collide with user-chosen block ids.
 BLOCK_ID_RE = re.compile(r"\s+\^c-([0-9a-f]{16})\s*$")
 
+# A whole-line form of STAMP_RE that tolerates the trailing `` ^c-<anchor>``.
+# 2026-11-21: callers that asked "does this line END with a promotion stamp"
+# anchored on ``）$`` and silently matched nothing, because every real fact line
+# carries a block id after the stamp:
+#     …（写入 2026-11-20｜来源：Agent提交区/x.md） ^c-bf2782717c574aaf
+# On the reference vault that was 81/81 misses in one note. STAMP_RE itself is
+# unanchored (uses ``search``) and was always correct; this constant exists so
+# the anchored question has a correct answer too.
+ANCHORED_STAMP_RE = re.compile(
+    STAMP_RE.pattern + r"(?:" + BLOCK_ID_RE.pattern.replace(r"\s+", r"\s*") + r")?$"
+)
+
 
 def claim_id_of(line: str) -> str:
     """The 16-hex claim id a fact line carries, or "" when it has none."""
