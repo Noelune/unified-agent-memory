@@ -4,6 +4,20 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed — canonical 笔记发现与行尾 stamp 解析（实测于真实 vault）
+
+两处都是**静默失效**：不报错，只是少做事，因此长期没人发现。
+
+- **`CANONICAL_DOCS` 被当作「生命周期要管哪些笔记」的集合**：它是 7 个稳定 id 的固定字典，用于 `memory show <id>` 正确，但作为「所有事实笔记」的枚举就漏了一半——后加的笔记、以及从大笔记按主题拆出的分卷，全部不可见。真实 vault 有 14 篇事实笔记（其中 4 篇是 `50-Agent-Context/工程执行规则/` 下的分卷），旧的固定清单只知道 7 篇。
+  新增 `policy.iter_canonical_note_paths(vault)`：扫描 `50-Agent-Context`，跳过原料/归档/队列（`Agent提交区`/`已处理`/`会话归档`/`Hermes会话自动归档`/`记忆遗忘区`/`知识库周报`/`情境信息`），再以 `CANONICAL_DOCS` 兜底，保证裸 vault 也能工作。
+
+- **锚定 `）$` 的 stamp 判断 0 命中**：`STAMP_RE` 用 `search`、不锚定行尾，一直是正确的；但调用方问「这行是否**以** stamp 结尾」时锚定 `）$`，而每条真实事实行在 stamp 之后还带 block id：
+  `…（写入 2026-11-20｜来源：Agent提交区/x.md） ^c-bf2782717c574aaf`
+  实测 `工程执行规则.md` 中 81 条带写入日期的事实**全部匹配失败**。连锁后果：Hermes 侧 `memory_forgetter` 只认到 8 行 canonical（实际 700+），衰减淘汰形同停摆。
+  新增 `markdown.ANCHORED_STAMP_RE` = `STAMP_RE` + 可选 `^c-` block id。
+
+- 两者均为纯新增，未改动任何既有常量或签名；`npm run check` 全绿（598 Python + 24 node 测试）。
+
 ### Fixed — 干净 Debian/Ubuntu 安装的两处真实问题（PR #6，已合并）
 
 - **Claude 钩子在 Debian 上全挂**：settings-snippet.json 的钩子命令硬编码 `python`——干净 Debian 13 只有 `python3`，三条钩子全部无法运行（`test_claude_hook_wiring` 4 例 FileNotFoundError）。现 snippet 用 `python3`（Windows 注记保留 `python`），setup 安装器按 OS 自动选对；测试的解析器在 Windows 上还跳过 Microsoft Store 的 `python3` 别名（reparse 点在非交互 spawn 下退 9009——合并后在 Windows 实测抓到并修复）。
